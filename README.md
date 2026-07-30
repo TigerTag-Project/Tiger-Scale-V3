@@ -163,6 +163,14 @@ Stated up front rather than discovered later:
 TigerScale is only as useful as the tags it reads, and those tags exist because
 filament manufacturers chose to put them on their spools.
 
+Factory spools carry **[TigerTag+](https://github.com/TigerTag-Project/TigerSystem-Docs/blob/main/docs/products/tigertag-plus.md)**,
+not a plain TigerTag. The difference is the 32-byte reserved area at the end of the
+payload: on a standard TigerTag those bytes are free for community use, and on a
+TigerTag+ they carry an **origin signature**, issued under a private key held by
+TigerTag and available only to certified partners. A cloned tag fails that check —
+**on the customer's own phone, offline, with no account needed.** That is what a
+manufacturer is actually committing to when they tag a production line.
+
 <h3>
   <img src="https://img.shields.io/badge/PLATINUM-e5e4e2?style=flat-square&labelColor=3a3a3a" alt="Platinum">
   &nbsp;Integrated across the whole production line
@@ -172,7 +180,7 @@ filament manufacturers chose to put them on their spools.
   <a href="https://rosa3d.pl"><img src="assets/partners/rosa3d.png" alt="Rosa3D" height="46"></a>
 </p>
 
-**[Rosa3D](https://rosa3d.pl)** ships TigerTag on **100 % of its 1 kg spool
+**[Rosa3D](https://rosa3d.pl)** ships TigerTag+ on **100 % of its 1 kg spool
 production**, announced publicly on their own channels: the first filament
 manufacturer to integrate the protocol directly into its factory lines, with more
 than 250 000 tagged spools produced since deployment began. Their ReFills carry two
@@ -214,9 +222,9 @@ scope, and it is worth repeating accurately rather than rounding up.
 </p>
 
 **[Sunlu](https://www.sunlu.com)**, **[Landu](https://www.landu3d.com)** and
-**[JamgHE](https://www.jamghe.com)** tag spools on request.
+**[JamgHE](https://www.jamghe.com)** tag spools with TigerTag+ on request.
 
-### Also shipping TigerTag
+### Integration in progress
 
 <p align="center">
   <a href="https://nanovia.tech"><img src="assets/partners/nanovia.png" alt="Nanovia" height="40"></a>
@@ -225,7 +233,8 @@ scope, and it is worth repeating accurately rather than rounding up.
 </p>
 
 **[Nanovia](https://nanovia.tech)** and **[Filforme](https://www.filforme.com)**
-are also in the partner list.
+are currently integrating TigerTag+ — not yet shipping, and listed here because
+they are in the programme rather than to imply availability.
 
 ---
 
@@ -236,8 +245,9 @@ and the case for manufacturers is in
 **[TigerSystem-Docs](https://github.com/TigerTag-Project/TigerSystem-Docs)**.
 Come talk to us on [Discord](https://discord.gg/3Qv5TSqnJH).
 
-<sub>Adoption claims above are the manufacturers' own public statements, quoted
-from their announcements rather than asserted by us. Brand names and logos are the
+<sub>TigerTag+ was formerly sold as "TigerTag Pro"; the current name is TigerTag+.
+Adoption claims above are the manufacturers' own public statements, quoted from
+their announcements rather than asserted by us. Brand names and logos are the
 property of their respective owners; their presence records who ships the protocol
 and implies no endorsement of this firmware in either direction. TigerTag is an
 **open protocol** — that is our wording, and it is deliberately narrower than the

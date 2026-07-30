@@ -18,6 +18,14 @@
 
 set -uo pipefail
 
+# The generated TOC must be byte-identical on every machine, or CI's
+# "regenerating produces no diff" check fails for everyone but its author.
+# printf's "%-52s" pads to a width that BSD awk counts in bytes and GNU awk
+# counts in characters, so a section title containing a multi-byte character
+# (the em dash in "OTA — Over-the-air…") came out padded differently on macOS
+# and on Linux. Forcing the C locale makes both count bytes.
+export LC_ALL=C
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 INO="$ROOT/TigerTagSplashESP32/TigerTagSplashESP32.ino"
 

@@ -5,7 +5,29 @@ Notable changes to the TigerScale V3 firmware. Format loosely follows
 of `TIGERSCALE_FW_VERSION`, which the release workflow refuses to publish if it
 disagrees with the git tag.
 
+Each version's full notes live in `docs/release-notes/vX.Y.Z.md`, which is also the
+GitHub Release body and what the device links to as "what's new". The release
+workflow refuses to publish a version whose notes are missing or still contain the
+scaffold's placeholder text.
+
 ## [Unreleased]
+
+Nothing yet.
+
+## [v3.0.0](docs/release-notes/v3.0.0.md)
+
+Over-the-air updates work for the first time — three stacked faults fixed — plus
+8 MB of PSRAM that had never been switched on, and a browser installer.
+
+**Changes the partition table, so it installs over USB only.** Everything after it
+can go over the air.
+
+Full entry: **[docs/release-notes/v3.0.0.md](docs/release-notes/v3.0.0.md)**
+
+<!-- The entry below predates versioned releases. Kept because it explains why the
+     repository looks the way it does. -->
+
+## Repository preparation
 
 First public release of the V3 firmware. Development up to this point predates
 version control — there were no commits — so this entry covers the state the

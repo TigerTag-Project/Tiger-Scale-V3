@@ -102,6 +102,25 @@ jobs:
           bash scripts/check-codemap.sh
           python3 scripts/check-emoji.py
 
+      - name: Release notes must exist
+        if: steps.version.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          NOTES="docs/release-notes/v$VERSION.md"
+          if [ ! -f "$NOTES" ]; then
+            echo "::error::$NOTES is missing. Every published version explains itself."
+            echo "Create it with:  bash scripts/bump-version.sh $VERSION"
+            exit 1
+          fi
+          # A scaffold that nobody filled in is worse than no notes: it looks
+          # deliberate. Refuse the template's own placeholder text.
+          if grep -q "One or two sentences a user would care about" "$NOTES"; then
+            echo "::error::$NOTES still contains the template placeholder — write the notes."
+            exit 1
+          fi
+          echo "Release notes:"; sed 's/^/  /' "$NOTES"
+
       - name: Build the web UI filesystem
         run: |
           # Identical for every transport — it is built from data/ — so once is enough.
@@ -174,15 +193,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          NOTES=docs/release-notes/v$VERSION.md
-          if [ -f "$NOTES" ]; then
-            gh release create "$GITHUB_REF_NAME" dist/* \
-              --title "TigerScale V3 v$VERSION" --notes-file "$NOTES"
-          else
-            echo "::warning::No docs/release-notes/v$VERSION.md — falling back to generated notes."
-            gh release create "$GITHUB_REF_NAME" dist/* \
-              --title "TigerScale V3 v$VERSION" --generate-notes
-          fi
+          # Guaranteed to exist — the "Release notes must exist" gate ran first.
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "TigerScale V3 v$VERSION" \
+            --notes-file "docs/release-notes/v$VERSION.md"
 
   deploy-pages:
     needs: build

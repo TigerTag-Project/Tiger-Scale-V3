@@ -34,7 +34,7 @@ left. MIT licensed, built with PlatformIO.
 
 ## What it does
 
-Put a filament spool carrying a [TigerTag](https://tigertag.io) NFC tag on the
+Put a filament spool carrying a [TigerTag](https://tigersystem.io) NFC tag on the
 platform. The scale reads the tag, weighs the spool, subtracts the empty spool's
 weight, and shows you **how much filament is actually left** — then syncs it to
 your TigerTag account so every device you own agrees.

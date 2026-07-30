@@ -161,36 +161,87 @@ Stated up front rather than discovered later:
 ## Filament brands shipping TigerTag
 
 TigerScale is only as useful as the tags it reads, and those tags exist because
-filament manufacturers chose to put them on their spools. Thank you to the brands
-who committed to the open standard.
+filament manufacturers chose to put them on their spools.
 
-### ![Platinum](https://img.shields.io/badge/Platinum-e5e4e2?style=flat-square&labelColor=555) Rosa3D
+<h3>
+  <img src="https://img.shields.io/badge/PLATINUM-e5e4e2?style=flat-square&labelColor=3a3a3a" alt="Platinum">
+  &nbsp;Integrated across the whole production line
+</h3>
 
-**Rosa3D** ships TigerTag across its **entire production** — every spool leaves
-the factory with an NFC chip on it. Nothing to order, nothing to ask for: buy the
-filament, put it on the scale, it identifies itself.
+<p align="center">
+  <a href="https://rosa3d.pl"><img src="assets/partners/rosa3d.png" alt="Rosa3D" height="46"></a>
+</p>
 
-### ![Gold](https://img.shields.io/badge/Gold-d4af37?style=flat-square&labelColor=555) R3D · eSun
+**[Rosa3D](https://rosa3d.pl)** ships TigerTag on **100 % of its 1 kg spool
+production**, announced publicly on their own channels: the first filament
+manufacturer to integrate the protocol directly into its factory lines, with more
+than 250 000 tagged spools produced since deployment began. Their ReFills carry two
+chips, recoverable and reusable once the spool is finished. Nothing to order and
+nothing to ask for — buy the filament, put it on the scale, it identifies itself.
 
-**R3D** and **eSun** integrate TigerTag on demand during production, have already
-manufactured large quantities of tagged spools, and have made a **public, official
-commitment** to the standard with a high level of integration.
+<h3>
+  <img src="https://img.shields.io/badge/GOLD-d4af37?style=flat-square&labelColor=3a3a3a" alt="Gold">
+  &nbsp;Large-scale production, public commitment
+</h3>
 
-### ![Silver](https://img.shields.io/badge/Silver-aaa9ad?style=flat-square&labelColor=555) SUNLU · Landu · JamgHe
+<p align="center">
+  <a href="https://r3d-europe.com"><img src="assets/partners/r3d.png" alt="R3D" height="40"></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://www.esun3d.com"><img src="assets/partners/esun.png" alt="eSun" height="40"></a>
+</p>
 
-**SUNLU**, **Landu** and **JamgHe** have integrated the technology and tag spools
-on request.
+**[R3D](https://r3d-europe.com)** has begun large-scale deployment across its
+European filament production, after more than a year working with the TigerTag
+team to integrate the protocol into the factory ecosystem. Their chips are left
+unlocked, so the data can be erased and reprogrammed.
+
+**[eSun](https://www.esun3d.com)** has officially integrated TigerTag and is
+rolling it out as a **pilot programme in the French market**, with stated plans to
+expand across Europe and then globally. That is their own description of the
+scope, and it is worth repeating accurately rather than rounding up.
+
+<h3>
+  <img src="https://img.shields.io/badge/SILVER-aaa9ad?style=flat-square&labelColor=3a3a3a" alt="Silver">
+  &nbsp;Integrated on request
+</h3>
+
+<p align="center">
+  <a href="https://www.sunlu.com"><img src="assets/partners/sunlu.png" alt="Sunlu" height="34"></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://www.landu3d.com"><img src="assets/partners/landu.png" alt="Landu" height="26"></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://www.jamghe.com"><img src="assets/partners/jamghe.png" alt="JamgHE" height="34"></a>
+</p>
+
+**[Sunlu](https://www.sunlu.com)**, **[Landu](https://www.landu3d.com)** and
+**[JamgHE](https://www.jamghe.com)** tag spools on request.
+
+### Also shipping TigerTag
+
+<p align="center">
+  <a href="https://nanovia.tech"><img src="assets/partners/nanovia.png" alt="Nanovia" height="40"></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://www.filforme.com"><img src="assets/partners/filforme.png" alt="Filforme" height="36"></a>
+</p>
+
+**[Nanovia](https://nanovia.tech)** and **[Filforme](https://www.filforme.com)**
+are also in the partner list.
 
 ---
 
 If you make filament and want your spools to identify themselves on any TigerTag
-device, the protocol is open and documented:
-[TigerTag-RFID-Guide](https://github.com/TigerTag-Project/TigerTag-RFID-Guide).
-Talk to us on [Discord](https://discord.gg/3Qv5TSqnJH).
+device, the protocol is open and documented in
+**[TigerTag-RFID-Guide](https://github.com/TigerTag-Project/TigerTag-RFID-Guide)**,
+and the case for manufacturers is in
+**[TigerSystem-Docs](https://github.com/TigerTag-Project/TigerSystem-Docs)**.
+Come talk to us on [Discord](https://discord.gg/3Qv5TSqnJH).
 
-Brand names and logos are the property of their respective owners; their presence
-here records who ships the standard, and implies no endorsement of this firmware
-in either direction.
+<sub>Adoption claims above are the manufacturers' own public statements, quoted
+from their announcements rather than asserted by us. Brand names and logos are the
+property of their respective owners; their presence records who ships the protocol
+and implies no endorsement of this firmware in either direction. TigerTag is an
+**open protocol** — that is our wording, and it is deliberately narrower than the
+"open source" some partners use in their own posts.</sub>
 
 ## Thanks
 

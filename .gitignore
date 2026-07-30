@@ -35,8 +35,10 @@ restore_point_*.bin
 # ---------------------------------------------------------------------------
 # 6 brands got a generated RGB565 header (~1.08 MB each) and a web PNG, but
 # nothing ever referenced them: 0 #include, 0 use of the gLogo_* symbols.
-# Kept out of git rather than deleted — regenerate from data/www/img/*_logo.png
-# if the feature is revived. See the tracking issue.
+# Kept out of git rather than deleted. If the feature is revived, the canonical
+# brand logos now live in assets/partners/ (fetched from TigerTag-Hub, which is
+# where the website's own partner wall gets them) — use those, not the old
+# device-UI PNGs, one of which was entirely blank.
 TigerTagSplashESP32/logo_esun.h
 TigerTagSplashESP32/logo_jamghe.h
 TigerTagSplashESP32/logo_landu.h

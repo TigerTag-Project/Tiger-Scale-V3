@@ -177,7 +177,7 @@ is loaded.
 
 ## i18n
 
-`TigerTagSplashESP32/i18n.h` — **82 keys × 8 languages** (EN/PT/FR/ES/DE/ZH/IT/PL).
+`TigerTagSplashESP32/i18n.h` — **88 keys × 8 languages** (EN/PT/FR/ES/DE/ZH/IT/PL).
 
 1. Add the key to the enum, before `I18N_COUNT`.
 2. Add one entry to **every** language block, in the same order as the enum.

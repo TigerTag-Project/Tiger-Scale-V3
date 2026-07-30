@@ -20,28 +20,28 @@
 //   FORWARD DECLARATIONS                                   294-  431
 //   WEIGHT ROUNDING                                        432-  451
 //   GLOBAL OBJECTS                                         452-  787
-//   CONFIGURATION VARIABLES                                788- 1191
-//   OLED DISPLAY                                          1192- 1942
-//   CLOUD PARSING                                         1943- 1957
-//   WIFI SETUP                                            1958- 4731
-//   LITTLEFS                                              4732- 5031
-//   FIREBASE AUTHENTICATION                               5032- 6640
-//   WEBSOCKET                                             6641- 6667
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  6668- 6779
-//   UNIFIED WS FRAME BUILDER                              6780- 6870
-//   WEIGHT FILTER HELPERS                                 6871- 6885
-//   POST-SEND STATE RESET (shared by all send paths)      6886- 6906
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  6907- 7163
-//   WEB SERVER                                            7164- 8440
-//   CLOUD COMMUNICATION                                   8441- 8623
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  8624- 9051
-//   mDNS                                                  9052- 9089
-//   SCALE                                                 9090- 9256
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)   9257- 9374
-//   RFID                                                  9375-10517
-//   OTA — Over-the-air firmware + filesystem update    10518-11132
-//   LVGL bridge + main weigh screen                      11133-11763
-//   SETUP & LOOP                                         11764-12762
+//   CONFIGURATION VARIABLES                                788- 1198
+//   OLED DISPLAY                                          1199- 1949
+//   CLOUD PARSING                                         1950- 1964
+//   WIFI SETUP                                            1965- 4894
+//   LITTLEFS                                              4895- 5194
+//   FIREBASE AUTHENTICATION                               5195- 6803
+//   WEBSOCKET                                             6804- 6830
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  6831- 6942
+//   UNIFIED WS FRAME BUILDER                              6943- 7033
+//   WEIGHT FILTER HELPERS                                 7034- 7048
+//   POST-SEND STATE RESET (shared by all send paths)      7049- 7069
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  7070- 7326
+//   WEB SERVER                                            7327- 8603
+//   CLOUD COMMUNICATION                                   8604- 8786
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  8787- 9214
+//   mDNS                                                  9215- 9252
+//   SCALE                                                 9253- 9419
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)   9420- 9537
+//   RFID                                                  9538-10680
+//   OTA — Over-the-air firmware + filesystem update    10681-11298
+//   LVGL bridge + main weigh screen                      11299-11929
+//   SETUP & LOOP                                         11930-12947
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -273,7 +273,7 @@ const char* TIGERTAG_FIREBASE_WEB_API_KEY = "AIzaSyCkxPTs_Cv0KVLqsZj-UKWWqIY0Otf
 
 // Embedded build identity — exposed via /api/status and the heartbeat so the
 // app/Studio can compare against the latest published version.json.
-#define TIGERSCALE_FW_VERSION  "3.0.0"
+#define TIGERSCALE_FW_VERSION  "3.1.0"
 #ifndef TIGERSCALE_GIT_SHA
 #define TIGERSCALE_GIT_SHA     "dev"
 #endif
@@ -405,7 +405,7 @@ static bool otaApply(const String& url, const String& expectedSha, int updateTyp
 bool otaFetchLatest();
 void pollOtaCommands();
 static void otaSetStatus(const char* status, int progress, const String& message);
-static bool otaFirmwareSlotAvailable();   // false on this partition table — see its definition
+static bool otaFirmwareSlotAvailable();   // guards a partial update — see its definition
 static bool otaStartJob(const String& fwUrl, const String& fwSha,
                         const String& fsUrl, const String& fsSha);
 static void otaCheckTaskFn(void* arg);
@@ -1093,6 +1093,13 @@ const uint32_t OTA_CHECK_BOOT_DELAY_MS = 20000UL;      // first check, 20 s afte
 const uint32_t OTA_CHECK_INTERVAL_MS   = 6UL * 3600UL * 1000UL;  // then every 6 h
 uint32_t gLastOtaCheckMs   = 0;
 bool     gOtaCheckRunning  = false;
+// Raised by otaCheckTaskFn when it finds a newer version, consumed by loop().
+// The check runs on its own task and must not touch LVGL, so it only sets a flag.
+static volatile bool gOtaPromptPending = false;
+// Answering No defers the prompt for a day: the background check keeps running
+// every 6 h, and without this it would ask again four times before tomorrow.
+const uint32_t OTA_PROMPT_SNOOZE_MS  = 24UL * 3600UL * 1000UL;
+static uint32_t gOtaPromptSnoozeUntil = 0;   // 0 = never declined
 static uint32_t gLastDbCheckMs       = 0;    // 0 = no network DB sync performed yet
 static volatile bool gDbUpdateRunning = false; // guard: don't spawn 2 tasks at once
 static bool     gPostFirebaseStabilizePending = false;
@@ -4148,6 +4155,120 @@ static void runHardwareTest() {
 // Data/logic (WiFi check, otaFetchLatest()/otaApply() calls, version
 // comparison, no-firmware-url fallback message, restart on success) is
 // unchanged.
+// Yes/No modal drawn over whatever screen is currently loaded. Returns true for
+// Yes. Used by the two steps of the update flow: the prompt raised when a new
+// version is detected, and the confirmation before the point of no return.
+//
+// It blocks on lv_timer_handler() instead of returning through a callback, so it
+// must never be called from inside an LVGL event callback — that is the first
+// trap in docs/FIRMWARE.md. Both call sites are loop() or a screen function.
+//
+// `sub` is optional; pass nullptr for a single-line modal.
+static bool lvglAskYesNo(const char *body, const char *sub) {
+    static int sAnswer;
+    sAnswer = -1;
+    auto answerCb = [](lv_event_t *e) {
+        lv_obj_t *o = (lv_obj_t *)lv_event_get_target(e);
+        sAnswer = (int)(intptr_t)lv_obj_get_user_data(o);
+    };
+
+    const int CARD_W = 376, PAD = 22, TEXT_W = CARD_W - 2 * PAD, BTN_H = 46;
+
+    // The scrim is clickable so a tap outside the card lands on it and not on the
+    // screen underneath, which would still be live otherwise.
+    lv_obj_t *scrim = lv_obj_create(lv_scr_act());
+    lv_obj_remove_style_all(scrim);
+    lv_obj_set_size(scrim, 480, 320);
+    lv_obj_set_pos(scrim, 0, 0);
+    lv_obj_set_style_bg_color(scrim, lv_color_hex(0x04070B), 0);
+    lv_obj_set_style_bg_opa(scrim, 190, 0);
+    lv_obj_clear_flag(scrim, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(scrim, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *card = lv_obj_create(scrim);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_width(card, CARD_W);
+    lv_obj_set_style_bg_color(card, LVCOL_CARD, 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card, LVCOL_BORDER, 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, 12, 0);
+    lv_obj_set_style_clip_corner(card, true, 0);  // else the flat buttons square off the bottom corners
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *bodyLbl = lv_label_create(card);
+    lv_label_set_long_mode(bodyLbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(bodyLbl, TEXT_W);
+    lv_obj_set_style_text_align(bodyLbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(bodyLbl, LVCOL_TEXT, 0);
+    lv_label_set_text(bodyLbl, body);
+    lv_obj_set_pos(bodyLbl, PAD, PAD);
+
+    // Measure rather than assume: the same string wraps to one line in English and
+    // two in German, and the card has to grow with it.
+    lv_obj_update_layout(card);
+    int y = PAD + lv_obj_get_height(bodyLbl);
+
+    if (sub && sub[0]) {
+        lv_obj_t *subLbl = lv_label_create(card);
+        lv_label_set_long_mode(subLbl, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(subLbl, TEXT_W);
+        lv_obj_set_style_text_align(subLbl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(subLbl, LVCOL_MUTED, 0);
+        lv_obj_set_style_text_font(subLbl, &lv_font_montserrat_14, 0);
+        lv_label_set_text(subLbl, sub);
+        lv_obj_set_pos(subLbl, PAD, y + 8);
+        lv_obj_update_layout(card);
+        y += 8 + lv_obj_get_height(subLbl);
+    }
+    y += PAD - 4;
+
+    lv_obj_t *hr = lv_obj_create(card);
+    lv_obj_remove_style_all(hr);
+    lv_obj_set_size(hr, CARD_W, 1);
+    lv_obj_set_pos(hr, 0, y);
+    lv_obj_set_style_bg_color(hr, LVCOL_BORDER, 0);
+    lv_obj_set_style_bg_opa(hr, LV_OPA_COVER, 0);
+
+    lv_obj_t *vr = lv_obj_create(card);
+    lv_obj_remove_style_all(vr);
+    lv_obj_set_size(vr, 1, BTN_H);
+    lv_obj_set_pos(vr, CARD_W / 2, y + 1);
+    lv_obj_set_style_bg_color(vr, LVCOL_BORDER, 0);
+    lv_obj_set_style_bg_opa(vr, LV_OPA_COVER, 0);
+
+    const struct { LangKey key; lv_color_t col; int val; int x; } BTN[2] = {
+        { I18N_YES, LVCOL_GREEN, 1, 0          },
+        { I18N_NO,  LVCOL_MUTED, 0, CARD_W / 2 },
+    };
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t *b = lv_btn_create(card);
+        lv_obj_remove_style_all(b);
+        lv_obj_set_size(b, CARD_W / 2, BTN_H);
+        lv_obj_set_pos(b, BTN[i].x, y + 1);
+        lv_obj_set_style_bg_color(b, LVCOL_BORDER, LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_STATE_PRESSED);
+        lv_obj_set_user_data(b, (void *)(intptr_t)BTN[i].val);
+        lv_obj_add_event_cb(b, answerCb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t *l = lv_label_create(b);
+        lv_label_set_text(l, t(BTN[i].key));
+        lv_obj_set_style_text_color(l, BTN[i].col, 0);
+        lv_obj_center(l);
+    }
+
+    lv_obj_set_height(card, y + 1 + BTN_H);
+    lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+
+    while (sAnswer < 0) { lv_timer_handler(); delay(5); }
+
+    lv_obj_del(scrim);
+    lv_timer_handler();
+    // Drain the touch so the release does not immediately fire whatever sits under
+    // the card — the same guard every screen transition here uses.
+    { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis() - t0 < 800) delay(20); }
+    return sAnswer == 1;
+}
+
 static void runOtaMenu() {
     enum OtaAction { OA_NONE, OA_BACK, OA_INSTALL };
     static OtaAction sOtaAction;
@@ -4197,32 +4318,58 @@ static void runOtaMenu() {
     lv_obj_set_style_text_align(hintLbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(hintLbl, LV_ALIGN_TOP_MID, 0, 94);
 
-    lv_obj_t *pbBg = lv_obj_create(scr);
-    lv_obj_remove_style_all(pbBg);
-    lv_obj_set_size(pbBg, 440, 22);
-    lv_obj_align(pbBg, LV_ALIGN_TOP_MID, 0, 120);
-    lv_obj_set_style_bg_color(pbBg, LVCOL_CARD, 0);
-    lv_obj_set_style_bg_opa(pbBg, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(pbBg, LVCOL_BORDER, 0);
-    lv_obj_set_style_border_width(pbBg, 1, 0);
-    lv_obj_set_style_radius(pbBg, 6, 0);
-    lv_obj_clear_flag(pbBg, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(pbBg, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_t *pbFill = lv_obj_create(pbBg);
-    lv_obj_remove_style_all(pbFill);
-    lv_obj_set_size(pbFill, 0, 20);
-    lv_obj_set_pos(pbFill, 1, 1);
-    lv_obj_set_style_bg_color(pbFill, LVCOL_GREEN, 0);
-    lv_obj_set_style_bg_opa(pbFill, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(pbFill, 5, 0);
-    lv_obj_clear_flag(pbFill, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(pbFill, LV_OBJ_FLAG_CLICKABLE);
+    // --- progress ring, shown only while the images are being written -----------
+    // Hidden until Install is confirmed, at which point it replaces the whole page.
+    lv_obj_t *ring = lv_arc_create(scr);
+    lv_obj_set_size(ring, 150, 150);
+    lv_obj_align(ring, LV_ALIGN_TOP_MID, 0, 34);   // centre lands at (240, 109)
+    lv_arc_set_rotation(ring, 270);                // start at 12 o'clock
+    lv_arc_set_bg_angles(ring, 0, 360);
+    lv_arc_set_range(ring, 0, 100);
+    lv_arc_set_value(ring, 0);
+    lv_obj_remove_style(ring, nullptr, LV_PART_KNOB);   // not a control, just an indicator
+    lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_arc_width(ring, 9, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(ring, 9, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(ring, lv_color_hex(0x26456F), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(ring, LVCOL_GREEN, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(ring, true, LV_PART_INDICATOR);
+    lv_obj_add_flag(ring, LV_OBJ_FLAG_HIDDEN);
 
-    lv_obj_t *pbMsgLbl = lv_label_create(scr);
-    lv_obj_set_style_text_color(pbMsgLbl, LVCOL_MUTED, 0);
-    lv_obj_set_style_text_font(pbMsgLbl, &lv_font_montserrat_14, 0);
-    lv_obj_align(pbMsgLbl, LV_ALIGN_TOP_MID, 0, 148);
-    lv_obj_add_flag(pbMsgLbl, LV_OBJ_FLAG_HIDDEN);
+    // The arrow is drawn with lv_line rather than an icon glyph: a line passes
+    // exactly through the points given, so it needs none of the bitmap workaround
+    // that lv_obj_align_to() forces on small icons (docs/FIRMWARE.md, LVGL v8 traps).
+    // Points span x 0..30, y 8..44, so the ink centre is (15, 26); placing the
+    // objects at (225, 83) puts that centre on the ring's.
+    static const lv_point_t kArrowShaft[] = { {15, 8}, {15, 44} };
+    static const lv_point_t kArrowHead[]  = { {0, 23}, {15, 8}, {30, 23} };
+    lv_obj_t *arrow[2];
+    for (int i = 0; i < 2; i++) {
+        arrow[i] = lv_line_create(scr);
+        lv_line_set_points(arrow[i], i == 0 ? kArrowShaft : kArrowHead, i == 0 ? 2 : 3);
+        lv_obj_set_pos(arrow[i], 225, 83);
+        lv_obj_set_style_line_color(arrow[i], LVCOL_GREEN, 0);
+        lv_obj_set_style_line_width(arrow[i], 8, 0);
+        lv_obj_set_style_line_rounded(arrow[i], true, 0);
+        lv_obj_add_flag(arrow[i], LV_OBJ_FLAG_HIDDEN);
+    }
+
+    lv_obj_t *ringPct = lv_label_create(scr);
+    lv_obj_set_style_text_color(ringPct, LVCOL_TEXT, 0);
+    lv_obj_set_style_text_font(ringPct, &lv_font_montserrat_28, 0);
+    lv_obj_align(ringPct, LV_ALIGN_TOP_MID, 0, 190);
+    lv_obj_add_flag(ringPct, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t *ringMsg = lv_label_create(scr);
+    lv_obj_set_style_text_color(ringMsg, LVCOL_MUTED, 0);
+    lv_obj_align(ringMsg, LV_ALIGN_TOP_MID, 0, 228);
+    lv_obj_add_flag(ringMsg, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t *ringWarn = lv_label_create(scr);
+    lv_label_set_text(ringWarn, t(I18N_OTA_DO_NOT_POWER_OFF));
+    lv_obj_set_style_text_color(ringWarn, LVCOL_TEXT, 0);
+    lv_obj_align(ringWarn, LV_ALIGN_TOP_MID, 0, 258);
+    lv_obj_add_flag(ringWarn, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *installBtn = lv_btn_create(scr);
     lv_obj_set_size(installBtn, 300, 46);
@@ -4338,33 +4485,42 @@ static void runOtaMenu() {
 
     lv_obj_clear_flag(installBtn, LV_OBJ_FLAG_HIDDEN);
 
-    // Wait for Install or Back
-    if (waitAction() == OA_BACK) {
-        lv_scr_load(lvScreen);
-        lv_obj_del(scr);
-        { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis()-t0 < 800) delay(20); }
-        return;
+    // Wait for Install or Back. Install asks to confirm first; declining comes
+    // back here rather than leaving the page, hence the loop.
+    for (;;) {
+        if (waitAction() == OA_BACK) {
+            lv_scr_load(lvScreen);
+            lv_obj_del(scr);
+            { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis()-t0 < 800) delay(20); }
+            return;
+        }
+        if (lvglAskYesNo(t(I18N_OTA_CONFIRM), t(I18N_OTA_CONFIRM_WARN))) break;
     }
 
     // --- Install ---
-    lv_obj_add_flag(installBtn, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(backBtn, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(hintLbl, "");
-    setStatus(t(I18N_OTA_INSTALLING), LVCOL_MUTED);
-    lv_obj_clear_flag(pbBg, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(pbMsgLbl, LV_OBJ_FLAG_HIDDEN);
+    // The page gives way entirely: from here the screen has one job, and the only
+    // thing the user can do about it is leave the power on.
+    lv_obj_t *pageParts[] = { title, div, verLbl, statusLbl, hintLbl, installBtn, backBtn };
+    for (lv_obj_t *o : pageParts) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_t *ringParts[] = { ring, arrow[0], arrow[1], ringPct, ringMsg, ringWarn };
+    for (lv_obj_t *o : ringParts) lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(ringPct, "0%");
+    lv_label_set_text(ringMsg, t(I18N_OTA_INSTALLING));
     pump(1);
 
-    // The progress bar spans both images when the manifest offers a filesystem:
-    // 0-50% for the web UI, 50-100% for the firmware. With firmware only, it
-    // spans the whole bar as before.
+    // One word covers the whole operation: otaApply reads from the socket and
+    // writes to flash in the same loop, so there is no separate download phase to
+    // name. The ring likewise runs 0-100 once across both images -- 0-50% for the
+    // web UI and 50-100% for the firmware when the manifest offers a filesystem,
+    // the full sweep when it is firmware only -- instead of resetting between them.
     const bool haveFs = gOtaLittlefsUrl.length() > 0;
     auto progressTo = [&](int base, int span) {
-        return [&, base, span](int pct, const String& msg) {
+        return [&, base, span](int pct, const String& /*msg*/) {
             int overall = base + (span * pct / 100);
-            int filled = 438 * overall / 100;
-            lv_obj_set_width(pbFill, filled > 0 ? filled : 0);
-            lv_label_set_text(pbMsgLbl, msg.c_str());
+            lv_arc_set_value(ring, overall);
+            char pctBuf[8];
+            snprintf(pctBuf, sizeof(pctBuf), "%d%%", overall);
+            lv_label_set_text(ringPct, pctBuf);
             lv_timer_handler();
         };
     };
@@ -4383,15 +4539,22 @@ static void runOtaMenu() {
                       progressTo(haveFs ? 50 : 0, haveFs ? 50 : 100));
     }
 
-    lv_obj_clear_flag(backBtn, LV_OBJ_FLAG_HIDDEN);
-
     if (!ok) {
+        // Bring the page back, so the error has somewhere to be read and Back works.
+        for (lv_obj_t *o : ringParts) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+        for (lv_obj_t *o : pageParts) lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(installBtn, LV_OBJ_FLAG_HIDDEN);
         setStatus(t(I18N_OTA_ERROR), LVCOL_RED);
+        centerMsg();
         exitScreen();
         return;
     }
 
-    setStatus(t(I18N_OTA_SUCCESS), LVCOL_GREEN);
+    // Full ring, and the warning goes: there is nothing left to interrupt.
+    lv_arc_set_value(ring, 100);
+    lv_label_set_text(ringPct, "100%");
+    lv_label_set_text(ringMsg, t(I18N_REBOOTING));
+    lv_obj_add_flag(ringWarn, LV_OBJ_FLAG_HIDDEN);
     pump(2000);
     ESP.restart();
 }
@@ -10558,16 +10721,17 @@ static String sha256ToHex(const uint8_t b[32]) {
 // partition is not eligible, and the call returns NULL, which surfaces as the
 // baffling "Update.begin failed (need=… free=0)".
 //
-// This board's partition table is exactly that shape: one `app0` of subtype
-// `factory`, plus an `otadata` partition that has nothing to arbitrate between.
-// So over-the-air FIRMWARE update cannot work here at all, and never could.
-// Filesystem update is unaffected: `spiffs` is found by label.
+// `partitions.csv` now declares `app0`/`app1` as ota_0/ota_1, so this returns true
+// and firmware update over the air works. It did not always: the table used to
+// carry a single `factory` app partition, which is why the symptom above is
+// documented rather than merely handled.
 //
-// Checking up front matters because the updater applies the filesystem first. Left
-// unguarded, every attempt would flash a new web UI, fail on the firmware, and
-// leave the device running old firmware behind a new UI — a partial update that is
-// worse than refusing. Fixing this properly needs a partition table with two app
-// slots, which is a USB reflash; see the tracking issue.
+// The check stays because it is still the difference between refusing cleanly and
+// corrupting an install. The updater applies the filesystem FIRST; unguarded on a
+// factory-only table, every attempt would flash a new web UI, fail on the firmware
+// and leave old firmware serving a new UI — a partial update worse than none. A
+// device flashed from an older image, or one reflashed with a different table,
+// still lands here.
 static bool otaFirmwareSlotAvailable() {
     return esp_ota_get_next_update_partition(NULL) != NULL;
 }
@@ -10651,6 +10815,8 @@ static void otaCheckTaskFn(void* /*arg*/) {
         Serial.printf("[OTA] latest=%s running=%s%s\n",
                       gOtaLatestVer.c_str(), TIGERSCALE_FW_VERSION,
                       newer ? "  UPDATE AVAILABLE" : "  (up to date)");
+        // Offering it is loop()'s job — LVGL is not thread-safe and this is a task.
+        if (newer && gOtaFirmwareUrl.length() > 0) gOtaPromptPending = true;
     } else {
         Serial.println("[OTA] background check failed — manifest unreachable");
     }
@@ -12096,6 +12262,25 @@ void loop() {
             gLastOtaCheckMs  = millis();
             gOtaCheckRunning = true;
             xTaskCreatePinnedToCore(otaCheckTaskFn, "otaCheck", 12288, nullptr, 1, nullptr, 0);
+        }
+    }
+
+    // A version was found: offer it, here on the main task where LVGL is safe.
+    // Only from the idle weigh screen — never over a settings sub-screen, and never
+    // in the middle of reading a tag or syncing a spool.
+    if (gOtaPromptPending && wfPhase == WF_IDLE && !rfidTestActive
+        && lvScreen != nullptr && lv_scr_act() == lvScreen) {
+        gOtaPromptPending = false;
+        // Signed difference, so this still holds when millis() wraps at 49 days.
+        bool snoozed = gOtaPromptSnoozeUntil != 0
+                       && (int32_t)(millis() - gOtaPromptSnoozeUntil) < 0;
+        if (!snoozed) {
+            if (lvglAskYesNo(t(I18N_OTA_DETECTED), nullptr)) {
+                runOtaMenu();   // the version numbers live there, not in the modal
+            } else {
+                gOtaPromptSnoozeUntil = millis() + OTA_PROMPT_SNOOZE_MS;
+                Serial.println("[OTA] update declined — not asking again for 24 h");
+            }
         }
     }
 

@@ -12,7 +12,7 @@ One Arduino C++ file, **about 12 500 lines**, divided into 26 numbered sections 
 by `bash scripts/update_toc.sh` from the `// §N — TITLE` banners, so it cannot
 silently disagree with the file.
 
-`i18n.h` holds every on-device string: **82 keys × 8 languages**
+`i18n.h` holds every on-device string: **88 keys × 8 languages**
 (EN/PT/FR/ES/DE/ZH/IT/PL). The web UI's translations are separate, under
 `data/www/locales/`.
 
@@ -168,7 +168,7 @@ bar and verifies a SHA-256.
 ## Keeping the tooling honest
 
 ```bash
-bash scripts/check-i18n.sh      # 82 keys present in all 8 language blocks
+bash scripts/check-i18n.sh      # 88 keys present in all 8 language blocks
 bash scripts/check-codemap.sh   # CODEMAP line numbers still accurate
 bash scripts/update_toc.sh      # regenerate the in-file table of contents
 ```

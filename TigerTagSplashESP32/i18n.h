@@ -110,6 +110,12 @@ enum LangKey : uint8_t {
     I18N_OTA_NO_WIFI,
     I18N_INSTALL,
     I18N_NO_ACCOUNT,
+    I18N_YES,
+    I18N_NO,
+    I18N_OTA_DETECTED,
+    I18N_OTA_CONFIRM,
+    I18N_OTA_CONFIRM_WARN,
+    I18N_OTA_DO_NOT_POWER_OFF,
     I18N_COUNT,
 };
 
@@ -201,6 +207,12 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* OTA_NO_WIFI     */ "WiFi required",
         /* INSTALL         */ "Install",
         /* NO_ACCOUNT      */ "No account",
+          /* YES             */ "Yes",
+          /* NO              */ "No",
+          /* OTA_DETECTED    */ "New firmware available. Go to the update page?",
+          /* OTA_CONFIRM     */ "Confirm update?",
+          /* OTA_CONFIRM_WARN */ "About 2 minutes. Do not power off the TigerScale.",
+          /* OTA_DO_NOT_POWER_OFF */ "Do not power off",
     },
     // PT
     {
@@ -286,6 +298,12 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* OTA_NO_WIFI     */ "WiFi necessario",
         /* INSTALL         */ "Instalar",
         /* NO_ACCOUNT      */ "Sem conta",
+          /* YES             */ "Sim",
+          /* NO              */ "Nao",
+          /* OTA_DETECTED    */ "Novo firmware disponivel. Ir para a pagina de atualizacao?",
+          /* OTA_CONFIRM     */ "Confirmar atualizacao?",
+          /* OTA_CONFIRM_WARN */ "Cerca de 2 minutos. Nao desligue a TigerScale.",
+          /* OTA_DO_NOT_POWER_OFF */ "Nao desligar",
     },
     // FR
     {
@@ -371,6 +389,12 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* OTA_NO_WIFI     */ "WiFi requis",
         /* INSTALL         */ "Installer",
         /* NO_ACCOUNT      */ "Aucun compte",
+          /* YES             */ "Oui",
+          /* NO              */ "Non",
+          /* OTA_DETECTED    */ "Nouveau firmware disponible. Aller a la page de mise a jour ?",
+          /* OTA_CONFIRM     */ "Confirmer la mise a jour ?",
+          /* OTA_CONFIRM_WARN */ "Environ 2 minutes. Ne pas eteindre la TigerScale.",
+          /* OTA_DO_NOT_POWER_OFF */ "Ne pas eteindre",
     },
     // ES
     {
@@ -456,6 +480,12 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* OTA_NO_WIFI     */ "WiFi requerido",
         /* INSTALL         */ "Instalar",
         /* NO_ACCOUNT      */ "Sin cuenta",
+          /* YES             */ "Si",
+          /* NO              */ "No",
+          /* OTA_DETECTED    */ "Nuevo firmware disponible. Ir a la pagina de actualizacion?",
+          /* OTA_CONFIRM     */ "Confirmar actualizacion?",
+          /* OTA_CONFIRM_WARN */ "Unos 2 minutos. No apague la TigerScale.",
+          /* OTA_DO_NOT_POWER_OFF */ "No apagar",
     },
     // DE
     {
@@ -541,6 +571,12 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* OTA_NO_WIFI     */ "WiFi erforderlich",
         /* INSTALL         */ "Installieren",
         /* NO_ACCOUNT      */ "Kein Konto",
+          /* YES             */ "Ja",
+          /* NO              */ "Nein",
+          /* OTA_DETECTED    */ "Neue Firmware verfugbar. Zur Update-Seite gehen?",
+          /* OTA_CONFIRM     */ "Update bestatigen?",
+          /* OTA_CONFIRM_WARN */ "Etwa 2 Minuten. TigerScale nicht ausschalten.",
+          /* OTA_DO_NOT_POWER_OFF */ "Nicht ausschalten",
     },
     // ZH (pinyin — ASCII font only)
     {
@@ -626,6 +662,12 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* OTA_NO_WIFI     */ "Xu yao WiFi",
         /* INSTALL         */ "An zhuang",
         /* NO_ACCOUNT      */ "Wu zhanghao",
+          /* YES             */ "Shi",
+          /* NO              */ "Fou",
+          /* OTA_DETECTED    */ "You xin gujian. Qu gengxin yemian?",
+          /* OTA_CONFIRM     */ "Queren gengxin?",
+          /* OTA_CONFIRM_WARN */ "Yue 2 fenzhong. Qing wu duandian.",
+          /* OTA_DO_NOT_POWER_OFF */ "Qing wu duandian",
     },
     // IT
     {
@@ -711,6 +753,12 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* OTA_NO_WIFI     */ "WiFi richiesto",
         /* INSTALL         */ "Installa",
         /* NO_ACCOUNT      */ "Nessun account",
+          /* YES             */ "Si",
+          /* NO              */ "No",
+          /* OTA_DETECTED    */ "Nuovo firmware disponibile. Vai alla pagina aggiornamento?",
+          /* OTA_CONFIRM     */ "Confermare aggiornamento?",
+          /* OTA_CONFIRM_WARN */ "Circa 2 minuti. Non spegnere la TigerScale.",
+          /* OTA_DO_NOT_POWER_OFF */ "Non spegnere",
     },
     // PL
     {
@@ -796,6 +844,12 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* OTA_NO_WIFI     */ "Wymagane WiFi",
         /* INSTALL         */ "Instaluj",
         /* NO_ACCOUNT      */ "Brak konta",
+          /* YES             */ "Tak",
+          /* NO              */ "Nie",
+          /* OTA_DETECTED    */ "Nowy firmware dostepny. Przejsc do strony aktualizacji?",
+          /* OTA_CONFIRM     */ "Potwierdzic aktualizacje?",
+          /* OTA_CONFIRM_WARN */ "Okolo 2 minut. Nie wylaczaj TigerScale.",
+          /* OTA_DO_NOT_POWER_OFF */ "Nie wylaczaj",
     },
 };
 

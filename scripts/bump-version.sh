@@ -100,19 +100,35 @@ fi
 
 # --- 3. changelog -----------------------------------------------------------
 if [ -f CHANGELOG.md ] && ! grep -q "\[v$NEW\]" CHANGELOG.md; then
+  # The new section goes after the Unreleased *body*, not immediately after its
+  # heading — inserting between the two left Unreleased's "Nothing yet." stranded
+  # under the version that had just been cut. Anything genuinely written under
+  # Unreleased belongs to this release, so it moves down with it; Unreleased is
+  # then reset. The authoritative text is docs/release-notes/vX.Y.Z.md either way.
   TMP="CHANGELOG.md.tmp.$$"
-  awk -v v="$NEW" '
-    !done && /^## \[Unreleased\]/ {
-      print
-      print ""
-      print "## [v" v "](docs/release-notes/v" v ".md)"
-      print ""
-      print "See the release notes for the full entry."
-      done = 1
-      next
-    }
-    { print }
-  ' CHANGELOG.md > "$TMP" && mv "$TMP" CHANGELOG.md
+  python3 - "$NEW" CHANGELOG.md > "$TMP" <<'PY' && mv "$TMP" CHANGELOG.md
+import re, sys
+new, path = sys.argv[1], sys.argv[2]
+lines = open(path, encoding="utf-8").read().split("\n")
+
+out, body, i = [], [], 0
+while i < len(lines) and not lines[i].startswith("## [Unreleased]"):
+    out.append(lines[i]); i += 1
+if i == len(lines):            # no Unreleased heading — leave the file alone
+    sys.stdout.write("\n".join(lines)); raise SystemExit
+i += 1
+while i < len(lines) and not lines[i].startswith("## "):
+    body.append(lines[i]); i += 1
+
+carried = [l for l in body if l.strip() and l.strip() != "Nothing yet."]
+out += ["## [Unreleased]", "", "Nothing yet.", "",
+        "## [v%s](docs/release-notes/v%s.md)" % (new, new), "",
+        "See the release notes for the full entry."]
+if carried:
+    out += [""] + carried
+out += [""] + lines[i:]
+sys.stdout.write("\n".join(out))
+PY
   echo "  CHANGELOG.md entry added"
 fi
 

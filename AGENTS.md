@@ -24,7 +24,7 @@ for it.
 | Path | What it is |
 |------|-----------|
 | `TigerTagSplashESP32/TigerTagSplashESP32.ino` | All firmware. 26 numbered sections plus §AUDIO and §LVGL. |
-| `TigerTagSplashESP32/i18n.h` | Every on-device UI string: 82 keys × 8 languages |
+| `TigerTagSplashESP32/i18n.h` | Every on-device UI string: 88 keys × 8 languages |
 | `TigerTagSplashESP32/logo_*.h`, `icon_bolt.h` | Pre-rasterised RGB565 bitmaps |
 | `include/lv_conf.h` | LVGL v8.4 configuration (found via `-I include`) |
 | `data/www/` | Web UI served from LittleFS |

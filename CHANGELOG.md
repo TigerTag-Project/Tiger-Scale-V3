@@ -14,6 +14,10 @@ scaffold's placeholder text.
 
 Nothing yet.
 
+## [v3.1.0](docs/release-notes/v3.1.0.md)
+
+See the release notes for the full entry.
+
 ## [v3.0.0](docs/release-notes/v3.0.0.md)
 
 Over-the-air updates work for the first time — three stacked faults fixed — plus

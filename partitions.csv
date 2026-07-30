@@ -1,6 +1,28 @@
+# TigerScale V3 flash layout — 16 MB
+#
+# TWO app slots, which is what makes over-the-air firmware update possible.
+# Update.begin(U_FLASH) asks esp_ota_get_next_update_partition() for a spare app
+# slot, and that function only ever returns an ota_N partition — a lone `factory`
+# partition is not eligible. The previous table had exactly one `factory` app
+# partition, so every OTA attempt failed with "free=0". OTA now writes into
+# whichever of app0/app1 is not currently running, and otadata arbitrates.
+#
+# nvs stays at 0x9000 with the same size on purpose: it holds the saved WiFi
+# credentials, the Firebase session and the calibration factor, and keeping it put
+# means changing this table does not cost users their setup.
+#
+# 4 MB per slot against a ~2.4 MB firmware leaves comfortable headroom; the LVGL
+# screens and the language tables are what grow. Total usage is under 10 MB of the
+# chip's 16 MB, so there is room to grow either slot later.
+#
+# Changing this file requires a USB reflash — a device cannot install a new
+# partition table over the air. The filesystem also moves, so re-upload the web UI
+# in the same operation:  bash scripts/flash.sh --fs
+#
 # Name,   Type, SubType, Offset,   Size,      Flags
 nvs,      data, nvs,     0x9000,   0x5000,
 otadata,  data, ota,     0xE000,   0x2000,
-app0,     app,  factory, 0x10000,  0x640000,
-spiffs,   data, spiffs,  0x650000, 0x1A0000,
-coredump, data, coredump,0x7F0000, 0x10000,
+app0,     app,  ota_0,   0x10000,  0x400000,
+app1,     app,  ota_1,   0x410000, 0x400000,
+spiffs,   data, spiffs,  0x810000, 0x1A0000,
+coredump, data, coredump,0x9B0000, 0x10000,

@@ -29,10 +29,11 @@ rotated to 480×320 landscape (rotation 3). Also on board: an AXP2101 PMIC for
 battery and charging, an ES8311 audio codec, and a camera connector (unpopulated
 on this variant — which is why GPIO21 is not usable for I²C, see below).
 
-> Waveshare ships more than one 3.5" ESP32-S3 board, and the firmware's audio-pin
-> comments reference the **-3.5B** schematic while the display and touch code
-> matches what is on this unit. If you buy a different variant, verify the I²S and
-> I²C pins against your own schematic before assuming this documentation applies.
+> The reference unit is the **`-3.5B`** variant — confirmed from the silkscreen in
+> the wiring diagram below, which also matches the schematic the firmware's
+> audio-pin comments reference. Waveshare sells more than one 3.5" ESP32-S3 board,
+> so if yours is a different revision, verify the I²S and I²C pins against your own
+> schematic before assuming this documentation applies.
 
 Official vendor documentation (deliberately linked rather than copied into this
 repository — vendor PDFs are theirs to distribute, and a stale local copy quietly
@@ -54,20 +55,40 @@ diverges from the current revision):
 | Li-ion battery | Optional; charging and level reporting are handled by the on-board AXP2101 |
 | Enclosure | Not yet published for V3 |
 
-### Verified wiring diagram
+### Wiring diagram
 
-A Cirkit Designer schematic of the reference build exists but is not yet public:
+<p align="center">
+  <a href="https://app.cirkitdesigner.com/project/f1310604-82fe-4458-9baa-9507c8e95c80">
+    <img src="img/wiring-hsu.jpg" alt="TigerScale V3 wiring: ESP32-S3-Touch-LCD-3.5B, two PN532 readers over HSU, HX711 and load cell, speaker" width="820">
+  </a>
+</p>
 
-- <https://app.cirkitdesigner.com/project/f1310604-82fe-4458-9baa-9507c8e95c80>
+<p align="center">
+  <sub>The reference HSU build. Click through for the interactive, zoomable version
+  in <a href="https://app.cirkitdesigner.com/project/f1310604-82fe-4458-9baa-9507c8e95c80">Cirkit Designer</a>.</sub>
+</p>
 
-It requires signing in as its owner, so it cannot serve as documentation for
-anyone else yet. Until it is exported into this repository, the pin tables below
-are the authoritative source — they were read out of the firmware itself
-(§1 `HARDWARE CONFIGURATION`), which is what the code actually drives.
+**Read the PN532 pin labels carefully.** The diagram shows each reader's 4-pin
+header labelled `SCL` / `SDA` / `VCC` / `GND`, because that is the silkscreen on
+the module. In **HSU mode those same physical pins carry TXD and RXD** — this is a
+UART build, not an I²C one. Someone who reads the labels literally will wire it
+correctly but then build `esp32s3_i2c`, and find no reader at all. Build
+`esp32s3_hsu`.
 
-Exporting that diagram as a PNG or PDF into `docs/` would be a genuinely useful
-contribution: it would let a builder check their physical wiring against a picture
-instead of a table, and it would let the two be cross-checked against each other.
+Two things this diagram settles:
+
+- **The board is the `-3.5B` variant** — legible on the silkscreen in the render.
+  The firmware's audio-pin comments referenced that schematic without confirmation
+  until now.
+- **RSTPDN is not connected on either reader.** Four wires per module, and the
+  `RSTO` and `IRQ` pins are left floating. The firmware still drives GPIO17 and
+  GPIO9 as resets, harmlessly. So the note below about RSTPDN being optional is
+  not a one-off observation — it is how the reference unit is actually built.
+
+The pin tables further down remain the authoritative reference: they were read out
+of the firmware itself (§1 `HARDWARE CONFIGURATION`), which is what the code
+actually drives. The diagram shows how the reference unit is physically wired; if
+the two ever disagree, the firmware wins and the diagram needs redrawing.
 
 Prices and purchase links are deliberately not listed here yet — the V3
 enclosure and a verified parts list are still to come. See the

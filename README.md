@@ -100,11 +100,17 @@ the IDE has no equivalent for.
 
 | Component | Notes |
 |-----------|-------|
-| Waveshare ESP32-S3-Touch-LCD-3.5 | The 3.5" touch variant specifically |
+| [Waveshare ESP32-S3-Touch-LCD-3.5**B**](https://www.amazon.fr/dp/B0FB2L8V8S) | 480×320 IPS touch, 8 MB PSRAM, 16 MB flash |
 | 2× PN532 NFC module | Elechouse V3 style, with the mode switch and pin header |
 | HX711 + 5 kg load cell | |
 | Li-ion battery | Optional — charging is handled on-board |
 | Enclosure | Not yet published for V3 |
+
+<p align="center">
+  <a href="docs/HARDWARE.md#wiring-diagram">
+    <img src="docs/img/wiring-hsu.jpg" alt="TigerScale V3 wiring diagram" width="700">
+  </a>
+</p>
 
 Full pinout, bus topology and the wiring for each transport:
 **[docs/HARDWARE.md](docs/HARDWARE.md)**
@@ -151,6 +157,84 @@ Stated up front rather than discovered later:
 - **No V3 enclosure is published yet.**
 - `downloadUserAvatar()` is suspected to hang the device when given a valid URL;
   the avatar feature should be considered unfinished.
+
+## Filament brands shipping TigerTag
+
+TigerScale is only as useful as the tags it reads, and those tags exist because
+filament manufacturers chose to put them on their spools. Thank you to the brands
+who committed to the open standard.
+
+### ![Platinum](https://img.shields.io/badge/Platinum-e5e4e2?style=flat-square&labelColor=555) Rosa3D
+
+**Rosa3D** ships TigerTag across its **entire production** — every spool leaves
+the factory with an NFC chip on it. Nothing to order, nothing to ask for: buy the
+filament, put it on the scale, it identifies itself.
+
+### ![Gold](https://img.shields.io/badge/Gold-d4af37?style=flat-square&labelColor=555) R3D · eSun
+
+**R3D** and **eSun** integrate TigerTag on demand during production, have already
+manufactured large quantities of tagged spools, and have made a **public, official
+commitment** to the standard with a high level of integration.
+
+### ![Silver](https://img.shields.io/badge/Silver-aaa9ad?style=flat-square&labelColor=555) SUNLU · Landu · JamgHe
+
+**SUNLU**, **Landu** and **JamgHe** have integrated the technology and tag spools
+on request.
+
+---
+
+If you make filament and want your spools to identify themselves on any TigerTag
+device, the protocol is open and documented:
+[TigerTag-RFID-Guide](https://github.com/TigerTag-Project/TigerTag-RFID-Guide).
+Talk to us on [Discord](https://discord.gg/3Qv5TSqnJH).
+
+Brand names and logos are the property of their respective owners; their presence
+here records who ships the standard, and implies no endorsement of this firmware
+in either direction.
+
+## Thanks
+
+TigerScale V3 exists because people gave it their time, their bench and their
+patience — testing on real hardware, catching what a compiler cannot, and telling
+us plainly when something did not work.
+
+- **OpenMaker**
+- **Rui RP3D**
+- **[Ptitlouis6012](https://github.com/Ptitlouis6012)**
+
+And thank you to everyone supporting the project through Buy Me a Coffee. You know
+who you are; we have deliberately not listed names.
+
+<p align="center">
+  <a href="https://buymeacoffee.com/benoitl">
+    <img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-support%20the%20project-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy me a coffee">
+  </a>
+</p>
+
+If TigerScale saved you from guessing how much filament is left on a spool, and
+you would like to help keep the TigerTag cloud free and the hardware open,
+[a coffee goes a long way](https://buymeacoffee.com/benoitl). Contributing a fix,
+a translation or a bench report is worth just as much — see
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Come say hello
+
+The whole TigerTag ecosystem hangs out in one place. Build help, wiring photos,
+tag questions, feature arguments — all welcome.
+
+<p align="center">
+  <a href="https://discord.gg/3Qv5TSqnJH">
+    <img src="https://img.shields.io/discord/1386357183335104563?label=TigerSystem%20Official&logo=discord&logoColor=white&color=5865F2&style=for-the-badge" alt="Join the TigerSystem Discord">
+  </a>
+</p>
+
+<p align="center">
+  <strong><a href="https://discord.gg/3Qv5TSqnJH">discord.gg/3Qv5TSqnJH</a></strong>
+</p>
+
+If you are stuck on a build, the Discord will usually get you unstuck faster than
+an issue will. Keep issues for reproducible bugs and concrete proposals — that way
+they stay useful to the next person who hits the same thing.
 
 ## Part of the TigerTag ecosystem
 

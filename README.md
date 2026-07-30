@@ -1,4 +1,12 @@
-<h1 align="center">🐯 TigerScale V3</h1>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)"  srcset="assets/logo-tigertag-head-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/logo-tigertag-head.svg">
+    <img src="assets/logo-tigertag-head.svg" alt="TigerTag" width="260">
+  </picture>
+</p>
+
+<h1 align="center">TigerScale V3</h1>
 
 <p align="center">
   <strong>The connected filament scale that knows which spool is on it.</strong><br>
@@ -12,10 +20,6 @@
   <img src="https://img.shields.io/badge/UI-LVGL%20v8.4-6c3.svg" alt="UI: LVGL v8.4">
   <img src="https://img.shields.io/badge/Languages-8-informational.svg" alt="8 languages">
   <a href="https://discord.gg/3Qv5TSqnJH"><img src="https://img.shields.io/badge/Discord-Join-5865F2.svg" alt="Discord"></a>
-</p>
-
-<p align="center">
-  <img src="data/www/img/logo-tigertag.svg" alt="TigerTag" width="160">
 </p>
 
 ---
@@ -120,11 +124,12 @@ Full costed list with every link: **[docs/HARDWARE.md](docs/HARDWARE.md#bill-of-
 Full pinout, bus topology and the wiring for each transport:
 **[docs/HARDWARE.md](docs/HARDWARE.md)**
 
-> ⚠️ **Sealed USB-C-only PN532 dongles will not work with this board.** Not a
-> firmware limitation — the board's USB-C port is wired as a device and can never
-> act as a host. Get modules with a pin header.
-> [The full postmortem](docs/USB_HOST_POSTMORTEM.md) explains why, so you don't
-> have to find out the way we did.
+> [!WARNING]
+> **Sealed USB-C-only PN532 dongles will not work with this board.** Not a firmware
+> limitation — the board's USB-C port is wired as a device and can never act as a
+> host. Get modules with a pin header.
+> [The full postmortem](docs/USB_HOST_POSTMORTEM.md) explains why, so you don't have
+> to find out the way we did.
 
 ## Documentation
 

@@ -108,7 +108,7 @@ https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/HARDWARE.md#bi
 
 Two readers, because a spool can carry its tag on either flange.
 
-> ⚠️ **Get PN532 modules with a pin header.** The sealed USB-C-only dongles cannot
+> **Important — get PN532 modules with a pin header.** The sealed USB-C-only dongles cannot
 > work on this board — its USB-C port is wired as a device and can never act as a
 > host. This is a hardware fact, not a firmware limitation, and it is documented in
 > detail in the repository.

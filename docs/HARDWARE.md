@@ -63,8 +63,9 @@ nothing extra and helps keep the TigerTag cloud free.
 | 1 | Small speaker for the board's SPK connector — optional, gives the beep on tag detect | — |
 | 1 | Li-ion battery — optional; charging and level reporting are handled by the on-board AXP2101 | — |
 
-> ⚠️ **The sealed USB-C-only PN532 dongles will not work.** They have no pin header,
-> and this board cannot act as a USB host — see
+> [!WARNING]
+> **The sealed USB-C-only PN532 dongles will not work.** They have no pin header, and
+> this board cannot act as a USB host — see
 > [USB_HOST_POSTMORTEM.md](USB_HOST_POSTMORTEM.md). Buy the modules with a header.
 
 ### Fasteners

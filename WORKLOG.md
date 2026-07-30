@@ -139,3 +139,58 @@ likely mechanism, which makes this the same underlying story as the AsyncTCP/hea
 question. Retracked as a robustness issue in `readWeight()` rather than a hardware
 bug, and explained in `docs/TROUBLESHOOTING.md` so users who see it in their own
 logs do not go hunting for a dead load cell.
+
+---
+
+## Where this stopped — 2026-07-30, bench session end
+
+The reference unit was disconnected mid-investigation. State on the device: firmware
+2.2.0 (production build, correct manifest URL), **the new two-slot partition table**,
+web UI re-uploaded, WiFi and Firebase still signed in, both PN532 readers reading. It
+is in a good state; nothing needs undoing.
+
+### Done and verified on hardware
+
+- **Filesystem images over the air.** `otaFetchLatest()` reads `littlefs_url` /
+  `littlefs_sha`; the updater applies filesystem first, firmware second, progress bar
+  split 0-50 / 50-100. Proven: `/api/ota/check` returned the matching
+  `latest_littlefs_sha`, the screen offered the update, and the served-file log shows
+  `littlefs.bin` fetched before `firmware.bin`, with
+  `FILESYSTEM partition flashed (1703936 bytes) OK`.
+- **Two OTA app slots.** `app0/ota_0` + `app1/ota_1`, 4 MB each, in the 16 MB flash
+  that was only half allocated. `nvs` kept at 0x9000 — SSID, 140 settings keys and
+  the tare factor all survived, 129 of 20480 bytes changed.
+- **`platformio.ini` restructured around `[env]`.** The hand-copied `[common]` keys
+  meant `board_upload.flash_size = 16MB` reached no environment at all; the build only
+  looked right because PlatformIO takes the app size from the partition table.
+
+### The one thing left, precisely located
+
+Firmware OTA now reaches `flashing (40%) Downloading firmware…` and dies on:
+
+```
+(-32512) SSL - Memory allocation failed
+start_ssl_client: connect failed: -32512
+```
+
+The **first** HTTPS download (1.6 MB filesystem) completes and flashes. The **second**
+cannot allocate its TLS context. So it is not a general shortage — the first session's
+memory is not back by the time the second starts. Tracked on issue #1, with four
+things to try in order of cost: free the first client before opening the second;
+`setBufferSizes()` to shrink mbedTLS's 16 KB default buffers; reboot between the two
+images (the filesystem write is already committed, so the firmware fetch would start
+on a fresh heap); the AsyncTCP flags.
+
+Measure `ESP.getMaxAllocHeap()` — largest contiguous block — immediately before each
+`http.begin()`. That number matters more than total free heap here.
+
+### Next, in order
+
+1. Fix the TLS allocation so an over-the-air update completes end to end (#1).
+2. Web installer on ESP Web Tools with a transport selector — the release workflow
+   already publishes the per-transport `factory.bin` it needs.
+3. Automated versioning and per-release notes, Studio Manager style (#14 in the plan).
+4. SEO / GEO / LLM discovery: `llms.txt`, JSON-LD, README structure.
+
+Product and UI defects — no update notification (#6), the HX711 zeroing (#4) — are
+deliberately parked until the deployment phase is finished, per instruction.

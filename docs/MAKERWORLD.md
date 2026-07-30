@@ -8,8 +8,11 @@ Two notes before you start. **The print settings and the model files are yours t
 fill in** — they are marked `<<TODO>>` below, because inventing a layer height or a
 print time for a model I have not sliced would be worse than leaving a gap. And
 once the model is live, **link it back**: add the MakerWorld URL to `README.md` and
-to the Bill of Materials in [HARDWARE.md](HARDWARE.md), both of which currently say
-"Enclosure — not yet published for V3".
+to the Bill of Materials in [HARDWARE.md](HARDWARE.md), which currently point at the
+[Enclosure v1 release](https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/tag/enclosure-v1) instead.
+
+The model to upload is the 3MF attached to that release — a Bambu Studio project
+with the plates already laid out.
 
 ---
 

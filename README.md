@@ -157,7 +157,7 @@ the IDE has no equivalent for.
 | — | 2× M4×30 and 2× M5×30 (load cell), 4× M2×6 (display) | — |
 | 1 | Small speaker | ships with the ESP32-S3 board |
 | 1 | Li-ion battery | optional — the scale runs on USB |
-| — | Enclosure | not yet published |
+| — | Enclosure — printable 3MF, Bambu Studio project | [download](https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/tag/enclosure-v1) |
 
 Full costed list with every link: **[docs/HARDWARE.md](docs/HARDWARE.md#bill-of-materials)**
 
@@ -197,8 +197,8 @@ Full pinout, bus topology and the wiring for each transport:
 
 ## Contributing
 
-Yes please — especially a V3 enclosure, bench-verification of the SPI and I²C
-wiring, and translations.
+Yes please — especially bench-verification of the SPI and I²C wiring, enclosure
+remixes, and translations.
 
 The firmware is one ~12 500-line file, which sounds worse than it is:
 [CODEMAP.md](CODEMAP.md) maps every section and function so you can go straight to
@@ -222,7 +222,9 @@ Stated up front rather than discovered later:
   confirmed end-to-end on real hardware.
 - **The local HTTP API is unauthenticated.** Anyone on your LAN can read state and
   trigger a tare.
-- **No V3 enclosure is published yet.**
+- **The enclosure has not been print-verified by a second builder.** The 3MF is
+  the one the reference unit was built from; tolerances on another printer are
+  unconfirmed.
 - `downloadUserAvatar()` is suspected to hang the device when given a valid URL;
   the avatar feature should be considered unfinished.
 

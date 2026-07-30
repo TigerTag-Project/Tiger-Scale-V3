@@ -118,8 +118,8 @@ of the firmware itself (§1 `HARDWARE CONFIGURATION`), which is what the code
 actually drives. The diagram shows how the reference unit is physically wired; if
 the two ever disagree, the firmware wins and the diagram needs redrawing.
 
-Prices and purchase links are deliberately not listed here yet — the V3
-enclosure and a verified parts list are still to come. See the
+The printable enclosure is published as a Bambu Studio 3MF:
+[Enclosure v1](https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/tag/enclosure-v1). Prices and a fully costed parts list are still to come. See the
 [V2 repository](https://github.com/TigerTag-Project/Tiger-Scale) for a complete,
 costed build of the previous generation.
 

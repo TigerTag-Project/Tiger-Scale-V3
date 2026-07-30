@@ -57,10 +57,11 @@ TigerScale reads the tag and already knows the brand, the material, the colour, 
 diameter and the empty spool weight. That is the difference between "1043 g of
 something" and "795 g of R3D PLA High Speed, gold".
 
-Tags come from the **TigerTag open protocol**, which several filament
-manufacturers now ship from the factory — Rosa3D tags 100 % of its 1 kg
-production, and R3D, eSun, Sunlu, Landu, JamgHE, Nanovia and Filforme are all in
-the programme. You can also tag your own spools with reusable chips.
+Tags come from the **TigerTag open protocol**. Factory spools carry **TigerTag+**,
+whose reserved bytes hold an origin signature that can be verified offline, on your
+own phone, with no account — a cloned tag fails the check. Rosa3D ships it on 100 %
+of its 1 kg production; R3D and eSun produce it at scale; Sunlu, Landu and JamgHE
+tag on request. You can also tag your own spools with reusable chips.
 
 ## What you get on the screen
 
@@ -234,8 +235,10 @@ data beats a render every time.
 - [ ] Licence chosen deliberately (see above)
 - [ ] Cover photo shows the screen with real data
 - [ ] Links back to the GitHub repo and the Discord
-- [ ] eSun described as a **French pilot programme**, not a worldwide rollout —
-      the manufacturers' scopes are quoted as they stated them, see
+- [ ] eSun described as a **French pilot programme**, not a worldwide rollout, and
+      Nanovia / Filforme not listed as shipping — they are mid-integration. The
+      manufacturers' scopes are quoted as they stated them; see
       `assets/partners/README.md`
+- [ ] Factory spools called **TigerTag+**, not plain TigerTag
 - [ ] **After publishing:** add the MakerWorld URL to `README.md` and to the BoM in
       `HARDWARE.md`, replacing "not yet published for V3"

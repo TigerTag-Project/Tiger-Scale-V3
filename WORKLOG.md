@@ -124,9 +124,18 @@ went from useless to informative.
 All three are recorded in `docs/HARDWARE.md` as a measured scan and tracked as an
 issue.
 
-**Open question, not caused by this cleanup:** `[HX711] not ready` repeats
-continuously. The scale code path (`setupScale`, `readWeight`, `isRapidChange`,
-`processAutoTare`, `displayWeightWithState`) was diffed against the pre-cleanup
-source and is **byte-identical**, and the HX711 pin defines are unchanged, so this
-is either the load cell not being connected on the bench or a pre-existing wiring
-fault. Needs someone with the assembled unit to confirm.
+**Resolved: `[HX711] not ready` is not a wiring fault.** The owner confirmed the
+unit is fully assembled, and a photo of it running shows 795 g with the material
+identified. Live serial 8 hours later agrees: readings do arrive (4.17 g, 0.74 g)
+with `wifi=1 firebase=1`.
+
+What the message actually reflects: `readWeight()` prints it whenever
+`scale.is_ready()` is false (rate-limited to once per 2 s), and after 600 ms of
+continuously missed samples it **forces the weight to 0**. The warning fires at
+exactly its maximum rate, so misses are near-continuous rather than the normal
+inter-sample gap — and `min=2892` on the same unit shows minimum free heap down to
+2.9 KB. Blocking network work stalling `loop()` past the 600 ms threshold is the
+likely mechanism, which makes this the same underlying story as the AsyncTCP/heap
+question. Retracked as a robustness issue in `readWeight()` rather than a hardware
+bug, and explained in `docs/TROUBLESHOOTING.md` so users who see it in their own
+logs do not go hunting for a dead load cell.

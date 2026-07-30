@@ -44,6 +44,38 @@ If you are considering a USB-connected NFC reader: it cannot work on this board.
 [USB_HOST_POSTMORTEM.md](USB_HOST_POSTMORTEM.md) explains why, in enough detail
 that you will not need to test it yourself.
 
+## The log says `[HX711] not ready` — is my load cell dead?
+
+Probably not. This message does **not** mean the HX711 is unwired or broken.
+
+It is printed whenever `scale.is_ready()` returns false, rate-limited to once
+every 2 seconds. On the reference unit it appears continuously while the scale is
+nonetheless weighing correctly — the display shows a real weight and the readings
+reach the cloud.
+
+Check whether you are actually getting readings before investigating hardware:
+
+```bash
+python3 scripts/watch_logs.py <device-ip> --all | grep ALIVE
+```
+
+```
+[ALIVE] up=29777s heap=52412 min=2892 wifi=1 firebase=1 wf=0 hx=0 weight=0.74
+```
+
+If `weight=` moves when you press on the platform, the load cell is fine.
+
+What is going on: after **600 ms** of continuously missed samples, `readWeight()`
+forces the weight to 0. Blocking network work in `loop()` — Firebase HTTPS calls
+in particular — can stall long enough to trip that, on hardware that is working
+perfectly. Note `min=2892` in the line above: minimum free heap down to 2.9 KB,
+which is the same memory pressure discussed in
+[FIRMWARE.md](FIRMWARE.md#memory).
+
+So: a scale that reads correctly but logs this is showing a robustness gap in
+`readWeight()`, not a wiring fault. A scale that logs this **and** never shows a
+weight is a wiring problem — read the next section.
+
 ## The scale reads 0 g, or negative, no matter what
 
 **Check the sign of the raw reading before touching anything in software.** Add a

@@ -14,13 +14,19 @@ screen" feature that was never wired up. Those were the wrong assets for a READM
 several were near-invisible on a light background and `r3d_logo.png` turned out to
 be entirely blank — so they were dropped in favour of this set.
 
-## SVG versions are coming
+## Format
 
-These are PNG because that is all that exists today: TigerTag-Hub carries 128 SVGs
-and none of them is a filament brand — the `brands/` folders hold printer
-manufacturers (Anycubic, Bambu Lab, Creality, Elegoo, FlashForge, Snapmaker). The
-filament partners will be supplied as SVG later; when they are, replace these files
-and drop the `height=` attributes in the README, since vectors scale on their own.
+Vector, in each brand's own colours, on a shared 283x283 canvas with padding. That
+square normalisation is why the README can give them all one `height` and get a row
+that lines up, despite the wildly different aspect ratios of the underlying
+wordmarks.
+
+They replaced an earlier PNG set drawn for the device's dark LVGL UI, which was the
+wrong tool for a README: several were near-invisible on a light background and
+`r3d_logo.png` turned out to be entirely blank.
+
+The Illustrator working file these are exported from is deliberately not committed
+— it is 5.8 MB and nobody consuming this repository needs the source.
 
 ## Using them
 

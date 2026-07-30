@@ -34,6 +34,15 @@ your TigerTag account so every device you own agrees.
 No typing in spool weights. No guessing from the diameter of what's left on the
 reel. Put it down, read it, done.
 
+<p align="center">
+  <img src="assets/spool-tagged.png" alt="A filament refill carrying its round TigerTag chip" width="300">
+</p>
+
+<p align="center">
+  <sub>The chip is a 25 mm sticker on the coil. Every spool carries two, on opposite
+  sides, so one always faces the reader whichever way the spool is loaded.</sub>
+</p>
+
 ## Why V3 is a different machine
 
 V3 is not a firmware update to [TigerScale V2](https://github.com/TigerTag-Project/Tiger-Scale)
@@ -199,7 +208,7 @@ manufacturer is actually committing to when they tag a production line.
 </h3>
 
 <p align="center">
-  <a href="https://rosa3d.pl"><img src="assets/partners/rosa3d.png" alt="Rosa3D" height="46"></a>
+  <a href="https://rosa3d.pl"><img src="assets/partners/rosa3d.svg" alt="Rosa3D" height="72"></a>
 </p>
 
 **[Rosa3D](https://rosa3d.pl)** ships TigerTag+ on **100 % of its 1 kg spool
@@ -215,9 +224,9 @@ nothing to ask for — buy the filament, put it on the scale, it identifies itse
 </h3>
 
 <p align="center">
-  <a href="https://r3d-europe.com"><img src="assets/partners/r3d.png" alt="R3D" height="40"></a>
+  <a href="https://r3d-europe.com"><img src="assets/partners/r3d.svg" alt="R3D" height="72"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://www.esun3d.com"><img src="assets/partners/esun.png" alt="eSun" height="40"></a>
+  <a href="https://www.esun3d.com"><img src="assets/partners/esun.svg" alt="eSun" height="72"></a>
 </p>
 
 **[R3D](https://r3d-europe.com)** has begun large-scale deployment across its
@@ -236,22 +245,30 @@ scope, and it is worth repeating accurately rather than rounding up.
 </h3>
 
 <p align="center">
-  <a href="https://www.sunlu.com"><img src="assets/partners/sunlu.png" alt="Sunlu" height="34"></a>
+  <a href="https://www.sunlu.com"><img src="assets/partners/sunlu.svg" alt="Sunlu" height="72"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://www.landu3d.com"><img src="assets/partners/landu.png" alt="Landu" height="26"></a>
+  <a href="https://www.landu3d.com"><img src="assets/partners/landu.svg" alt="Landu" height="72"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://www.jamghe.com"><img src="assets/partners/jamghe.png" alt="JamgHE" height="34"></a>
+  <a href="https://www.jamghe.com"><img src="assets/partners/jamghe.svg" alt="JamgHE" height="72"></a>
 </p>
 
 **[Sunlu](https://www.sunlu.com)**, **[Landu](https://www.landu3d.com)** and
 **[JamgHE](https://www.jamghe.com)** tag spools with TigerTag+ on request.
 
+### It ships on real boxes
+
+<p align="center">
+  <img src="assets/partner-box-rosa3d.jpg" alt="Rosa3D retail box carrying the TigerTag RFID mark" width="220">
+  <img src="assets/partner-box-esun.jpg" alt="eSun retail box carrying the TigerTag RFID mark" width="220">
+  <img src="assets/partner-box-sunlu.jpg" alt="Sunlu retail box carrying the TigerTag RFID mark" width="220">
+</p>
+
 ### Integration in progress
 
 <p align="center">
-  <a href="https://nanovia.tech"><img src="assets/partners/nanovia.png" alt="Nanovia" height="40"></a>
+  <a href="https://nanovia.tech"><img src="assets/partners/nanovia.svg" alt="Nanovia" height="72"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://www.filforme.com"><img src="assets/partners/filforme.png" alt="Filforme" height="36"></a>
+  <a href="https://www.filforme.com"><img src="assets/partners/filforme.svg" alt="Filforme" height="72"></a>
 </p>
 
 **[Nanovia](https://nanovia.tech)** and **[Filforme](https://www.filforme.com)**
@@ -322,6 +339,15 @@ they stay useful to the next person who hits the same thing.
 ## Part of the TigerTag ecosystem
 
 TigerTag is an open NFC identification standard for 3D-printing materials.
+
+<p align="center">
+  <img src="assets/Hero-TigerSystem-ecosystem.png" alt="Tiger Studio Manager on desktop, the mobile app, and a TigerPOD reader" width="760">
+</p>
+
+<p align="center">
+  <sub>The scale is one device in a wider system: the same spool identity shows up in
+  Tiger Studio Manager, on your phone, and on a TigerPOD.</sub>
+</p>
 
 - **[TigerTag-RFID-Guide](https://github.com/TigerTag-Project/TigerTag-RFID-Guide)** — the protocol spec and public registry
 - **[TigerSystem-Docs](https://github.com/TigerTag-Project/TigerSystem-Docs)** — ecosystem source of truth

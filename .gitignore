@@ -96,3 +96,16 @@ TigerTagSplashESP32/partitions.csv
 # problem this setup exists to prevent. Generate it locally with:
 #   python3 scripts/make-manifest.py --help
 version.json
+
+# ---------------------------------------------------------------------------
+# Design working files and platform-specific icons
+# ---------------------------------------------------------------------------
+# The Illustrator working file is 5.8 MB and is the *source* the exported SVGs
+# come from — nobody consuming this repository needs it, and it would dominate a
+# clone. Keep it wherever the design work lives.
+assets/partners/*.ai
+*.ai
+
+# macOS application-bundle icon: 478 KB, useful only to a Mac .app, which this
+# repository does not build.
+assets/icon.icns

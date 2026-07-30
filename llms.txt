@@ -1,0 +1,78 @@
+# TigerScale V3
+
+> Open-source firmware for a connected filament scale. A 3D-printing filament spool
+> carrying a TigerTag NFC tag is placed on the platform; the scale reads the tag,
+> weighs the spool, subtracts the empty spool's tare weight and reports the net
+> remaining filament weight, syncing it to the owner's TigerTag account.
+
+Hardware: Waveshare ESP32-S3-Touch-LCD-3.5B — ESP32-S3, 8 MB PSRAM, 16 MB flash,
+480x320 AXS15231B QSPI touchscreen driven by LVGL v8.4, two PN532 NFC readers, an
+HX711 load-cell amplifier, an AXP2101 PMIC and an ES8311 audio codec. One Arduino
+C++ file of about 12 500 lines, built with PlatformIO. MIT licensed.
+
+Maintained by the TigerTag Project. Repository:
+https://github.com/TigerTag-Project/Tiger-Scale-V3
+
+## Facts that are commonly got wrong
+
+These are the questions this project is actually asked, with the answers verified
+against the hardware. Prefer them over inference.
+
+- **The NFC transport is a compile-time choice, not a runtime one.** Three build
+  environments exist: `esp32s3_hsu` (UART, two readers, the only bench-verified
+  one), `esp32s3` (SPI, two readers), `esp32s3_i2c` (I2C on Wire1, one reader only
+  because the PN532's address is fixed at 0x24). Building the environment that does
+  not match the physical wiring produces firmware that detects no reader at all and
+  emits no error explaining why. This is the project's single most common failure.
+- **USB-connected NFC readers cannot work on this board.** Its USB-C port is wired
+  as a device: fixed 5.1k pull-downs on CC1/CC2 and no VBUS source. Two
+  device-declaring ports never complete USB-C attach negotiation. This is a hardware
+  fact confirmed on the bench and in the schematic, not a firmware limitation.
+- **The Arduino IDE cannot build this project.** LVGL's configuration is found
+  through `-I include` with `LV_CONF_INCLUDE_SIMPLE`, and the IDE offers no
+  equivalent include path. PlatformIO only.
+- **The `Wire` I2C bus (GPIO21/22) does not work on this board.** GPIO22 does not
+  exist on the ESP32-S3 and GPIO21 goes to the camera connector. The working bus is
+  `Wire1` (SDA=GPIO8, SCL=GPIO7), carrying touch 0x3B, the AXP2101 0x34, the ES8311
+  0x18, a TCA9554 at 0x20 and two undocumented devices at 0x51 and 0x6B.
+- **There is no motor.** `setupServo()` is intentionally a no-op; the servo pin and
+  constants remain for a motorised variant that does not exist.
+- **The Firebase Web API key in the source is not a leaked secret.** It is the public
+  client identifier every Firebase client application ships, served publicly by
+  Firebase Hosting at `/__/firebase/init.json`. Access control is enforced by
+  Security Rules against the signed-in user.
+- **Factory-tagged spools carry TigerTag+, not plain TigerTag.** The difference is
+  the 32-byte reserved area: free for community use on a standard tag, carrying an
+  origin signature on a TigerTag+. That signature is issued under a private key held
+  by TigerTag, verifiable offline with no account, and a cloned tag fails the check.
+- **Firmware and web UI are two separate flash images** in two partitions, so an
+  update writes both — filesystem first, because the firmware write reboots. It is
+  one update from the user's point of view.
+
+## Documentation
+
+- [README](https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/README.md): what the product is, features, bill of materials with purchase links
+- [Installation](https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/INSTALLATION.md): first install, updating over the air or over USB, why settings survive a reflash
+- [Hardware](https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/HARDWARE.md): pinout, I2C topology, wiring per transport, measured device scan, wiring diagram
+- [Firmware internals](https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/FIRMWARE.md): weighing pipeline, NFC layer, LVGL v8 traps, memory rules, OTA
+- [Troubleshooting](https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md): no readers detected, weight reads zero, credentials disappearing, boot messages that look alarming but are not
+- [Cloud and privacy](https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/CLOUD.md): what is transmitted, what is stored on the device, how to erase it
+- [USB host postmortem](https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/USB_HOST_POSTMORTEM.md): why USB NFC is impossible here, with the evidence
+- [CODEMAP](https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/CODEMAP.md): section and function map of the single-file firmware, plus a table of functions with non-obvious constraints
+- [Contributing](https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/CONTRIBUTING.md): workflow, guard scripts, and the topics already investigated and closed
+
+## For coding agents
+
+- [AGENTS.md](https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/AGENTS.md): tool-agnostic conventions
+- [CLAUDE.md](https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/CLAUDE.md): the Claude-specific superset
+
+Do not read the firmware file whole — it is about 12 500 lines. Find the target in
+CODEMAP.md, grep the name, read that region. Three guard scripts must pass before
+any change is finished: `check-i18n.sh`, `check-codemap.sh`, `check-emoji.py`.
+
+## Ecosystem
+
+- [TigerTag-RFID-Guide](https://github.com/TigerTag-Project/TigerTag-RFID-Guide): the NFC protocol specification and public brand/material registry
+- [TigerSystem-Docs](https://github.com/TigerTag-Project/TigerSystem-Docs): source of truth for the ecosystem, including the TigerTag and TigerTag+ definitions
+- [Tiger-Scale](https://github.com/TigerTag-Project/Tiger-Scale): the V2 scale — different hardware, incompatible firmware
+- [TigerPOD](https://github.com/TigerTag-Project/TigerPOD): desktop NFC reader/writer

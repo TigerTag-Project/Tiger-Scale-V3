@@ -24,6 +24,14 @@
 
 ---
 
+**TigerScale V3** is open-source firmware for a connected 3D-printing filament
+scale. It runs on an ESP32-S3 with a 3.5" touchscreen and two PN532 NFC readers:
+place a spool carrying a TigerTag tag on the platform and it identifies the spool,
+weighs it, subtracts the empty spool's weight and reports how much filament is
+left. MIT licensed, built with PlatformIO.
+
+---
+
 ## What it does
 
 Put a filament spool carrying a [TigerTag](https://tigertag.io) NFC tag on the

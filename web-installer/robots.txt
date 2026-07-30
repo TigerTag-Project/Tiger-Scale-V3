@@ -1,0 +1,5 @@
+# The installer and the release manifest are meant to be found.
+User-agent: *
+Allow: /
+
+Sitemap: https://tigertag-project.github.io/Tiger-Scale-V3/sitemap.xml

@@ -152,9 +152,12 @@ including `pt-pt`, which the firmware table does not have).
 - **[`WORKLOG.md`](WORKLOG.md)** — append what you changed as you change it,
   naming the files touched. At a checkpoint, synthesise it into one line, use
   that as the commit message, and reset the file.
-- **The version lives in one place**: `TIGERSCALE_FW_VERSION` in §2.
-  `version.json` is generated from it by the release workflow, so the two cannot
-  drift apart.
+- **The version lives in one place**: `TIGERSCALE_FW_VERSION` in §2. The release
+  workflow refuses to publish if the git tag disagrees with it, and generates the
+  published manifest from it via `scripts/make-manifest.py` — there is no committed
+  `version.json`, because a second copy is how the two drift apart. The over-the-air
+  channel and the web installer read that one generated file, so they always offer
+  the same build.
 - **Secrets**: there are none in this repo, and none should be added. The
   Firebase Web API key in §1 is the public client key every Firebase client app
   ships, and is documented as such at its definition. Never commit WiFi

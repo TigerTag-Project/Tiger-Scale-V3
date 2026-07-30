@@ -1,19 +1,28 @@
 name: release
 
-# Tag a version to publish it:
+# Publish a version:
 #
 #     git tag v2.3.0 && git push origin v2.3.0
 #
-# The tag must match TIGERSCALE_FW_VERSION in the firmware — this workflow
-# refuses to publish if they disagree, which is what stops the manifest and the
-# firmware drifting apart the way they did before.
+# There is exactly ONE source of truth for the version — TIGERSCALE_FW_VERSION in
+# §2 of the firmware — and exactly ONE published manifest. This workflow refuses to
+# publish if the tag disagrees with the macro, and it generates the manifest rather
+# than letting anyone hand-edit it. That is what keeps over-the-air updates and the
+# web installer offering the same build: they read the same generated file, so they
+# cannot drift apart by anyone forgetting a step.
 #
-# It then builds every transport, attaches all of them to a GitHub Release, and
-# publishes version.json (generated, never hand-edited) to GitHub Pages so the
-# device's Settings > Update screen can find it.
+# What gets published:
 #
-# NOTE: untested until the first tag is pushed. Pages must be enabled for this
-# repository with "GitHub Actions" as the source before the deploy step can work.
+#   - firmware.bin and firmware.factory.bin for each of the three transports
+#   - littlefs.bin — the web UI. Built once: it comes from data/ and is identical
+#     for every transport.
+#   - SHA256SUMS.txt
+#   - version.json on GitHub Pages, which the device polls
+#
+# Prerequisite, once: repository Settings -> Pages -> Source = "GitHub Actions".
+#
+# `workflow_dispatch` runs everything except the publish steps, so the manifest and
+# the builds can be inspected without cutting a release.
 
 on:
   push:
@@ -29,12 +38,18 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+env:
+  # The transport whose binary the over-the-air channel serves. HSU is the
+  # bench-verified wiring. A unit wired for SPI or I2C must be reflashed over USB
+  # with its own binary — see the known limitation in the README.
+  OTA_ENV: esp32s3_hsu
+
 jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      sha: ${{ steps.version.outputs.sha }}
+      publish: ${{ steps.version.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
 
@@ -42,65 +57,88 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
       - name: Install PlatformIO Core
         run: pip install --upgrade platformio
 
-      - name: Firmware version must match the tag
+      - name: The tag must match TIGERSCALE_FW_VERSION
         id: version
         run: |
           FW=$(grep -oE '#define TIGERSCALE_FW_VERSION[[:space:]]+"[^"]+"' \
                  TigerTagSplashESP32/TigerTagSplashESP32.ino \
                | grep -oE '"[^"]+"' | tr -d '"')
-          TAG="${GITHUB_REF_NAME#v}"
-          echo "firmware: $FW"
-          echo "tag:      $TAG"
-          if [ "${{ github.event_name }}" = "push" ] && [ "$FW" != "$TAG" ]; then
-            echo "::error::Tag v$TAG does not match TIGERSCALE_FW_VERSION ($FW)."
-            echo "Bump the macro in §2 and re-tag, or tag v$FW instead."
+          if [ -z "$FW" ]; then
+            echo "::error::Could not read TIGERSCALE_FW_VERSION from the firmware."
             exit 1
+          fi
+          echo "firmware version: $FW"
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            echo "tag:              $TAG"
+            if [ "$FW" != "$TAG" ]; then
+              echo "::error::Tag v$TAG does not match TIGERSCALE_FW_VERSION ($FW). Bump the macro in §2 and re-tag, or tag v$FW."
+              exit 1
+            fi
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Dry run — building and generating the manifest, publishing nothing."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
           fi
           echo "version=$FW" >> "$GITHUB_OUTPUT"
 
-      - name: Build all transports
+      - name: Guards must pass before anything is published
+        run: |
+          bash scripts/check-i18n.sh
+          bash scripts/check-codemap.sh
+          python3 scripts/check-emoji.py
+
+      - name: Build the web UI filesystem
+        run: |
+          # Identical for every transport — it is built from data/ — so once is enough.
+          pio run -e "$OTA_ENV" -t buildfs
+
+      - name: Build every transport
         run: |
           for e in esp32s3_hsu esp32s3 esp32s3_i2c; do
+            echo "::group::$e"
             pio run -e "$e"
+            echo "::endgroup::"
           done
 
-      - name: Collect release assets
-        id: assets
+      - name: Collect the release assets
         run: |
           mkdir -p dist
           for e in esp32s3_hsu esp32s3 esp32s3_i2c; do
             cp ".pio/build/$e/firmware.bin"         "dist/firmware-$e.bin"
             cp ".pio/build/$e/firmware.factory.bin" "dist/firmware-$e.factory.bin"
           done
-          # The OTA channel serves the HSU build: it is the bench-verified wiring.
-          # A unit wired for SPI or I2C must be reflashed over USB instead — see
-          # the known limitation in the README.
-          cp ".pio/build/esp32s3_hsu/firmware.bin" dist/firmware.bin
-          SHA=$(sha256sum dist/firmware.bin | cut -d' ' -f1)
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          sha256sum dist/* > dist/SHA256SUMS.txt
+          cp ".pio/build/$OTA_ENV/littlefs.bin" dist/littlefs.bin
+          ( cd dist && sha256sum ./* > SHA256SUMS.txt )
+          ls -la dist/
+          cat dist/SHA256SUMS.txt
 
-      - name: Generate the OTA manifest
+      - name: Generate the manifest
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          SHA: ${{ steps.assets.outputs.sha }}
+          REPO: ${{ github.repository }}
         run: |
-          # Single source of truth: the firmware macro. Never hand-edited.
-          # firmware_url must be the plain firmware.bin — Update.begin()/write()
-          # only replace the app partition, so a factory image would corrupt the
-          # bootloader and partition table.
           mkdir -p pages
-          cat > pages/version.json <<JSON
-          {
-            "version": "$VERSION",
-            "firmware_sha": "$SHA",
-            "firmware_url": "https://github.com/${{ github.repository }}/releases/download/v$VERSION/firmware.bin"
-          }
-          JSON
-          cp pages/version.json version.json
+          python3 scripts/make-manifest.py \
+            --version "$VERSION" \
+            --repo "$REPO" \
+            --ota-env "$OTA_ENV" \
+            --dist dist \
+            --out pages/version.json
           cat pages/version.json
 
       - uses: actions/upload-artifact@v4
@@ -113,27 +151,24 @@ jobs:
           path: pages/
 
       - name: Publish the GitHub Release
-        if: github.event_name == 'push'
+        if: steps.version.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "TigerScale V3 $GITHUB_REF_NAME" \
-            --generate-notes \
-            --notes-file - <<'NOTES'
-          Flash `firmware-<env>.factory.bin` for a first install on blank hardware,
-          or `firmware-<env>.bin` to update an existing unit over USB.
-
-          **Pick the file matching how your NFC readers are wired** — HSU, SPI or
-          I2C. The wrong one detects no reader and gives no error. See
-          [docs/HARDWARE.md](docs/HARDWARE.md).
-
-          Over-the-air updates serve the **HSU** build. A unit wired for SPI or I2C
-          should be reflashed over USB with its own binary instead.
-          NOTES
+          NOTES=docs/release-notes/v$VERSION.md
+          if [ -f "$NOTES" ]; then
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "TigerScale V3 v$VERSION" --notes-file "$NOTES"
+          else
+            echo "::warning::No docs/release-notes/v$VERSION.md — falling back to generated notes."
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "TigerScale V3 v$VERSION" --generate-notes
+          fi
 
   deploy-pages:
     needs: build
+    if: needs.build.outputs.publish == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

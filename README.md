@@ -121,6 +121,11 @@ Full costed list with every link: **[docs/HARDWARE.md](docs/HARDWARE.md#bill-of-
   </a>
 </p>
 
+<p align="center">
+  <sub><a href="docs/HARDWARE.md#wiring-diagram">Pin-by-pin wiring</a> &nbsp;·&nbsp;
+  <a href="https://app.cirkitdesigner.com/project/f1310604-82fe-4458-9baa-9507c8e95c80">Interactive schematic in Cirkit Designer</a></sub>
+</p>
+
 Full pinout, bus topology and the wiring for each transport:
 **[docs/HARDWARE.md](docs/HARDWARE.md)**
 

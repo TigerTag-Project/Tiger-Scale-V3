@@ -109,3 +109,10 @@ assets/partners/*.ai
 # macOS application-bundle icon: 478 KB, useful only to a Mac .app, which this
 # repository does not build.
 assets/icon.icns
+
+# ---------------------------------------------------------------------------
+# Quarantine
+# ---------------------------------------------------------------------------
+# Files staged for deletion but kept on disk until the removal is validated.
+# See _to-delete/README.md for what is in there and why, and how to restore it.
+_to-delete/

@@ -17,31 +17,31 @@
 //   ---------------------------------------------------- -----------
 //   HARDWARE CONFIGURATION                                 115-  270
 //   OTA CONFIGURATION                                      271-  293
-//   FORWARD DECLARATIONS                                   294-  428
-//   WEIGHT ROUNDING                                        429-  448
-//   GLOBAL OBJECTS                                         449-  784
-//   CONFIGURATION VARIABLES                                785- 1175
-//   OLED DISPLAY                                          1176- 1926
-//   CLOUD PARSING                                         1927- 1941
-//   WIFI SETUP                                            1942- 4715
-//   LITTLEFS                                              4716- 5015
-//   FIREBASE AUTHENTICATION                               5016- 6624
-//   WEBSOCKET                                             6625- 6651
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  6652- 6763
-//   UNIFIED WS FRAME BUILDER                              6764- 6854
-//   WEIGHT FILTER HELPERS                                 6855- 6869
-//   POST-SEND STATE RESET (shared by all send paths)      6870- 6890
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  6891- 7147
-//   WEB SERVER                                            7148- 8455
-//   CLOUD COMMUNICATION                                   8456- 8638
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  8639- 9066
-//   mDNS                                                  9067- 9104
-//   SCALE                                                 9105- 9271
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)   9272- 9389
-//   RFID                                                  9390-10532
-//   OTA — Over-the-air firmware + filesystem update    10533-11026
-//   LVGL bridge + main weigh screen                      11027-11657
-//   SETUP & LOOP                                         11658-12640
+//   FORWARD DECLARATIONS                                   294-  430
+//   WEIGHT ROUNDING                                        431-  450
+//   GLOBAL OBJECTS                                         451-  786
+//   CONFIGURATION VARIABLES                                787- 1177
+//   OLED DISPLAY                                          1178- 1928
+//   CLOUD PARSING                                         1929- 1943
+//   WIFI SETUP                                            1944- 4717
+//   LITTLEFS                                              4718- 5017
+//   FIREBASE AUTHENTICATION                               5018- 6626
+//   WEBSOCKET                                             6627- 6653
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  6654- 6765
+//   UNIFIED WS FRAME BUILDER                              6766- 6856
+//   WEIGHT FILTER HELPERS                                 6857- 6871
+//   POST-SEND STATE RESET (shared by all send paths)      6872- 6892
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  6893- 7149
+//   WEB SERVER                                            7150- 8426
+//   CLOUD COMMUNICATION                                   8427- 8609
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  8610- 9037
+//   mDNS                                                  9038- 9075
+//   SCALE                                                 9076- 9242
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)   9243- 9360
+//   RFID                                                  9361-10503
+//   OTA — Over-the-air firmware + filesystem update    10504-11061
+//   LVGL bridge + main weigh screen                      11062-11692
+//   SETUP & LOOP                                         11693-12675
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -406,6 +406,8 @@ bool otaFetchLatest();
 void pollOtaCommands();
 static void otaSetStatus(const char* status, int progress, const String& message);
 static bool otaFirmwareSlotAvailable();   // false on this partition table — see its definition
+static bool otaStartJob(const String& fwUrl, const String& fwSha,
+                        const String& fsUrl, const String& fsSha);
 
 // OTA state globals (definitions; the OTA section below references them as extern).
 String   gOtaStatus     = "idle";   // idle | checking | downloading | flashing | done | error
@@ -7352,27 +7354,12 @@ void setupWebServer() {
                 syncSendJson(400, "{\"error\":\"firmware_url or littlefs_url required\"}");
                 return;
             }
+            // Same as the async handler: the download belongs on its own task.
+            if (!otaStartJob(fwUrl, fwSha, fsUrl, fsSha)) {
+                syncSendJson(500, "{\"error\":\"could not start OTA task\"}");
+                return;
+            }
             syncSendJson(202, "{\"status\":\"started\"}");
-            otaSetStatus("downloading", 1, "Starting OTA...");
-            if (fsUrl.length() > 0) {
-                otaSetStatus("downloading", 5, "Downloading filesystem...");
-                if (!otaApply(fsUrl, fsSha, U_SPIFFS,
-                    [](int p, const String& m){ otaSetStatus("downloading", 5 + (p * 35) / 100, m); })) {
-                    otaSetStatus("error", 0, "Filesystem update failed");
-                    return;
-                }
-            }
-            if (fwUrl.length() > 0) {
-                otaSetStatus("flashing", 40, "Downloading firmware...");
-                if (!otaApply(fwUrl, fwSha, U_FLASH,
-                    [](int p, const String& m){ otaSetStatus("flashing", 40 + (p * 55) / 100, m); })) {
-                    otaSetStatus("error", 0, "Firmware update failed");
-                    return;
-                }
-            }
-            otaSetStatus("done", 100, "Rebooting...");
-            delay(800);
-            ESP.restart();
         });
 
         syncServer.on("/api/firebase/auth", HTTP_POST, []() {
@@ -7973,32 +7960,16 @@ void setupWebServer() {
                 return;
             }
 
-            // Acknowledge first — the client knows the device is going to be
-            // unreachable for a while. Then process synchronously.
+            // Hand the download to its own task and answer at once. Doing it here
+            // would block async_tcp for the whole download and trip the task
+            // watchdog — see otaJobTaskFn().
+            if (!otaStartJob(fwUrl, fwSha, fsUrl, fsSha)) {
+                request->send(500, "application/json",
+                              "{\"error\":\"could not start OTA task\"}");
+                return;
+            }
             request->send(202, "application/json", "{\"status\":\"started\"}");
-
-            otaSetStatus("downloading", 1, "Starting OTA…");
-            if (fsUrl.length() > 0) {
-                otaSetStatus("downloading", 5, "Downloading filesystem…");
-                if (!otaApply(fsUrl, fsSha, U_SPIFFS,
-                    [](int p, const String& m){ otaSetStatus("downloading", 5 + (p*35)/100, m); })) {
-                    otaSetStatus("error", 0, "Filesystem update failed");
-                    return;
-                }
-            }
-            if (fwUrl.length() > 0) {
-                otaSetStatus("flashing", 40, "Downloading firmware…");
-                if (!otaApply(fwUrl, fwSha, U_FLASH,
-                    [](int p, const String& m){ otaSetStatus("flashing", 40 + (p*55)/100, m); })) {
-                    otaSetStatus("error", 0, "Firmware update failed");
-                    return;
-                }
-            }
-            otaSetStatus("done", 100, "Rebooting…");
-            delay(800);
-            ESP.restart();
-        }
-    );
+        });
 
     // Firebase auth
     server.on("/api/firebase/auth", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
@@ -10585,6 +10556,70 @@ static String sha256ToHex(const uint8_t b[32]) {
 // slots, which is a USB reflash; see the tracking issue.
 static bool otaFirmwareSlotAvailable() {
     return esp_ota_get_next_update_partition(NULL) != NULL;
+}
+
+// Parameters for one OTA job, owned by otaJobTaskFn which frees them.
+struct OtaJob {
+    String fwUrl, fwSha;
+    String fsUrl, fsSha;
+};
+
+// Run an OTA to completion on its own FreeRTOS task, then reboot.
+//
+// This exists because the download must NOT happen inside the caller's thread.
+// The async web server's `async_tcp` task has to return promptly; a multi-megabyte
+// HTTPS download inside it starves the task watchdog, which panics and reboots the
+// device mid-update:
+//
+//     E task_wdt: Task watchdog got triggered ... - async_tcp (CPU 0/1)
+//     E task_wdt: Aborting.
+//
+// That is exactly what happened, and it made the failure look like a network or
+// memory problem rather than a threading one.
+//
+// Filesystem first, firmware second: the firmware write reboots, so it has to go
+// last or the device comes up on new firmware still serving the old web UI.
+static void otaJobTaskFn(void* arg) {
+    OtaJob* job = (OtaJob*)arg;
+
+    otaSetStatus("downloading", 1, "Starting OTA…");
+
+    bool ok = true;
+    if (job->fsUrl.length() > 0) {
+        otaSetStatus("downloading", 5, "Downloading filesystem…");
+        ok = otaApply(job->fsUrl, job->fsSha, U_SPIFFS,
+                      [](int p, const String& m){ otaSetStatus("downloading", 5 + (p*35)/100, m); });
+        if (!ok) otaSetStatus("error", 0, "Filesystem update failed");
+    }
+    if (ok && job->fwUrl.length() > 0) {
+        otaSetStatus("flashing", 40, "Downloading firmware…");
+        ok = otaApply(job->fwUrl, job->fwSha, U_FLASH,
+                      [](int p, const String& m){ otaSetStatus("flashing", 40 + (p*55)/100, m); });
+        if (!ok) otaSetStatus("error", 0, "Firmware update failed");
+    }
+
+    delete job;
+
+    if (ok) {
+        otaSetStatus("done", 100, "Rebooting…");
+        delay(800);
+        ESP.restart();
+    }
+    vTaskDelete(NULL);   // failure: leave the device running, status says why
+}
+
+// Start an OTA in the background. Returns false only if the task could not be
+// created, so a caller can answer the HTTP request honestly.
+// 12 KB of stack: mbedTLS needs room, and the Update writes go through here too.
+static bool otaStartJob(const String& fwUrl, const String& fwSha,
+                        const String& fsUrl, const String& fsSha) {
+    OtaJob* job = new (std::nothrow) OtaJob{fwUrl, fwSha, fsUrl, fsSha};
+    if (!job) return false;
+    if (xTaskCreatePinnedToCore(otaJobTaskFn, "otaJob", 12288, job, 1, nullptr, 1) != pdPASS) {
+        delete job;
+        return false;
+    }
+    return true;
 }
 
 static void otaSetStatus(const char* status, int progress, const String& message) {

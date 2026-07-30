@@ -80,3 +80,53 @@ Build state at this checkpoint: all five envs compile clean; both guards pass
 behaviour was re-verified during this cleanup — nothing in it was intended to
 change runtime behaviour, apart from the deliberate removal of the USB-host
 diagnostic screen.
+
+---
+
+## Post-checkpoint: verified on real hardware (unit MAC 20:6E:F1:9A:18:70)
+
+The user connected the physical unit over USB, so the cleanup could be checked
+against hardware instead of only against the compiler.
+
+**Confirmed working after flashing the cleaned firmware** (`esp32s3_hsu`, hash
+verified): display `480x320`, touch ACK at 0x3B, LVGL init, and — the important
+one — `[RFID] PN532-1 ready` / `PN532-2 ready`. Removing the USB-host branch and
+guarding `SPI.begin()` did not disturb the HSU path.
+
+**NVS preservation proven, not just claimed.** NVS was read out before and after
+the flash: `[WIFI] stored ssid=` still resolves to the same value,
+`[SCALE] Tare restored: 355246`, and only 384 of 20480 bytes differ — all of it
+the firmware's own boot-time writes (`tareFactor` entries grew 48 -> 60). The
+Firebase keys were already absent before the flash (`fbEmail`/`fbRefresh`
+`NOT_FOUND`), consistent with the earlier handoff clean-out.
+
+**Confirmed the OTA fix was not theoretical.** The firmware previously on the
+device contained the string `https://tigertag-project.github.io/Tiger-Scale/version.json`
+— the V2 repository. This unit really would have been offered V2 binaries.
+
+**Fixed: the boot-time I2C scan was pointed at the dead bus.** `scanI2C()` was
+hardcoded to `Wire` (GPIO21/22, which cannot work here) and ran before any
+`begin()` had succeeded, so every boot logged **124 error lines** to report
+"0 device(s) found". It now takes the bus as a parameter and runs on `Wire1`
+after that bus is up. Measured on hardware: 124 noise lines -> 12, and the scan
+went from useless to informative.
+
+**That change immediately found three things the project did not know:**
+
+1. **The TCA9554 I/O expander answers at 0x20 on `Wire1`** — the docs, inherited
+   from V2, placed it on the broken `Wire` bus. So `lcdResetByTCA9554()` has never
+   actually executed. The display works without it, so this is latent, not broken.
+2. **An unidentified device at 0x51**, which is the standard address for a
+   PCF8563 / BM8563 RTC. Nothing in the firmware talks to it, and the code
+   currently works around having no clock ("No NTP — approximate based on...").
+3. **An unidentified device at 0x6B.**
+
+All three are recorded in `docs/HARDWARE.md` as a measured scan and tracked as an
+issue.
+
+**Open question, not caused by this cleanup:** `[HX711] not ready` repeats
+continuously. The scale code path (`setupScale`, `readWeight`, `isRapidChange`,
+`processAutoTare`, `displayWeightWithState`) was diffed against the pre-cleanup
+source and is **byte-identical**, and the HX711 pin defines are unchanged, so this
+is either the load cell not being connected on the bench or a pre-existing wiring
+fault. Needs someone with the assembled unit to confirm.

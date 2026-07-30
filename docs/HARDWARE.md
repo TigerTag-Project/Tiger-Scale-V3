@@ -53,14 +53,34 @@ scan of that bus finds zero devices. The pin definitions and the TCA9554 I/O
 expander address are inherited from the V2 design and left in place, but nothing
 new should be attached there.
 
-Devices on the working `Wire1` bus:
+Devices on the working `Wire1` bus. This table is a **measured** boot-time scan on
+a real unit, not a transcription of the vendor demo:
 
-| Device | Address |
-|--------|---------|
-| AXS5106L touch controller | 0x3B |
-| AXP2101 PMIC | 0x34 |
-| ES8311 audio codec | 0x18 |
-| PN532 (I²C build only) | 0x24 — fixed, cannot be changed |
+| Address | Device | Notes |
+|---------|--------|-------|
+| 0x18 | ES8311 audio codec | Beep on tag detect |
+| 0x20 | TCA9554 I/O expander | **On `Wire1`, not `Wire`.** See below. |
+| 0x34 | AXP2101 PMIC | Battery level, charge state |
+| 0x3B | AXS5106L touch controller | |
+| 0x51 | **unidentified** — almost certainly an RTC | 0x51 is the standard address for a PCF8563 / BM8563. Nothing in the firmware talks to it. |
+| 0x6B | **unidentified** | Nothing in the firmware talks to it. |
+| 0x24 | PN532 | I²C build only — fixed address, cannot be changed |
+
+Three things worth knowing about that list:
+
+- **The TCA9554 is reachable, on the wrong bus from the firmware's point of view.**
+  `lcdResetByTCA9554()` drives it over `Wire` — the bus that cannot work — so the
+  LCD reset sequence has never actually executed. The display initialises fine
+  without it (`[LCD] begin OK` on every boot), so this is latent rather than
+  broken, but pointing that function at `Wire1` would make the vendor's documented
+  reset sequence real for the first time. That is a change to display bring-up on
+  hardware that currently works, so it wants a deliberate test rather than a
+  drive-by fix.
+- **0x51 and 0x6B are unexplained.** If 0x51 is an RTC, the firmware is doing
+  without a real-time clock it may already have — it currently relies on Firestore
+  server timestamps and notes "No NTP — approximate based on…" in the code.
+- The scan runs at boot on every unit, so it doubles as a wiring health check for
+  someone who assembled their own scale. Compare your boot log against this table.
 
 ## Fixed peripherals
 

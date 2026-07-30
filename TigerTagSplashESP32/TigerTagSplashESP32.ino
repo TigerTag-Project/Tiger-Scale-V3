@@ -23,25 +23,25 @@
 //   CONFIGURATION VARIABLES                                777- 1167
 //   OLED DISPLAY                                          1168- 1918
 //   CLOUD PARSING                                         1919- 1933
-//   WIFI SETUP                                            1934- 4668
-//   LITTLEFS                                              4669- 4968
-//   FIREBASE AUTHENTICATION                               4969- 6577
-//   WEBSOCKET                                             6578- 6604
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  6605- 6716
-//   UNIFIED WS FRAME BUILDER                              6717- 6807
-//   WEIGHT FILTER HELPERS                                 6808- 6822
-//   POST-SEND STATE RESET (shared by all send paths)      6823- 6843
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  6844- 7100
-//   WEB SERVER                                            7101- 8404
-//   CLOUD COMMUNICATION                                   8405- 8587
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  8588- 9015
-//   mDNS                                                  9016- 9053
-//   SCALE                                                 9054- 9220
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)   9221- 9338
-//   RFID                                                  9339-10481
-//   OTA — Over-the-air firmware + filesystem update    10482-10942
-//   LVGL bridge + main weigh screen                      10943-11573
-//   SETUP & LOOP                                         11574-12542
+//   WIFI SETUP                                            1934- 4676
+//   LITTLEFS                                              4677- 4976
+//   FIREBASE AUTHENTICATION                               4977- 6585
+//   WEBSOCKET                                             6586- 6612
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  6613- 6724
+//   UNIFIED WS FRAME BUILDER                              6725- 6815
+//   WEIGHT FILTER HELPERS                                 6816- 6830
+//   POST-SEND STATE RESET (shared by all send paths)      6831- 6851
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  6852- 7108
+//   WEB SERVER                                            7109- 8412
+//   CLOUD COMMUNICATION                                   8413- 8595
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  8596- 9023
+//   mDNS                                                  9024- 9061
+//   SCALE                                                 9062- 9228
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)   9229- 9346
+//   RFID                                                  9347-10489
+//   OTA — Over-the-air firmware + filesystem update    10490-10950
+//   LVGL bridge + main weigh screen                      10951-11581
+//   SETUP & LOOP                                         11582-12564
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -1960,13 +1960,21 @@ static void setupTouchI2C() {
                   TS_SDA, TS_SCL, TS_I2C_ADDR, err, err == 0 ? "ACK" : "NACK");
 }
 
-// Quick I2C scan on the active Wire bus — logs every ACK-ing address.
-static void scanI2C() {
-    Serial.printf("[I2C] Scanning 0x08-0x77 on Wire(SDA=%d,SCL=%d)...\n", I2C_SDA, I2C_SCL);
+// Quick I2C scan — logs every ACK-ing address on the bus it is given.
+//
+// Takes the bus as a parameter, and must be called only AFTER that bus has been
+// begun. It used to be hardcoded to `Wire` and called before any begin() had
+// succeeded, on the GPIO21/22 pair that cannot work on this board (GPIO22 does
+// not exist on the ESP32-S3). Every one of the 112 addresses then failed with
+// "NULL TX buffer pointer", so each boot logged 112 error lines to report
+// "0 device(s) found" — enough noise to make the boot log unreadable, which is
+// the opposite of what a diagnostic is for.
+static void scanI2C(TwoWire &bus, const char *busName, int sda, int scl) {
+    Serial.printf("[I2C] Scanning 0x08-0x77 on %s(SDA=%d,SCL=%d)...\n", busName, sda, scl);
     int found = 0;
     for (uint8_t addr = 0x08; addr <= 0x77; addr++) {
-        Wire.beginTransmission(addr);
-        if (Wire.endTransmission() == 0) {
+        bus.beginTransmission(addr);
+        if (bus.endTransmission() == 0) {
             Serial.printf("[I2C] ACK at 0x%02X\n", addr);
             found++;
         }
@@ -11631,8 +11639,17 @@ void setup() {
     }
 
     #if !RFID_DIAG_DISABLE_DISPLAY_STACK
+    // NOTE: this Wire bus (GPIO21/22) cannot work on this board — GPIO22 does not
+    // exist on the ESP32-S3 and GPIO21 goes to the camera connector. The begin()
+    // below therefore logs "perimanSetPinBus(): Invalid pin: 22", and the
+    // lcdResetByTCA9554() that follows logs a handful of "NULL TX buffer pointer"
+    // errors because the bus never came up. Both are expected on this hardware and
+    // harmless: the display initialises fine without the TCA9554 reset, as the
+    // "[LCD] begin OK" line right below proves on every boot. Left in place rather
+    // than removed because it is the vendor's documented reset sequence and a
+    // future board revision may wire it correctly. Do not chase those errors, and
+    // do not attach new peripherals here — use Wire1 (GPIO8/7).
     Wire.begin(I2C_SDA, I2C_SCL);
-    scanI2C();          // enumerate all I2C devices before display init
     lcdResetByTCA9554();
 
     if (!gfx->begin()) {
@@ -11644,6 +11661,11 @@ void setup() {
         Serial.printf("[LCD] begin OK w=%d h=%d\n", gfx->width(), gfx->height());
         setupTouchI2C();  // AXS5106L on Wire1 (SDA=8, SCL=7, addr=0x3B)
         _touchI2CReady = true;
+        // Scan the bus that is actually wired, now that it has been begun. This
+        // enumerates the touch controller (0x3B), the AXP2101 PMIC (0x34), the
+        // ES8311 codec (0x18) and, in the I2C build, the PN532 (0x24) — a useful
+        // one-line health check for a device whose owner wired it themselves.
+        scanI2C(Wire1, "Wire1", TS_SDA, TS_SCL);
         lvglInit();  // main weigh screen is built lazily on the first lvglUpdateMainScreen() call
     }
 

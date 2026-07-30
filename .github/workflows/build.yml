@@ -39,22 +39,8 @@ jobs:
           fi
 
       - name: No mojibake in source, data or scripts
-        run: |
-          # The .ino once accumulated 218 double-encoded sequences that destroyed
-          # every §, em dash and accent, and the TOC generator had been adapted to
-          # match the corruption instead of fixing it. This stops that recurring.
-          #
-          # Scoped to code and data on purpose: the changelog and worklog quote the
-          # damaged byte sequence verbatim in order to explain it, and this workflow
-          # necessarily contains the pattern it searches for.
-          PATHS='TigerTagSplashESP32 data include scripts platformio.ini partitions.csv'
-          # shellcheck disable=SC2086
-          if git grep -l -I -e 'ï¿½' -e "$(printf '\357\277\275')" -- $PATHS ; then
-            echo "::error::Mojibake or U+FFFD found in the files above."
-            echo "Text was decoded with the wrong codec somewhere. Fix the cause,"
-            echo "and do not adapt tooling to match the corruption."
-            exit 1
-          fi
+        run: bash scripts/check-mojibake.sh
+
 
       - name: No emoji in documentation
         run: python3 scripts/check-emoji.py

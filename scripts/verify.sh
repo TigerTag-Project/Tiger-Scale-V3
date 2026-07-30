@@ -68,15 +68,8 @@ python3 scripts/check-emoji.py 2>&1 | tail -1 | sed 's/^/    /'
 python3 scripts/check-emoji.py >/dev/null 2>&1 || fail "check-emoji"
 
 step "No mojibake in code or data"
-PATHS='TigerTagSplashESP32 data include scripts platformio.ini partitions.csv'
-# shellcheck disable=SC2086
-if git grep -l -I -e 'ï¿½' -- $PATHS >/dev/null 2>&1; then
-  fail "mojibake found — see the files above"
-  # shellcheck disable=SC2086
-  git grep -l -I -e 'ï¿½' -- $PATHS | sed 's/^/    /'
-else
-  echo "    ok"
-fi
+bash scripts/check-mojibake.sh 2>&1 | tail -1 | sed 's/^/    /'
+bash scripts/check-mojibake.sh >/dev/null 2>&1 || fail "check-mojibake"
 
 step "Release notes for the current version"
 VER=$(grep -oE '#define TIGERSCALE_FW_VERSION[[:space:]]+"[^"]+"' \

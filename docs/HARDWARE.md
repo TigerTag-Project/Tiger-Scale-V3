@@ -8,9 +8,31 @@ pin in the firmware, change it here too.
 
 ## The board
 
-**Waveshare ESP32-S3-Touch-LCD-3.5** — ESP32-S3 with 16 MB flash and PSRAM, a
-480×320 AXS15231B QSPI display with capacitive touch, an AXP2101 PMIC for battery
-and charging, and an ES8311 audio codec.
+**Waveshare ESP32-S3 3.5" IPS touchscreen development board** — the variant sold as
+*"ESP32-S3 3.5inch IPS 262K Color LCD Touchscreen Development Board (Without Case
+& Camera), 320x480 Resolution"*
+([Amazon.fr B0FB2L8V8S](https://www.amazon.fr/dp/B0FB2L8V8S)), which is the exact
+board the reference unit is built on.
+
+Confirmed by reading the chip on that unit (`esptool flash-id`):
+
+```
+Chip type:          ESP32-S3 (QFN56) (revision v0.2)
+Features:           Wi-Fi, BT 5 (LE), Dual Core + LP Core, 240MHz,
+                    Embedded PSRAM 8MB (AP_3v3)
+Crystal frequency:  40MHz
+Detected flash size: 16MB
+```
+
+The panel is an AXS15231B, natively 320×480 portrait, driven over QSPI and used
+rotated to 480×320 landscape (rotation 3). Also on board: an AXP2101 PMIC for
+battery and charging, an ES8311 audio codec, and a camera connector (unpopulated
+on this variant — which is why GPIO21 is not usable for I²C, see below).
+
+> Waveshare ships more than one 3.5" ESP32-S3 board, and the firmware's audio-pin
+> comments reference the **-3.5B** schematic while the display and touch code
+> matches what is on this unit. If you buy a different variant, verify the I²S and
+> I²C pins against your own schematic before assuming this documentation applies.
 
 Official vendor documentation (deliberately linked rather than copied into this
 repository — vendor PDFs are theirs to distribute, and a stale local copy quietly
@@ -26,11 +48,26 @@ diverges from the current revision):
 
 | Component | Notes |
 |-----------|-------|
-| Waveshare ESP32-S3-Touch-LCD-3.5 | The 3.5" touch LCD variant specifically — the firmware targets the AXS15231B panel and the AXP2101 PMIC on this board |
+| [Waveshare ESP32-S3 3.5" IPS touchscreen board](https://www.amazon.fr/dp/B0FB2L8V8S) | The exact board the reference unit uses: 320×480 IPS, no case, no camera. ESP32-S3 with 8 MB PSRAM and 16 MB flash. |
 | 2× PN532 NFC module | Elechouse V3 style, with the HSU/I2C/SPI mode switch and an 8-pin header. The sealed USB-C-only variants will **not** work — see [USB_HOST_POSTMORTEM.md](USB_HOST_POSTMORTEM.md) |
 | HX711 amplifier + load cell | 5 kg cell is what the calibration defaults assume |
 | Li-ion battery | Optional; charging and level reporting are handled by the on-board AXP2101 |
 | Enclosure | Not yet published for V3 |
+
+### Verified wiring diagram
+
+A Cirkit Designer schematic of the reference build exists but is not yet public:
+
+- <https://app.cirkitdesigner.com/project/f1310604-82fe-4458-9baa-9507c8e95c80>
+
+It requires signing in as its owner, so it cannot serve as documentation for
+anyone else yet. Until it is exported into this repository, the pin tables below
+are the authoritative source — they were read out of the firmware itself
+(§1 `HARDWARE CONFIGURATION`), which is what the code actually drives.
+
+Exporting that diagram as a PNG or PDF into `docs/` would be a genuinely useful
+contribution: it would let a builder check their physical wiring against a picture
+instead of a table, and it would let the two be cross-checked against each other.
 
 Prices and purchase links are deliberately not listed here yet — the V3
 enclosure and a verified parts list are still to come. See the
@@ -49,9 +86,11 @@ This board has two I²C buses in the firmware, and **only one of them works**.
 `Wire` cannot work: **GPIO22 does not exist on the ESP32-S3** (the chip skips
 GPIO22–25), and GPIO21 is routed to the camera connector (CAM_D7) on this board
 rather than to I²C. Every boot logs `perimanSetPinBus(): Invalid pin: 22` and the
-scan of that bus finds zero devices. The pin definitions and the TCA9554 I/O
-expander address are inherited from the V2 design and left in place, but nothing
-new should be attached there.
+scan of that bus finds zero devices. The pin definitions are inherited from the V2
+design and left in place, but nothing new should be attached there.
+
+Note that the TCA9554 I/O expander the firmware tries to reach on this bus is real
+and does answer — just on `Wire1`, not here. See the measured table below.
 
 Devices on the working `Wire1` bus. This table is a **measured** boot-time scan on
 a real unit, not a transcription of the vendor demo:

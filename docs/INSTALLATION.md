@@ -29,6 +29,19 @@ Wiring diagrams for each: [HARDWARE.md](HARDWARE.md#nfc-wiring--pick-one-then-bu
 
 ## First install on a new board
 
+### Easiest: the web installer
+
+<https://tigertag-project.github.io/Tiger-Scale-V3/>
+
+Plug the board in, choose your NFC wiring, click Install. It writes the bootloader,
+partition table, firmware and web UI in one go. Chrome, Edge or Opera on a desktop —
+Web Serial is not available in Safari, Firefox or on mobile.
+
+Note it **erases the board**, saved WiFi included. That is right for new hardware; to
+update a scale already in use, see [Updating later](#updating-later).
+
+### From source
+
 **One command.** On a board that has never been flashed, this is the whole job:
 
 ```bash

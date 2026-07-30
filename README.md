@@ -83,6 +83,18 @@ this board, and this firmware will not run on that one.
 
 ## Quick start
 
+### No toolchain: install from your browser
+
+<p align="center">
+  <a href="https://tigertag-project.github.io/Tiger-Scale-V3/"><b>Open the web installer</b></a>
+</p>
+
+Plug the board in over USB-C, pick how your NFC readers are wired, click Install.
+Needs Chrome, Edge or Opera on a desktop — Web Serial exists nowhere else. Goes live
+with the first tagged release.
+
+### Or build it yourself
+
 ```bash
 git clone https://github.com/TigerTag-Project/Tiger-Scale-V3.git
 cd Tiger-Scale-V3

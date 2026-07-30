@@ -127,18 +127,36 @@ jobs:
           ls -la dist/
           cat dist/SHA256SUMS.txt
 
-      - name: Generate the manifest
+      - name: Assemble the GitHub Pages site
         env:
           VERSION: ${{ steps.version.outputs.version }}
           REPO: ${{ github.repository }}
         run: |
-          mkdir -p pages
+          # The web installer and the images it flashes must be same-origin: a
+          # browser flashing over Web Serial fetches each part by relative path, and
+          # cross-origin release assets would need CORS headers we do not control.
+          mkdir -p pages/firmware
+          cp -R web-installer/. pages/
+
+          for e in esp32s3_hsu esp32s3 esp32s3_i2c; do
+            cp ".pio/build/$e/firmware.bin"    "pages/firmware/firmware-$e.bin"
+            cp ".pio/build/$e/bootloader.bin"  "pages/firmware/bootloader-$e.bin"
+            cp ".pio/build/$e/partitions.bin"  "pages/firmware/partitions-$e.bin"
+          done
+          # boot_app0 and the filesystem are identical for every transport.
+          cp "$(find ~/.platformio/packages/framework-arduinoespressif32/tools/partitions -name boot_app0.bin | head -1)" \
+             pages/firmware/boot_app0.bin
+          cp dist/littlefs.bin pages/firmware/littlefs.bin
+
           python3 scripts/make-manifest.py \
             --version "$VERSION" \
             --repo "$REPO" \
             --ota-env "$OTA_ENV" \
             --dist dist \
+            --web-installer pages \
             --out pages/version.json
+
+          echo "--- pages/ ---"; find pages -type f | sort
           cat pages/version.json
 
       - uses: actions/upload-artifact@v4

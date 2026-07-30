@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install TigerScale V3</title>
+<meta name="description" content="Flash TigerScale V3 firmware to your ESP32-S3 straight from the browser. No toolchain, no command line.">
+<meta property="og:title" content="Install TigerScale V3">
+<meta property="og:description" content="Flash the connected filament scale firmware from your browser.">
+<meta property="og:type" content="website">
+<link rel="icon" href="favicon.png" type="image/png">
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<style>
+  :root {
+    --bg:#0d1117; --panel:#161b22; --line:#30363d;
+    --fg:#e6edf3; --muted:#8b949e; --accent:#f0883e; --ok:#3fb950; --warn:#d29922;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#ffffff; --panel:#f6f8fa; --line:#d0d7de;
+            --fg:#1f2328; --muted:#656d76; --accent:#bc4c00; }
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; padding:2rem 1rem 4rem; background:var(--bg); color:var(--fg);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  main { max-width:760px; margin:0 auto; }
+  header { text-align:center; margin-bottom:2.5rem; }
+  header img { width:180px; height:auto; }
+  h1 { font-size:2rem; margin:1rem 0 .25rem; letter-spacing:-.02em; }
+  .tagline { color:var(--muted); margin:0; }
+  h2 { font-size:1.15rem; margin:2.5rem 0 .75rem; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:1.25rem; }
+  .choice { display:grid; gap:.75rem; }
+  label.opt {
+    display:flex; gap:.85rem; align-items:flex-start; padding:.9rem 1rem;
+    border:1px solid var(--line); border-radius:10px; cursor:pointer; background:var(--bg);
+  }
+  label.opt:hover { border-color:var(--accent); }
+  label.opt input { margin-top:.3rem; accent-color:var(--accent); }
+  .opt b { display:block; }
+  .opt small { color:var(--muted); }
+  .badge { display:inline-block; font-size:.72rem; padding:.1rem .5rem; border-radius:99px;
+           border:1px solid var(--line); color:var(--muted); margin-left:.4rem; vertical-align:middle; }
+  .badge.ok { color:var(--ok); border-color:var(--ok); }
+  .cta { text-align:center; margin:2rem 0 1rem; }
+  esp-web-install-button { --esp-tools-button-color:#fff; --esp-tools-button-text-color:#111; }
+  .note { border-left:3px solid var(--warn); padding:.6rem 0 .6rem 1rem; margin:1.25rem 0; color:var(--muted); }
+  .note b { color:var(--fg); }
+  code { background:var(--panel); border:1px solid var(--line); border-radius:5px; padding:.1rem .35rem; font-size:.9em; }
+  a { color:var(--accent); }
+  footer { text-align:center; margin-top:3rem; color:var(--muted); font-size:.9rem; }
+  .unsupported { display:none; }
+  .no-webserial .unsupported { display:block; }
+  .no-webserial .cta { display:none; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="logo-dark.svg">
+    <img src="logo.svg" alt="TigerTag">
+  </picture>
+  <h1>Install TigerScale V3</h1>
+  <p class="tagline">Plug the board in over USB-C and click Install. No toolchain, no command line.</p>
+</header>
+
+<h2>1. How are your NFC readers wired?</h2>
+
+<div class="panel">
+  <p style="margin-top:0;color:var(--muted)">
+    The PN532 transport is fixed at compile time. Picking the wrong one gives you a
+    scale that detects <em>no reader at all</em>, with no error message to explain it —
+    so this choice matters more than it looks.
+  </p>
+  <div class="choice">
+    <label class="opt">
+      <input type="radio" name="env" value="esp32s3_hsu" checked>
+      <span>
+        <b>HSU / UART<span class="badge ok">recommended</span></b>
+        <small>Two readers, each on its own serial port. Module mode switch: both channels OFF.
+        This is the reference build, verified on real hardware.</small>
+      </span>
+    </label>
+    <label class="opt">
+      <input type="radio" name="env" value="esp32s3">
+      <span>
+        <b>SPI</b>
+        <small>Two readers sharing one SPI bus. Mode switch: OFF / ON.
+        Compiles and is published, but has not been bench-verified.</small>
+      </span>
+    </label>
+    <label class="opt">
+      <input type="radio" name="env" value="esp32s3_i2c">
+      <span>
+        <b>I&sup2;C<span class="badge">single reader</span></b>
+        <small>One reader on Wire1. Mode switch: ON / OFF. The PN532's address is fixed,
+        so a second module on the same bus would collide. Not bench-verified.</small>
+      </span>
+    </label>
+  </div>
+</div>
+
+<h2>2. Install</h2>
+
+<div class="cta">
+  <esp-web-install-button id="installer" manifest="manifest-esp32s3_hsu.json">
+    <button slot="activate">Connect and install</button>
+    <span slot="unsupported"></span>
+    <span slot="not-allowed">Serve this page over HTTPS to install.</span>
+  </esp-web-install-button>
+</div>
+
+<div class="panel unsupported">
+  <b>This browser cannot flash a device.</b>
+  <p style="margin-bottom:0;color:var(--muted)">
+    Installing needs Web Serial, which today means <b>Chrome</b>, <b>Edge</b> or <b>Opera</b>
+    on a desktop. Safari and Firefox do not implement it, and neither does any mobile browser.
+    Alternatively, flash from the command line — see the
+    <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/INSTALLATION.md">installation guide</a>.
+  </p>
+</div>
+
+<div class="note">
+  <b>A first install erases everything on the board</b>, including any saved WiFi
+  credentials, and writes the bootloader, the partition table, the firmware and the web
+  interface. That is what you want on new hardware. To update a scale you already set up,
+  use <b>Settings &rarr; Update</b> on its touchscreen, or reflash over USB with
+  <code>bash scripts/flash.sh</code>, both of which keep your settings.
+</div>
+
+<h2>After it finishes</h2>
+
+<p>
+  The scale boots to its splash screen and then asks for WiFi. Pick your network on the
+  touchscreen, sign in to your TigerTag account from <b>Settings &rarr; Cloud</b>, then run
+  <b>Settings &rarr; Calibration</b> with a known weight. Put a tagged spool on the platform
+  and it identifies itself.
+</p>
+
+<p>
+  If the scale reports no readers, the transport above did not match your wiring — come back,
+  pick another and install again. Everything else is in
+  <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md">the troubleshooting guide</a>.
+</p>
+
+<footer>
+  <p>
+    <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3">Source</a> &middot;
+    <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/HARDWARE.md">Wiring</a> &middot;
+    <a href="https://discord.gg/3Qv5TSqnJH">Discord</a> &middot;
+    <a href="version.json">Manifest</a>
+  </p>
+  <p id="ver"></p>
+</footer>
+
+</main>
+
+<script>
+  // Point the installer at the manifest for the chosen transport.
+  const installer = document.getElementById('installer');
+  document.querySelectorAll('input[name=env]').forEach(r => {
+    r.addEventListener('change', () => {
+      installer.manifest = `manifest-${r.value}.json`;
+    });
+  });
+
+  // Web Serial is Chromium-only; say so plainly rather than showing a dead button.
+  if (!('serial' in navigator)) document.body.classList.add('no-webserial');
+
+  // Show which version this page installs, read from the same manifest the
+  // device's own over-the-air check uses — so the two cannot disagree.
+  fetch('version.json')
+    .then(r => r.ok ? r.json() : null)
+    .then(v => { if (v && v.version) document.getElementById('ver').textContent = 'Firmware ' + v.version; })
+    .catch(() => {});
+</script>
+</body>
+</html>

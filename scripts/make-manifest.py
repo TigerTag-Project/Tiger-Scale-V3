@@ -34,12 +34,14 @@ import sys
 # Kept in step with partitions.csv. The web installer needs these to place each
 # image; getting one wrong bricks a board, so they are written down once here
 # rather than repeated in the installer's own HTML.
+FS_OFFSET = 0x810000  # keep in step with partitions.csv
+
 OFFSETS = {
     "bootloader": "0x0000",
     "partitions": "0x8000",
     "boot_app0": "0xE000",
     "app": "0x10000",
-    "filesystem": "0x650000",
+    "filesystem": "0x810000",
 }
 
 # Every transport that gets published, with what a human needs to pick one.
@@ -65,6 +67,8 @@ def main():
     ap.add_argument("--ota-env", required=True, help="env whose binary the OTA channel serves")
     ap.add_argument("--dist", default="dist")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--web-installer", metavar="DIR",
+                    help="also write ESP Web Tools manifests into DIR")
     args = ap.parse_args()
 
     base = "https://github.com/%s/releases/download/v%s" % (args.repo, args.version)
@@ -138,6 +142,39 @@ def main():
         },
         "builds": builds,
     }
+
+    # --- ESP Web Tools manifests, one per transport ------------------------
+    # Different shape entirely from the OTA manifest above: ESP Web Tools flashes a
+    # blank board, so it needs every image with its absolute offset, served from the
+    # same origin as the page.
+    #
+    # NOTE the bootloader offset. On plain ESP32 and ESP32-S2 it is 0x1000; on the
+    # ESP32-S3 it is 0. Copying the V2 installer's manifest unchanged would put the
+    # bootloader 4 KB too high and produce a board that never boots.
+    if args.web_installer:
+        os.makedirs(args.web_installer, exist_ok=True)
+        for env, transport, readers, description in TRANSPORTS:
+            wt = {
+                "name": "TigerScale V3 (%s)" % transport.upper(),
+                "version": args.version,
+                "funding_url": "https://buymeacoffee.com/benoitl",
+                "new_install_prompt_erase": True,
+                "builds": [{
+                    "chipFamily": "ESP32-S3",
+                    "parts": [
+                        {"path": "firmware/bootloader-%s.bin" % env, "offset": 0},
+                        {"path": "firmware/partitions-%s.bin" % env, "offset": 0x8000},
+                        {"path": "firmware/boot_app0.bin",           "offset": 0xE000},
+                        {"path": "firmware/firmware-%s.bin" % env,   "offset": 0x10000},
+                        {"path": "firmware/littlefs.bin",            "offset": FS_OFFSET},
+                    ],
+                }],
+            }
+            path = os.path.join(args.web_installer, "manifest-%s.json" % env)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(wt, fh, indent=2)
+                fh.write("\n")
+            print("wrote %s" % path)
 
     os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".", exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fh:

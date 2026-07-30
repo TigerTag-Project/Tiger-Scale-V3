@@ -88,14 +88,22 @@ account is optional.
 
 This is a build, not a kit — you will need to solder and wire.
 
-| Part | Notes |
+| Qty | Part |
 |---|---|
-| Waveshare ESP32-S3-Touch-LCD-3.5**B** | The 3.5" touchscreen board. 480×320 IPS, 8 MB PSRAM, 16 MB flash |
-| 2× PN532 NFC module | Elechouse V3 style, **with a pin header** and the HSU/I2C/SPI mode switch |
-| HX711 amplifier + load cell | 5 kg cell |
-| Small speaker | Optional — a beep on tag detect |
-| Li-ion battery | Optional; charging is handled on the board |
-| M3 screws and heat-set inserts | <<TODO: exact sizes and quantities>> |
+| 1 | Waveshare ESP32-S3-Touch-LCD-3.5**B** — 480×320 IPS touchscreen, 8 MB PSRAM, 16 MB flash |
+| 2 | PN532 **V3** NFC module — **with a pin header** and the HSU/I2C/SPI mode switch |
+| 1 | 5 kg load cell + HX711 amplifier |
+| 1 | USB-C 4-pin cable + USB-C connector |
+| — | Dupont wires |
+| — | M3x10 or M3x12 self-tapping screws (enclosure) |
+| 2 | M4x30 screws (load cell) |
+| 2 | M5x30 screws (load cell) |
+| 4 | M2x6 screws (display board) |
+| 1 | Small speaker — optional, beep on tag detect |
+| 1 | Li-ion battery — optional; charging is handled on the board |
+
+Every part with a purchase link:
+https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/HARDWARE.md#bill-of-materials
 
 Two readers, because a spool can carry its tag on either flange.
 

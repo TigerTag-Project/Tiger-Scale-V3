@@ -98,13 +98,18 @@ the IDE has no equivalent for.
 
 ## Hardware
 
-| Component | Notes |
-|-----------|-------|
-| [Waveshare ESP32-S3-Touch-LCD-3.5**B**](https://www.amazon.fr/dp/B0FB2L8V8S) | 480×320 IPS touch, 8 MB PSRAM, 16 MB flash |
-| 2× PN532 NFC module | Elechouse V3 style, with the mode switch and pin header |
-| HX711 + 5 kg load cell | |
-| Li-ion battery | Optional — charging is handled on-board |
-| Enclosure | Not yet published for V3 |
+| Qty | Component | |
+|---|-----------|---|
+| 1 | Waveshare ESP32-S3-Touch-LCD-3.5**B** — 480×320 IPS touch | [buy](https://link.amazon/B0gaANfF5) |
+| 2 | PN532 **V3** NFC module — pin header **and** mode switch required | — |
+| 1 | 5 kg load cell + HX711 | [buy](https://link.amazon/B09LOUuI1) |
+| 1 | USB-C 4-pin cable + connector | [cable](https://link.amazon/B0aoW8qQx) · [connector](https://link.amazon/B0aiEyjLx) |
+| — | Dupont wires, M3 self-tapping screws | [wires](https://link.amazon/B0bl6jvMs) · [screws](https://link.amazon/B0ekzxx1E) |
+| — | 2× M4×30 and 2× M5×30 (load cell), 4× M2×6 (display) | — |
+| 1 | Li-ion battery, small speaker | optional |
+| — | Enclosure | not yet published |
+
+Full costed list with every link: **[docs/HARDWARE.md](docs/HARDWARE.md#bill-of-materials)**
 
 <p align="center">
   <a href="docs/HARDWARE.md#wiring-diagram">

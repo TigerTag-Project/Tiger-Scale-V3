@@ -11,7 +11,7 @@ pin in the firmware, change it here too.
 **Waveshare ESP32-S3 3.5" IPS touchscreen development board** — the variant sold as
 *"ESP32-S3 3.5inch IPS 262K Color LCD Touchscreen Development Board (Without Case
 & Camera), 320x480 Resolution"*
-([Amazon.fr B0FB2L8V8S](https://www.amazon.fr/dp/B0FB2L8V8S)), which is the exact
+([Amazon](https://link.amazon/B0gaANfF5)), which is the exact
 board the reference unit is built on.
 
 Confirmed by reading the chip on that unit (`esptool flash-id`):
@@ -47,13 +47,40 @@ diverges from the current revision):
 
 ## Bill of materials
 
-| Component | Notes |
-|-----------|-------|
-| [Waveshare ESP32-S3 3.5" IPS touchscreen board](https://www.amazon.fr/dp/B0FB2L8V8S) | The exact board the reference unit uses: 320×480 IPS, no case, no camera. ESP32-S3 with 8 MB PSRAM and 16 MB flash. |
-| 2× PN532 NFC module | Elechouse V3 style, with the HSU/I2C/SPI mode switch and an 8-pin header. The sealed USB-C-only variants will **not** work — see [USB_HOST_POSTMORTEM.md](USB_HOST_POSTMORTEM.md) |
-| HX711 amplifier + load cell | 5 kg cell is what the calibration defaults assume |
-| Li-ion battery | Optional; charging and level reporting are handled by the on-board AXP2101 |
-| Enclosure | Not yet published for V3 |
+Links are the project's own Amazon affiliate links — buying through them costs you
+nothing extra and helps keep the TigerTag cloud free.
+
+### Electronics
+
+| Qty | Component | Link |
+|-----|-----------|------|
+| 1 | **Waveshare ESP32-S3-Touch-LCD-3.5B** — 480×320 IPS touch, ESP32-S3, 8 MB PSRAM, 16 MB flash | [Amazon](https://link.amazon/B0gaANfF5) |
+| 2 | **PN532 V3 NFC module** — must have the pin header **and** the HSU/I²C/SPI mode switch | <<TODO: affiliate link>> |
+| 1 | **5 kg load cell + HX711 amplifier** | [Amazon](https://link.amazon/B09LOUuI1) |
+| 1 | **USB-C 4-pin cable** | [Amazon](https://link.amazon/B0aoW8qQx) |
+| 1 | **USB-C connector / breakout** | [Amazon](https://link.amazon/B0aiEyjLx) |
+| — | **Dupont wires** | [Amazon](https://link.amazon/B0bl6jvMs) |
+| 1 | Small speaker for the board's SPK connector — optional, gives the beep on tag detect | — |
+| 1 | Li-ion battery — optional; charging and level reporting are handled by the on-board AXP2101 | — |
+
+> ⚠️ **The sealed USB-C-only PN532 dongles will not work.** They have no pin header,
+> and this board cannot act as a USB host — see
+> [USB_HOST_POSTMORTEM.md](USB_HOST_POSTMORTEM.md). Buy the modules with a header.
+
+### Fasteners
+
+| Qty | Size | Purpose | Link |
+|-----|------|---------|------|
+| — | **M3×10 or M3×12** self-tapping | Enclosure — the set covers it | [Amazon](https://link.amazon/B0ekzxx1E) |
+| 2 | **M4×30** | Load cell | — |
+| 2 | **M5×30** | Load cell | — |
+| 4 | **M2×6** | Display board | — |
+
+### Printed parts
+
+Not yet published for V3. See [MAKERWORLD.md](MAKERWORLD.md) for the listing
+being prepared. The [V2 repository](https://github.com/TigerTag-Project/Tiger-Scale)
+has a complete, costed build of the previous generation if you want a reference.
 
 ### Wiring diagram
 

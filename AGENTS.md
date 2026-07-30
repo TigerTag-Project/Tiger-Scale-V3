@@ -36,16 +36,22 @@ for it.
 | `CODEMAP.md` | Section and function map — **start here** |
 | `WORKLOG.md` | Running changelog since the last checkpoint |
 
-## Before you finish — the guards
+## Before you finish — one command
 
 ```bash
-bash scripts/check-i18n.sh      # after any i18n.h edit
-bash scripts/check-codemap.sh   # after any .ino edit
-bash scripts/update_toc.sh      # after adding/moving a // §N — banner
-pio run -e esp32s3_hsu          # it must compile
+bash scripts/verify.sh          # every check CI runs, plus the reference build
+bash scripts/verify.sh --fix    # regenerate the TOC and CODEMAP first
+bash scripts/verify.sh --all    # all five envs, exactly what CI does
+bash scripts/verify.sh --quick  # checks only, no compiling
 ```
 
-All of these also run in CI, so skipping them only moves the failure later.
+It covers the table of contents, CODEMAP anchors, both translation sets, emoji,
+mojibake, and whether release notes exist for the current version.
+
+Nothing mechanical should be edited by hand. If CODEMAP drifts,
+`python3 scripts/sync-codemap.py` rewrites the line numbers from the source and
+touches nothing else — the function names, section names and every note in the
+Landmines table are hand-written knowledge and stay untouched.
 
 Note for anyone tempted to trust a green checkmark: until this repository's first
 commit, `check-codemap.sh` printed `CODEMAP check PASSED` on macOS **without

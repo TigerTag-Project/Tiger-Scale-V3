@@ -98,7 +98,7 @@ jobs:
 
       - name: Guards must pass before anything is published
         run: |
-          bash scripts/check-i18n.sh
+          python3 scripts/check-i18n.py
           bash scripts/check-codemap.sh
           python3 scripts/check-emoji.py
 

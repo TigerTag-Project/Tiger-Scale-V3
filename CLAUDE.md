@@ -35,7 +35,7 @@ spool's weight and syncs the net filament weight to the owner's TigerTag account
 | Keep `ARDUINO_USB_CDC_ON_BOOT=1` | Without it `Serial.println()` is invisible on the USB-C port; only `log_e()` gets through |
 | Never flash `firmware.factory.bin` at `0x0000` | It is a merged image spanning 0x0000 upward, so it overwrites NVS (0x9000–0xE000) and wipes saved WiFi + Firebase credentials. `scripts/flash.sh` writes each image at its own offset and preserves them. |
 | Read [`CODEMAP.md`](CODEMAP.md) before opening the .ino | It is about 12 500 lines. Reading it whole wastes the context the actual task needs. |
-| Run the guard scripts before finishing | `check-i18n.sh`, `check-codemap.sh`. CI runs them too, so skipping only delays the failure. |
+| Finish with `bash scripts/verify.sh` | It runs everything CI runs. Skipping only moves the failure to the push. |
 
 ## Working in the .ino
 
@@ -46,8 +46,8 @@ Never read the whole file. The loop is:
    the truth; the line number in CODEMAP is only a starting point.
 3. `Read` that line ±60.
 4. Make the **smallest** edit that does the job. No opportunistic cleanup.
-5. `bash scripts/check-codemap.sh`, and update the CODEMAP line numbers if it
-   reports drift.
+5. `bash scripts/verify.sh --fix` — regenerates the table of contents and the
+   CODEMAP line numbers, then checks everything. Never renumber CODEMAP by hand.
 6. Parallelise independent reads into a single message.
 
 **CODEMAP.md has a "Landmines" table.** Read the row for any function you are
@@ -62,6 +62,45 @@ Sections are marked `// §N — TITLE`. After adding, moving or renaming one, ru
 `bash scripts/update_toc.sh` to regenerate the TOC comment block at the top of
 the file. §12 is intentionally absent, and §AUDIO / §LVGL are intentionally
 unnumbered — see CODEMAP.md for why.
+
+## The workflow, in four commands
+
+Everything mechanical is regenerable; nothing here should ever be edited by hand.
+
+```bash
+bash scripts/verify.sh --fix     # regenerate TOC + CODEMAP, then run every check
+bash scripts/verify.sh --all     # what CI runs: all checks, all five envs
+bash scripts/flash.sh --fs       # build and flash the connected device
+bash scripts/bump-version.sh X.Y.Z   # version + scaffold release notes + changelog
+```
+
+| Symptom | Fix |
+|---------|-----|
+| `check-codemap` reports drift | `python3 scripts/sync-codemap.py` |
+| CI says the TOC is out of date | `bash scripts/update_toc.sh`, commit the .ino |
+| i18n check fails | it names the language and the missing key, or the position where the order diverges |
+| release workflow refuses to publish | `docs/release-notes/v<version>.md` is missing or still holds the scaffold text |
+
+**Pushing needs the right GitHub account.** The repository belongs to the
+`TigerTag-Project` user, not to `BenGlut`, and a private-repo push from the wrong
+one fails with "Repository not found":
+
+```bash
+gh auth switch -u TigerTag-Project && git push && gh auth switch -u BenGlut
+```
+
+**Releasing** is a tag; everything else is automatic:
+
+```bash
+bash scripts/bump-version.sh 3.1.0    # then write the notes
+git commit -am "Release v3.1.0" && git tag v3.1.0 && git push origin main --tags
+```
+
+The workflow then verifies the tag against `TIGERSCALE_FW_VERSION`, runs the
+guards, refuses to continue without release notes, builds all three transports plus
+the filesystem, publishes the GitHub Release, and deploys the web installer and the
+OTA manifest to Pages — both generated from the same script, so they cannot offer
+different versions.
 
 ## Build and flash
 

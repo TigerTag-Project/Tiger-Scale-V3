@@ -18,11 +18,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: i18n — 82 keys present in all 8 language blocks
-        run: bash scripts/check-i18n.sh
+      - name: i18n — firmware table and web locales
+        run: python3 scripts/check-i18n.py
 
       - name: CODEMAP — function line numbers have not drifted
-        run: bash scripts/check-codemap.sh
+        run: |
+          bash scripts/check-codemap.sh || {
+            echo "::error::CODEMAP.md has drifted. Fix with: python3 scripts/sync-codemap.py"
+            exit 1
+          }
 
       - name: TOC — regenerating it produces no diff
         run: |

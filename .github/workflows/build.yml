@@ -53,26 +53,8 @@ jobs:
           fi
 
       - name: No emoji in documentation
-        run: |
-          # House rule: illustration is done with SVG assets, never emoji.
-          # Typographic characters (arrows, box-drawing, check marks) are not
-          # emoji and are deliberately allowed. The device's own web UI under
-          # data/www/ predates the rule and is excluded until it is reworked.
-          python3 - <<'PY'
-          import re, subprocess, sys
-          files = subprocess.run(["git","ls-files"],capture_output=True,text=True).stdout.split()
-          emoji = re.compile("[\U0001F000-\U0001FAFF\u2300-\u27BF\u2B00-\u2BFF\uFE0F\u26A0]")
-          bad = []
-          for f in files:
-              if not f.endswith((".md",".yml",".yaml")): continue
-              if f.startswith("data/www/"): continue
-              for i, line in enumerate(open(f, encoding="utf-8").read().split("\n"), 1):
-                  for m in emoji.findall(line):
-                      bad.append((f, i, m))
-          for f, i, m in bad:
-              print("::error file=%s,line=%d::emoji %r - use an SVG asset instead" % (f, i, m))
-          sys.exit(1 if bad else 0)
-          PY
+        run: python3 scripts/check-emoji.py
+
 
   build:
     name: ${{ matrix.env }}

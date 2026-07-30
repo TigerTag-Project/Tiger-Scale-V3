@@ -15,33 +15,33 @@
 //
 //   TABLE OF CONTENTS                                     line range
 //   ---------------------------------------------------- -----------
-//   HARDWARE CONFIGURATION                                 114-  269
-//   OTA CONFIGURATION                                      270-  292
-//   FORWARD DECLARATIONS                                   293-  420
-//   WEIGHT ROUNDING                                        421-  440
-//   GLOBAL OBJECTS                                         441-  776
-//   CONFIGURATION VARIABLES                                777- 1167
-//   OLED DISPLAY                                          1168- 1918
-//   CLOUD PARSING                                         1919- 1933
-//   WIFI SETUP                                            1934- 4676
-//   LITTLEFS                                              4677- 4976
-//   FIREBASE AUTHENTICATION                               4977- 6585
-//   WEBSOCKET                                             6586- 6612
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  6613- 6724
-//   UNIFIED WS FRAME BUILDER                              6725- 6815
-//   WEIGHT FILTER HELPERS                                 6816- 6830
-//   POST-SEND STATE RESET (shared by all send paths)      6831- 6851
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  6852- 7108
-//   WEB SERVER                                            7109- 8412
-//   CLOUD COMMUNICATION                                   8413- 8595
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  8596- 9023
-//   mDNS                                                  9024- 9061
-//   SCALE                                                 9062- 9228
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)   9229- 9346
-//   RFID                                                  9347-10489
-//   OTA — Over-the-air firmware + filesystem update    10490-10950
-//   LVGL bridge + main weigh screen                      10951-11581
-//   SETUP & LOOP                                         11582-12564
+//   HARDWARE CONFIGURATION                                 115-  270
+//   OTA CONFIGURATION                                      271-  293
+//   FORWARD DECLARATIONS                                   294-  428
+//   WEIGHT ROUNDING                                        429-  448
+//   GLOBAL OBJECTS                                         449-  784
+//   CONFIGURATION VARIABLES                                785- 1175
+//   OLED DISPLAY                                          1176- 1926
+//   CLOUD PARSING                                         1927- 1941
+//   WIFI SETUP                                            1942- 4715
+//   LITTLEFS                                              4716- 5015
+//   FIREBASE AUTHENTICATION                               5016- 6624
+//   WEBSOCKET                                             6625- 6651
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  6652- 6763
+//   UNIFIED WS FRAME BUILDER                              6764- 6854
+//   WEIGHT FILTER HELPERS                                 6855- 6869
+//   POST-SEND STATE RESET (shared by all send paths)      6870- 6890
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  6891- 7147
+//   WEB SERVER                                            7148- 8455
+//   CLOUD COMMUNICATION                                   8456- 8638
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  8639- 9066
+//   mDNS                                                  9067- 9104
+//   SCALE                                                 9105- 9271
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)   9272- 9389
+//   RFID                                                  9390-10532
+//   OTA — Over-the-air firmware + filesystem update    10533-11018
+//   LVGL bridge + main weigh screen                      11019-11649
+//   SETUP & LOOP                                         11650-12632
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -91,6 +91,7 @@ enum OledState : uint8_t {
 #include <ESP32Servo.h>
 #include <ESP_I2S.h>
 #include <Update.h>
+#include <esp_ota_ops.h>       // esp_ota_get_next_update_partition() — see otaFirmwareSlotAvailable()
 #include <mbedtls/sha256.h>
 #include <map>
 #include <math.h>
@@ -404,6 +405,7 @@ static bool otaApply(const String& url, const String& expectedSha, int updateTyp
 bool otaFetchLatest();
 void pollOtaCommands();
 static void otaSetStatus(const char* status, int progress, const String& message);
+static bool otaFirmwareSlotAvailable();   // false on this partition table — see its definition
 
 // OTA state globals (definitions; the OTA section below references them as extern).
 String   gOtaStatus     = "idle";   // idle | checking | downloading | flashing | done | error
@@ -412,6 +414,12 @@ String   gOtaMessage    = "";
 String   gOtaLatestVer  = "";       // populated by otaFetchLatest() from version.json
 String   gOtaFirmwareUrl = "";      // firmware download URL from version.json
 String   gOtaLatestSha  = "";
+// The web UI lives in its own LittleFS partition, so a release that changes
+// anything under data/ needs this second image as well as the firmware. Empty
+// when the manifest does not offer one, in which case the on-device updater
+// installs the firmware alone exactly as it always did.
+String   gOtaLittlefsUrl = "";      // littlefs_url from version.json (optional)
+String   gOtaLittlefsSha = "";      // littlefs_sha from version.json (optional)
 uint32_t gLastCommandPollMs = 0;
 
 // mDNS name derived from MAC
@@ -4301,6 +4309,17 @@ static void runOtaMenu() {
         return;
     }
 
+    // No spare app slot means the firmware can never be written. Say so instead of
+    // offering an Install that would flash the new web UI, fail on the firmware and
+    // leave the two out of step. See otaFirmwareSlotAvailable().
+    if (!otaFirmwareSlotAvailable()) {
+        Serial.println("[OTA] no ota_0/ota_1 app slot — firmware update over the air "
+                       "is impossible with this partition table");
+        lv_label_set_text(hintLbl, "Update over USB");
+        exitScreen();
+        return;
+    }
+
     lv_obj_clear_flag(installBtn, LV_OBJ_FLAG_HIDDEN);
 
     // Wait for Install or Back
@@ -4320,13 +4339,33 @@ static void runOtaMenu() {
     lv_obj_clear_flag(pbMsgLbl, LV_OBJ_FLAG_HIDDEN);
     pump(1);
 
-    bool ok = otaApply(gOtaFirmwareUrl, gOtaLatestSha, U_FLASH,
-        [&](int pct, const String& msg) {
-            int filled = 438 * pct / 100;
+    // The progress bar spans both images when the manifest offers a filesystem:
+    // 0-50% for the web UI, 50-100% for the firmware. With firmware only, it
+    // spans the whole bar as before.
+    const bool haveFs = gOtaLittlefsUrl.length() > 0;
+    auto progressTo = [&](int base, int span) {
+        return [&, base, span](int pct, const String& msg) {
+            int overall = base + (span * pct / 100);
+            int filled = 438 * overall / 100;
             lv_obj_set_width(pbFill, filled > 0 ? filled : 0);
             lv_label_set_text(pbMsgLbl, msg.c_str());
             lv_timer_handler();
-        });
+        };
+    };
+
+    // Filesystem FIRST, firmware second — the same order the /api/ota/update
+    // endpoint and the Firestore command handler use. Writing the app last means
+    // its reboot happens once everything else is already in place; doing it the
+    // other way round would reboot into new firmware still serving the old web UI.
+    bool ok = true;
+    if (haveFs) {
+        ok = otaApply(gOtaLittlefsUrl, gOtaLittlefsSha, U_SPIFFS, progressTo(0, 50));
+        if (!ok) Serial.println("[OTA] filesystem image failed — aborting before the firmware");
+    }
+    if (ok) {
+        ok = otaApply(gOtaFirmwareUrl, gOtaLatestSha, U_FLASH,
+                      progressTo(haveFs ? 50 : 0, haveFs ? 50 : 100));
+    }
 
     lv_obj_clear_flag(backBtn, LV_OBJ_FLAG_HIDDEN);
 
@@ -7290,6 +7329,9 @@ void setupWebServer() {
             rsp["current_sha"] = TIGERSCALE_GIT_SHA;
             rsp["latest"] = gOtaLatestVer;
             rsp["latest_sha"] = gOtaLatestSha;
+            // Non-empty when the manifest also publishes the web UI image, so a
+            // caller can tell a firmware-only release from a full one.
+            if (gOtaLittlefsUrl.length()) rsp["latest_littlefs_sha"] = gOtaLittlefsSha;
             rsp["update_available"] = (ok && gOtaLatestVer.length() > 0
                                        && gOtaLatestVer != String(TIGERSCALE_FW_VERSION));
             String s; serializeJson(rsp, s);
@@ -7889,6 +7931,7 @@ void setupWebServer() {
         rsp["current_sha"]  = TIGERSCALE_GIT_SHA;
         rsp["latest"]       = gOtaLatestVer;
         rsp["latest_sha"]   = gOtaLatestSha;
+        if (gOtaLittlefsUrl.length()) rsp["latest_littlefs_sha"] = gOtaLittlefsSha;
         rsp["update_available"] = (ok && gOtaLatestVer.length() > 0
                                    && gOtaLatestVer != String(TIGERSCALE_FW_VERSION));
         String s; serializeJson(rsp, s);
@@ -10523,6 +10566,27 @@ static String sha256ToHex(const uint8_t b[32]) {
     return h;
 }
 
+// Is there anywhere to write a firmware update?
+//
+// Update.begin(U_FLASH) asks esp_ota_get_next_update_partition() for a spare app
+// slot. That needs at least one `ota_0`/`ota_1` partition — a lone `factory` app
+// partition is not eligible, and the call returns NULL, which surfaces as the
+// baffling "Update.begin failed (need=… free=0)".
+//
+// This board's partition table is exactly that shape: one `app0` of subtype
+// `factory`, plus an `otadata` partition that has nothing to arbitrate between.
+// So over-the-air FIRMWARE update cannot work here at all, and never could.
+// Filesystem update is unaffected: `spiffs` is found by label.
+//
+// Checking up front matters because the updater applies the filesystem first. Left
+// unguarded, every attempt would flash a new web UI, fail on the firmware, and
+// leave the device running old firmware behind a new UI — a partial update that is
+// worse than refusing. Fixing this properly needs a partition table with two app
+// slots, which is a USB reflash; see the tracking issue.
+static bool otaFirmwareSlotAvailable() {
+    return esp_ota_get_next_update_partition(NULL) != NULL;
+}
+
 static void otaSetStatus(const char* status, int progress, const String& message) {
     gOtaStatus   = status;
     gOtaProgress = progress;
@@ -10674,9 +10738,13 @@ bool otaFetchLatest() {
     StaticJsonDocument<1024> doc;
     if (deserializeJson(doc, resp)) return false;
 
-    gOtaLatestVer  = String(doc["version"]      | "");
-    gOtaLatestSha  = String(doc["firmware_sha"] | "");
+    gOtaLatestVer   = String(doc["version"]      | "");
+    gOtaLatestSha   = String(doc["firmware_sha"] | "");
     gOtaFirmwareUrl = String(doc["firmware_url"] | "");
+    // Optional: a manifest may also publish the web UI image. Absent in older
+    // manifests, so treat a missing key as "firmware only", never as an error.
+    gOtaLittlefsUrl = String(doc["littlefs_url"] | "");
+    gOtaLittlefsSha = String(doc["littlefs_sha"] | "");
     return gOtaLatestVer.length() > 0;
 }
 

@@ -163,8 +163,15 @@ covers the guard scripts you should run before opening a pull request.
 
 Stated up front rather than discovered later:
 
-- **OTA publishes one binary, built for HSU.** A unit wired for SPI or I²C that
-  takes the published update loses its reader until reflashed over USB.
+- **Over-the-air firmware update does not work yet — the partition table has no
+  spare app slot.** `app0` is a lone `factory` partition, so
+  `esp_ota_get_next_update_partition()` finds nowhere to write and the install fails
+  with `free=0`. Filesystem (web UI) updates over the air do work. Fixing this needs
+  a partition table with two app slots, which is a one-time USB reflash. The updater
+  detects the situation and says "Update over USB" rather than half-applying.
+- **OTA publishes one binary, built for HSU.** Once the above is fixed, a unit wired
+  for SPI or I²C that takes the published update would lose its reader until
+  reflashed over USB.
 - **SPI and I²C builds compile but are not bench-verified.** Only HSU has been
   confirmed end-to-end on real hardware.
 - **The local HTTP API is unauthenticated.** Anyone on your LAN can read state and

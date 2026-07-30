@@ -107,7 +107,15 @@ explains why.
 **Settings → Update** on the touchscreen checks the published manifest and installs
 a newer firmware with a progress bar. Nothing to plug in.
 
-Two limits worth knowing before you rely on it:
+> [!WARNING]
+> **Firmware update over the air does not work on the current partition table.**
+> `app0` is a single `factory` partition with no `ota_0`/`ota_1` slot beside it, so
+> the ESP-IDF OTA machinery has nowhere to write the new image and the install fails
+> with `Update.begin failed (need=… free=0)`. The updater checks for this and shows
+> "Update over USB" instead of starting. Updating the **web UI** over the air does
+> work. Reflash firmware over USB until the partition table gains a second app slot.
+
+Two further limits worth knowing:
 
 - **OTA replaces the firmware only — not the web UI.** The manifest published on
   GitHub Pages carries a `firmware_url` and nothing else, so a release that changes

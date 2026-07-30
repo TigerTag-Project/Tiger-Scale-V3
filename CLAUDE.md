@@ -20,7 +20,7 @@ spool's weight and syncs the net filament weight to the owner's TigerTag account
 - **Display** — AXS15231B QSPI 480×320, landscape (rotation 3), LVGL v8.4
 - **NFC** — 2× PN532, wrapped by the `PN532Reader` class (§5)
 - **Weighing** — HX711 + load cell
-- **Power** — AXP2101 PMIC (battery level + charge state)
+- **Power** — USB; AXP2101 PMIC reports level and charge state for the optional battery
 - **Audio** — ES8311 codec (beep on tag detect)
 - **Source** — one Arduino C++ file, about 12 500 lines, plus `i18n.h`
 - **Build** — PlatformIO only (see below for why the Arduino IDE cannot build it)

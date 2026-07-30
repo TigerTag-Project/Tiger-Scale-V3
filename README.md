@@ -22,6 +22,21 @@
   <a href="https://discord.gg/3Qv5TSqnJH"><img src="https://img.shields.io/badge/Discord-Join-5865F2.svg" alt="Discord"></a>
 </p>
 
+<p align="center">
+  <a href="https://tigertag-project.github.io/Tiger-Scale-V3/"><b>Install it from your browser</b></a>
+  &nbsp;&middot;&nbsp;
+  <a href="#what-it-does">What it does</a>
+  &nbsp;&middot;&nbsp;
+  <a href="#hardware">Build one</a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://discord.gg/3Qv5TSqnJH">Get help on Discord</a>
+</p>
+
+<p align="center">
+  <sub>Nothing to install on your computer: plug the scale into a USB port, open
+  the page in Chrome or Edge, and it flashes itself.</sub>
+</p>
+
 ---
 
 **TigerScale V3** is open-source firmware for a connected 3D-printing filament
@@ -62,7 +77,7 @@ V3 is not a firmware update to [TigerScale V2](https://github.com/TigerTag-Proje
 | Display | 0.96" monochrome OLED | **3.5" 480×320 colour touchscreen** |
 | UI | text on an OLED | **LVGL v8.4, full touch UI** |
 | NFC | 2× RC522 | **2× PN532** |
-| Power | USB only | **Battery + AXP2101 PMIC** |
+| Power | USB only | **USB, plus an AXP2101 PMIC** — a battery is optional |
 | Audio | passive buzzer | **ES8311 codec** |
 | Setup | serial / captive portal | **on-screen: WiFi picker, keyboard, calibration wizard** |
 
@@ -76,7 +91,8 @@ this board, and this firmware will not run on that one.
   EMA filtering tuned for a kitchen-scale feel
 - **Full touchscreen UI** — WiFi picker with on-screen keyboard, calibration
   wizard, hardware self-test, language selection, OTA updater
-- **Battery powered**, with charge state and level from the on-board PMIC
+- **Runs on USB**, and takes an optional Li-ion battery: the on-board AXP2101
+  charges it and reports level and charge state
 - **8 firmware languages** (EN · PT · FR · ES · DE · ZH · IT · PL) and a
   **9-language web UI**
 - **Works offline** — brand and material identification comes from a database in
@@ -139,7 +155,8 @@ the IDE has no equivalent for.
 | 1 | USB-C 4-pin cable + connector | [cable](https://link.amazon/B0aoW8qQx) · [connector](https://link.amazon/B0aiEyjLx) |
 | — | Dupont wires, M3 self-tapping screws | [wires](https://link.amazon/B0bl6jvMs) · [screws](https://link.amazon/B0ekzxx1E) |
 | — | 2× M4×30 and 2× M5×30 (load cell), 4× M2×6 (display) | — |
-| 1 | Li-ion battery, small speaker | optional |
+| 1 | Small speaker | ships with the ESP32-S3 board |
+| 1 | Li-ion battery | optional — the scale runs on USB |
 | — | Enclosure | not yet published |
 
 Full costed list with every link: **[docs/HARDWARE.md](docs/HARDWARE.md#bill-of-materials)**

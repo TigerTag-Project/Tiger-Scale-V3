@@ -100,7 +100,7 @@ This is a build, not a kit — you will need to solder and wire.
 | 2 | M4x30 screws (load cell) |
 | 2 | M5x30 screws (load cell) |
 | 4 | M2x6 screws (display board) |
-| 1 | Small speaker — optional, beep on tag detect |
+| 1 | Small speaker — supplied with the board, beep on tag detect |
 | 1 | Li-ion battery — optional; charging is handled on the board |
 
 Every part with a purchase link:

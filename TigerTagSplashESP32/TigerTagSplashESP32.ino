@@ -39,9 +39,9 @@
 //   SCALE                                                 9105- 9271
 //   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)   9272- 9389
 //   RFID                                                  9390-10532
-//   OTA — Over-the-air firmware + filesystem update    10533-11018
-//   LVGL bridge + main weigh screen                      11019-11649
-//   SETUP & LOOP                                         11650-12632
+//   OTA — Over-the-air firmware + filesystem update    10533-11026
+//   LVGL bridge + main weigh screen                      11027-11657
+//   SETUP & LOOP                                         11658-12640
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -10606,6 +10606,14 @@ static bool otaApply(const String& url,
         if (onProgress) onProgress(0, "WiFi not connected");
         return false;
     }
+
+    // What matters for a TLS handshake is the largest CONTIGUOUS block, not the
+    // total free heap: mbedTLS wants a big buffer in one piece. A second OTA image
+    // in the same session has failed here with "SSL - Memory allocation failed"
+    // while plenty of total heap remained, which is fragmentation, not exhaustion.
+    Serial.printf("[OTA] heap before connect: free=%u largest=%u psram=%u\n",
+                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(),
+                  (unsigned)ESP.getFreePsram());
 
     // HTTPS client (insecure — we rely on SHA-256 for integrity, see header note)
     WiFiClientSecure client;

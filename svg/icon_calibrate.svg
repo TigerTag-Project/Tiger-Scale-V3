@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none" stroke="#2d7d79" stroke-linecap="round">
+  <!-- Outer circle with gaps at the 4 cardinal points for the pills -->
+  <circle cx="50" cy="50" r="42" stroke-width="5"
+    stroke-dasharray="54 12" stroke-dashoffset="60"/>
+  <!-- Top pill -->
+  <line x1="50" y1="3"  x2="50" y2="18" stroke-width="9"/>
+  <!-- Bottom pill -->
+  <line x1="50" y1="82" x2="50" y2="97" stroke-width="9"/>
+  <!-- Left pill -->
+  <line x1="3"  y1="50" x2="18" y2="50" stroke-width="9"/>
+  <!-- Right pill -->
+  <line x1="82" y1="50" x2="97" y2="50" stroke-width="9"/>
+  <!-- Inner circle -->
+  <circle cx="50" cy="50" r="16" stroke-width="4.5"/>
+  <!-- Plus sign -->
+  <line x1="50" y1="38" x2="50" y2="62" stroke-width="4.5"/>
+  <line x1="38" y1="50" x2="62" y2="50" stroke-width="4.5"/>
+</svg>

@@ -1,0 +1,21 @@
+# Normalise line endings so a Windows checkout does not rewrite the whole repo.
+* text=auto eol=lf
+
+# The generated RGB565 bitmap headers are effectively data, not code — keeping
+# them out of diffs makes reviewing an actual code change possible.
+*logo_*.h   -diff linguist-generated
+icon_bolt.h -diff linguist-generated
+
+# Binary assets
+*.png binary
+*.ico binary
+*.jpg binary
+*.bin binary
+*.pdf binary
+*.3mf binary
+*.stl binary
+
+# GitHub language stats: this is a firmware repo, not a JavaScript one.
+data/www/**    linguist-vendored
+debug_lib/**   linguist-vendored
+usbhost_lib/** linguist-vendored

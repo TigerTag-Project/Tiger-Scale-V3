@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#667eea">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="TigerScale">
+    <meta name="description" content="TigerScale - Smart RFID filament scale">
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="apple-touch-icon" href="favicon.png">
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="styles.css">
+    <title>TigerScale</title>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="header-title">
+                <h1>TigerScale</h1>
+                <div class="header-device-info">
+                    <span id="fwVersion" class="device-info-version">—</span>
+                    <span class="device-info-sep">·</span>
+                    <span id="uptime" class="device-info-uptime">--:--:--</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="status-bar">
+                    <div class="status-info" id="cloudInfo" style="display:none">
+                        <span id="cloudDot" class="status-dot"></span>
+                        <span id="cloudText" style="font-size: 0.7rem;">—</span>
+                    </div>
+                    <div class="status-info" id="fbInfo" style="display:none">
+                        <span id="fbDot" class="status-dot"></span>
+                        <span id="fbText" style="font-size: 0.7rem;">FB</span>
+                    </div>
+                    <div class="status-info" id="dbInfo" style="display:none" title="TigerTag DB status">
+                        <span id="dbDot" class="status-dot"></span>
+                        <span id="dbText" style="font-size: 0.7rem;">DB</span>
+                    </div>
+                </div>
+                <div class="lang-switcher" id="langSwitcher"></div>
+            </div>
+        </div>
+
+        <!-- Weight Display -->
+        <div class="weight-card">
+            <!-- Workflow state badge — absolute overlay, never shifts layout -->
+            <div id="sendState" class="send-status hidden"></div>
+
+            <!-- Filament info panel — absolute overlay on the right, hidden until RFID scanned -->
+            <div id="filamentPanel" class="filament-panel" style="display:none">
+                <div id="filamentColorDot" class="filament-color-dot"></div>
+                <div class="filament-panel-row">
+                    <span class="filament-panel-label" data-i18n="brandLabel">Brand</span>
+                    <span id="filamentBrand" class="filament-panel-value">—</span>
+                </div>
+                <div class="filament-panel-row">
+                    <span class="filament-panel-label" data-i18n="materialLabel">Material</span>
+                    <span id="filamentMaterial" class="filament-panel-value">—</span>
+                </div>
+            </div>
+
+            <div id="userName" class="user-name hidden"></div>
+
+            <!-- Big number: poids brut de la balance (toujours affiché) -->
+            <div class="weight-display">
+                <span id="weight">—</span>
+                <span class="weight-unit">g</span>
+            </div>
+
+            <!-- Filament row: toujours visible, affiche — quand pas de valeur -->
+            <div id="filamentRow" class="weight-meta-row">
+                <div class="weight-meta-item">
+                    <span class="weight-meta-label" data-i18n="containerLabel">Container</span>
+                    <span class="weight-meta-value"><span id="containerWeightDisplay">—</span> g</span>
+                </div>
+                <div class="weight-meta-sep"></div>
+                <div class="weight-meta-item">
+                    <span class="weight-meta-label" data-i18n="filamentLabel">Filament</span>
+                    <span class="weight-meta-value"><span id="netWeightDisplay">—</span> g</span>
+                </div>
+            </div>
+
+            <!-- UIDs -->
+            <div class="uid-rows">
+                <div class="uid-row" id="uidLeftRow">
+                    <span class="uid-chip-label" data-i18n="uidLeft" data-i18n-title="uidLeftFull" data-tooltip="Left" title="Left">◀ Reader</span>
+                    <span id="uidLeftDisplay" class="uid-value">—</span>
+                </div>
+                <div class="uid-row" id="uidRightRow">
+                    <span class="uid-chip-label" data-i18n="uidRight" data-i18n-title="uidRightFull" data-tooltip="Right" title="Right">Reader ▶</span>
+                    <span id="uid" class="uid-value" data-i18n-empty="waiting">—</span>
+                </div>
+                <!-- Twin row: visible only when twin was fetched from Firestore (not physically detected) -->
+                <div class="uid-row uid-row--twin" id="uidTwinRow" style="display:none">
+                    <span class="uid-chip-label uid-chip-label--twin" data-i18n="uidTwin">Online Request</span>
+                    <span id="uidTwinDisplay" class="uid-value uid-value--twin">—</span>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Tare Button -->
+        <button id="tareBtn" class="tare-hold-btn" onmousedown="startTare()" onmouseup="cancelTare()" onmouseleave="cancelTare()" ontouchstart="startTare()" ontouchend="cancelTare()">
+            <span class="tare-text" data-i18n="tare">TARE</span>
+            <span class="tare-progress"></span>
+        </button>
+
+        <!-- Hidden inputs preserved for backward-compat -->
+        <input type="hidden" id="firebaseEmail">
+        <input type="hidden" id="firebasePassword">
+        <span id="firebaseStatus" style="display:none">—</span>
+
+        <!-- Toolbox toggle -->
+        <button id="toolboxToggle" class="toolbox-toggle open" onclick="toggleToolbox()">
+            <span>🔧</span>
+            <span data-i18n="toolbox">Outils</span>
+            <span class="toolbox-toggle-chev">▾</span>
+        </button>
+
+        <!-- Toolbox panel — tout ce qui est en dessous du TARE -->
+        <div id="toolbox">
+
+        <!-- Account card — visible only when authenticated. Replaces the old inline
+             email/password Firebase card (now obsolete: login is handled by the modal). -->
+        <div id="accountCard" class="card" style="display:none">
+            <div class="card-title collapsible" onclick="toggleSection(this)">
+                👤 <span data-i18n="account">Compte</span>
+            </div>
+            <div class="collapsible-content">
+                <div class="account-row">
+                    <div class="account-avatar" id="accountAvatar">?</div>
+                    <div class="account-info">
+                        <div class="account-label" data-i18n="connectedAs">Connecté en tant que</div>
+                        <div class="account-name" id="accountName" style="display:none"></div>
+                        <div class="account-email" id="accountEmail">—</div>
+                    </div>
+                </div>
+                <div class="divider"></div>
+                <button class="danger" onclick="signOut()">
+                    🚪 <span data-i18n="signOut">Se déconnecter</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Calibration -->
+        <div class="card">
+            <div class="card-title collapsible" onclick="toggleSection(this)">
+                ✨ <span data-i18n="calibration">Calibration</span>
+            </div>
+            <div class="collapsible-content">
+                <!-- Calibration Wizard -->
+                <div id="calibWizard">
+                    <!-- Progress indicator -->
+                    <div class="progress-dots">
+                        <span class="dot active" data-step="1"></span>
+                        <span class="dot" data-step="2"></span>
+                        <span class="dot" data-step="3"></span>
+                    </div>
+                    
+                    <!-- Step 1: Empty scale -->
+                    <div id="step1" class="calib-step active">
+                        <div class="step-icon">⚖️</div>
+                        <div class="step-instruction" data-i18n="step1Instruction">Retirez le filament de la balance</div>
+                        <button onclick="calibStep1()" data-i18n="step1Button">Step 2 →</button>
+                    </div>
+                    
+                    <!-- Step 2: Place known weight -->
+                    <div id="step2" class="calib-step">
+                        <!-- Close button (X) -->
+                        <button class="close-btn" onclick="calibBack(1)" title="Retour">✕</button>
+                        
+                        <!-- Masterspool image (replaces 📦 emoji) -->
+                        <div id="masterspoolImageMain" class="masterspool-image-main">
+                            <img id="masterspoolImg" src="" alt="Masterspool">
+                        </div>
+                        
+                        <div class="step-instruction" data-i18n="step2Instruction">Sélectionnez votre Masterspool vide et placez-la sur la balance</div>
+                        
+                        <!-- Masterspool selector -->
+                        <div class="masterspool-selector">
+                            <label data-i18n="selectMasterspool" style="font-size: 0.9em; color: #4a5568; margin-bottom: 8px; display: block;">Sélectionnez votre Masterspool</label>
+                            <select id="masterspoolSelect" onchange="onMasterspoolChange()" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 10px; font-size: 0.95em; background: #fff; margin-bottom: 12px;">
+                                <!-- Options will be populated by JavaScript -->
+                            </select>
+                            
+                            <!-- Custom weight input (shown only when Custom is selected) -->
+                            <input type="number" id="calibKnownWeight" data-i18n-placeholder="calibKnownWeight" placeholder="Poids réel (g)" step="0.1" min="0.1" inputmode="decimal" style="font-size: 1.1em; padding: 16px; text-align: center; font-weight: 600; background: #fff; display: none;">
+                            <div id="calibWeightError" class="error-message" style="display: none;">
+                                <span data-i18n="errorWeightRequired">⚠️ Veuillez entrer un poids valide (min. 200g)</span>
+                            </div>
+                        </div>
+                        
+                        <div class="button-group" style="grid-template-columns: 1fr 1fr;">
+                            <button id="tareBtnCalib" class="tare-hold-btn" onmousedown="startTareCalib()" onmouseup="cancelTareCalib()" onmouseleave="cancelTareCalib()" ontouchstart="startTareCalib()" ontouchend="cancelTareCalib()">
+                                <span class="tare-text" data-i18n="tare">TARE</span>
+                                <span class="tare-progress"></span>
+                            </button>
+                            <button onclick="calibStep2()" data-i18n="step2Button">Calibrer ✓</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Step 3: Success -->
+                    <div id="step3" class="calib-step">
+                        <div class="step-icon">✨</div>
+                        <div class="step-instruction" data-i18n="step3Instruction">La balance est maintenant calibrée</div>
+                        <button class="secondary" onclick="calibReset()" data-i18n="calibAgain">Calibrer à nouveau</button>
+                    </div>
+                </div>
+                
+                <div class="divider"></div>
+                
+                <!-- Manual calibration (collapsed by default) -->
+                <div class="card-subtitle collapsible" onclick="toggleSection(this)" style="cursor: pointer;">
+                    ✏️ <span data-i18n="manualCalib">Calibration manuelle</span>
+                </div>
+                <div class="collapsible-content">
+                    <div class="info-badge" style="margin-bottom: 12px;">
+                        <span data-i18n="currentFactor">Facteur actuel</span>: <strong id="calFactor">—</strong>
+                    </div>
+                    <input type="number" id="newCalFactor" data-i18n-placeholder="newFactor" placeholder="Nouveau facteur" step="0.1" min="0.1">
+                    <button class="secondary" onclick="updateCalibration()" data-i18n="apply">Appliquer</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hardware -->
+        <div class="card">
+            <div class="card-title collapsible" onclick="toggleSection(this)">
+                🔧 <span data-i18n="hardware">Hardware</span>
+            </div>
+            <div class="collapsible-content">
+
+                <!-- RFID Reader count -->
+                <div class="setting-row">
+                    <div class="setting-row-label">
+                        📡 <span data-i18n="rfidReaders">RFID Readers</span>
+                    </div>
+                    <div class="segment-control" id="rfidSegment">
+                        <button class="segment-btn active" data-val="1" onclick="setRfidCount(1)">1</button>
+                        <button class="segment-btn"        data-val="2" onclick="setRfidCount(2)">2</button>
+                    </div>
+                </div>
+
+                <!-- Left/Right selector — visible only when count=1 -->
+                <div class="setting-row setting-row--indent" id="rfidSideRow" style="display:none">
+                    <div class="setting-row-label">
+                        <span data-i18n="rfidSide">Position</span>
+                    </div>
+                    <div class="segment-control" id="rfidSideSegment">
+                        <button class="segment-btn active" data-val="left"  onclick="setRfidSide('left')"  data-i18n="rfidReaderLeft">Left</button>
+                        <button class="segment-btn"        data-val="right" onclick="setRfidSide('right')" data-i18n="rfidReaderRight">Right</button>
+                    </div>
+                </div>
+
+                <!-- RFID test panel -->
+                <div class="motor-test-panel" id="rfidTestPanel">
+                    <div class="motor-test-header">
+                        📡 <span data-i18n="rfidTest">RFID test</span>
+                    </div>
+                    <!-- Left reader row -->
+                    <div class="rfid-reader-row" id="rfidLeftRow">
+                        <span class="rfid-reader-row-label" data-i18n="rfidReaderLeft">Left</span>
+                        <div class="rfid-uid-wrap">
+                            <div class="rfid-test-uid" id="rfidTestUidLeft">—</div>
+                            <button class="rfid-clear-btn" id="rfidClearBtnLeft" onclick="clearRfidUid('left')" style="display:none" aria-label="Clear">
+                                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <!-- Right reader row -->
+                    <div class="rfid-reader-row" id="rfidRightRow">
+                        <span class="rfid-reader-row-label" data-i18n="rfidReaderRight">Right</span>
+                        <div class="rfid-uid-wrap">
+                            <div class="rfid-test-uid" id="rfidTestUidRight">—</div>
+                            <button class="rfid-clear-btn" id="rfidClearBtnRight" onclick="clearRfidUid('right')" style="display:none" aria-label="Clear">
+                                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <button class="motor-test-run-btn" id="rfidTestRunBtn" onclick="toggleRfidTest()">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" id="rfidTestIcon"><polygon points="5,3 19,12 5,21"/></svg>
+                        <span id="rfidTestLabel">Scan</span>
+                    </button>
+                </div>
+
+                <div class="divider"></div>
+
+                <!-- Motor connected toggle -->
+                <div class="setting-row">
+                    <div class="setting-row-label">
+                        ⚙️ <span data-i18n="motorConnected">Motor connected</span>
+                    </div>
+                    <label class="ios-switch" aria-label="Motor connected">
+                        <input type="checkbox" id="motorConnectedCheck" onchange="onMotorConnectedChange()">
+                        <span class="ios-switch-track"></span>
+                    </label>
+                </div>
+
+                <!-- Rotation enabled (shown only when motor connected) -->
+                <div class="setting-row setting-row--indent" id="motorEnabledRow" style="display:none">
+                    <div class="setting-row-label">
+                        <span data-i18n="motorEnabled">Rotation enabled</span>
+                    </div>
+                    <label class="ios-switch" aria-label="Rotation enabled">
+                        <input type="checkbox" id="motorEnabledCheck" onchange="onMotorEnabledChange()">
+                        <span class="ios-switch-track"></span>
+                    </label>
+                </div>
+
+                <!-- Speed + test panel (shown only when connected + enabled) -->
+                <div class="motor-test-panel" id="motorTestPanel" style="display:none">
+                    <div class="motor-test-header">
+                        ⚙️ <span data-i18n="motorSpeedLabel">Vitesse de rotation</span>
+                    </div>
+                    <!-- Noise badge -->
+                    <div class="motor-noise-row">
+                        <span class="motor-noise-badge" id="motorNoiseBadge">🔉</span>
+                        <span class="motor-noise-label" id="motorNoiseLabel" data-i18n="motorNoiseModerate">Modéré</span>
+                    </div>
+                    <div class="motor-test-speeds">
+                        <input type="range" class="motor-speed-slider" id="motorSpeedSlider"
+                               min="1" max="5" step="1" value="3"
+                               oninput="setMotorSpeed(+this.value)">
+                        <div class="motor-speed-ticks">
+                            <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span>
+                        </div>
+                    </div>
+                    <!-- Test run button -->
+                    <button class="motor-test-run-btn" id="motorTestRunBtn" onclick="toggleMotorTest()">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" id="motorTestIcon"><polygon points="5,3 19,12 5,21"/></svg>
+                        <span id="motorTestLabel" data-i18n="motorTestRun">Run</span>
+                    </button>
+                </div>
+
+                <div class="divider"></div>
+
+                <!-- Spool detection (read-only, from WS) -->
+                <div class="setting-row">
+                    <div class="setting-row-label">
+                        🧵 <span data-i18n="spoolDetected">Container detected</span>
+                    </div>
+                    <span class="compact-value" id="spoolDetectedVal">—</span>
+                </div>
+                <div class="setting-row" id="spoolPositionRow" style="display:none">
+                    <span class="setting-row-label" data-i18n="spoolPosition">Position</span>
+                    <span class="compact-value" id="spoolPositionVal">—</span>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Advanced -->
+        <div class="card">
+            <div class="card-title collapsible" onclick="toggleSection(this)">
+                ⚙️ <span data-i18n="advanced">Avancé</span>
+            </div>
+            <div class="collapsible-content">
+                <button class="secondary" onclick="resetWiFi()">📶 <span data-i18n="reconfigWifi">Reconfigurer Wi‑Fi</span></button>
+                <div style="height: 8px;"></div>
+                <button class="danger" onclick="factoryReset()">🗑️ <span data-i18n="factoryReset">Réinitialisation</span></button>
+                <div class="divider"></div>
+            </div>
+        </div>
+        
+        <!-- Log buttons -->
+        <div style="display:flex;gap:10px;margin-bottom:0">
+            <button class="log-open-btn" onclick="logPanelOpen('fb')">
+                🔥 Cloud Log <span class="log-open-arrow">›</span>
+            </button>
+            <button class="log-open-btn" onclick="logPanelOpen('ws')">
+                🔌 WebSocket Log <span class="log-open-arrow">›</span>
+            </button>
+        </div>
+
+        <!-- ── Debug API panel (advanced users) ─────────────────────────── -->
+        <div id="debugPanel" style="margin-top:16px;padding:0 4px 8px;">
+            <button onclick="(function(p){p.style.display=p.style.display==='none'?'block':'none'})(document.getElementById('debugContent'))"
+                    style="background:none;border:none;color:#c0c0c8;font-size:11px;cursor:pointer;padding:4px 0;letter-spacing:.05em;opacity:.55;transition:opacity .2s"
+                    onmouseover="this.style.opacity='.9'" onmouseout="this.style.opacity='.55'">
+                ⚙ API Debug
+            </button>
+            <div id="debugContent" style="display:none;margin-top:10px;background:#1a1a2e;border-radius:10px;padding:14px 16px;font-size:12px;font-family:monospace;color:#a0a0c0;line-height:1.9">
+
+                <div style="color:#667eea;font-weight:600;margin-bottom:6px;font-size:11px;letter-spacing:.08em">GET — ouvre dans le navigateur</div>
+
+                <a href="/api/status"        target="_blank" style="display:block;color:#a29bfe;text-decoration:none" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#a29bfe'">/api/status</a>
+                <a href="/api/logs"          target="_blank" style="display:block;color:#a29bfe;text-decoration:none" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#a29bfe'">/api/logs</a>
+                <a href="/api/firebase/status" target="_blank" style="display:block;color:#a29bfe;text-decoration:none" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#a29bfe'">/api/firebase/status</a>
+                <a href="/api/hw/config"     target="_blank" style="display:block;color:#a29bfe;text-decoration:none" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#a29bfe'">/api/hw/config</a>
+                <a href="/api/ping"          target="_blank" style="display:block;color:#a29bfe;text-decoration:none" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#a29bfe'">/api/ping</a>
+                <a href="/api/rfid/test"     target="_blank" style="display:block;color:#a29bfe;text-decoration:none" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#a29bfe'">/api/rfid/test</a>
+                <a href="/api/ota/check"     target="_blank" style="display:block;color:#a29bfe;text-decoration:none" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#a29bfe'">/api/ota/check</a>
+
+                <div style="color:#667eea;font-weight:600;margin:10px 0 6px;font-size:11px;letter-spacing:.08em">POST — clic = fetch()</div>
+
+                <span id="_dbg_tare"        class="dbg-post" onclick="dbgPost('/api/tare')">/api/tare</span><br>
+                <span id="_dbg_wf_stop"     class="dbg-post" onclick="dbgPost('/api/workflow/stop')">/api/workflow/stop</span><br>
+                <span id="_dbg_push_weight" class="dbg-post" onclick="dbgPost('/api/push-weight')">/api/push-weight</span><br>
+                <span id="_dbg_update_db"   class="dbg-post" onclick="dbgPost('/api/update-db')">/api/update-db</span><br>
+                <span id="_dbg_srv_toggle"  class="dbg-post" onclick="dbgPost('/api/servo-toggle')">/api/servo-toggle</span><br>
+                <span id="_dbg_srv_test"    class="dbg-post" onclick="dbgPost('/api/servo/test')">/api/servo/test</span><br>
+                <span id="_dbg_fb_logout"   class="dbg-post" onclick="dbgPost('/api/firebase/logout')">/api/firebase/logout</span><br>
+                <span id="_dbg_logs_del"    class="dbg-post" onclick="dbgPost('/api/logs','DELETE')">/api/logs  <span style="color:#fd79a8;font-size:10px">DELETE</span></span><br>
+                <span id="_dbg_logs_clear"  class="dbg-post" onclick="dbgPost('/api/logs/clear')">/api/logs/clear</span><br>
+                <span id="_dbg_reset_wifi"  class="dbg-post" onclick="dbgPost('/api/reset-wifi')" style="color:#fd79a8">/api/reset-wifi  ⚠</span><br>
+                <span id="_dbg_factory"     class="dbg-post" onclick="dbgPost('/api/factory-reset')" style="color:#fd79a8">/api/factory-reset  ⚠</span><br>
+
+                <div id="debugLog" style="margin-top:10px;color:#55efc4;min-height:16px;font-size:11px"></div>
+            </div>
+        </div>
+        <!-- ── end debug panel ──────────────────────────────────────────── -->
+
+        </div><!-- /#toolbox -->
+
+        <!-- Footer — toujours visible, hors toolbox -->
+        <div class="footer">
+            <div class="footer-version">
+                <a href="https://tigertag.io" target="_blank" rel="noopener noreferrer" style="color: #a0aec0; text-decoration: none; transition: color 0.2s;">TigerTag.io</a>
+            </div>
+            <div class="footer-links">
+                <a href="https://github.com/TigerTag-Project/TigerTag-RFID-Guide" target="_blank" rel="noopener noreferrer" class="footer-link">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                    </svg>
+                    RFID Guide
+                </a>
+                <a href="https://discord.gg/3Qv5TSqnJH" target="_blank" rel="noopener noreferrer" class="footer-link">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515a.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0a12.64 12.64 0 0 0-.617-1.25a.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057a19.9 19.9 0 0 0 5.993 3.03a.078.078 0 0 0 .084-.028a14.09 14.09 0 0 0 1.226-1.994a.076.076 0 0 0-.041-.106a13.107 13.107 0 0 1-1.872-.892a.077.077 0 0 1-.008-.128a10.2 10.2 0 0 0 .372-.292a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127a12.299 12.299 0 0 1-1.873.892a.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028a19.839 19.839 0 0 0 6.002-3.03a.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.956-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.955-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.946 2.418-2.157 2.418z"/>
+                    </svg>
+                    Discord
+                </a>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Modal for weight too light error -->
+    <div id="weightErrorModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-icon">⚠️</div>
+            <h3 class="modal-title" data-i18n="modalWeightTooLightTitle">Poids insuffisant</h3>
+            <p class="modal-message" data-i18n="modalWeightTooLightMessage">Le poids est trop léger pour une calibration. Utilisez une Masterspool ou un filament d'au moins 200g.</p>
+            <button class="modal-btn" onclick="closeWeightErrorModal()" data-i18n="modalOk">OK</button>
+        </div>
+    </div>
+
+    <!-- Modal for invalid weight error -->
+    <div id="weightInvalidModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-icon">⚠️</div>
+            <h3 class="modal-title" data-i18n="modalWeightInvalidTitle">Poids invalide</h3>
+            <p class="modal-message" data-i18n="modalWeightInvalidMessage">Veuillez entrer un poids valide</p>
+            <button class="modal-btn" onclick="closeWeightInvalidModal()" data-i18n="modalOk">OK</button>
+        </div>
+    </div>
+
+    <!-- Login Modal -->
+    <div id="firebaseLoginModal" class="modal modal-blocking" style="display:none" aria-hidden="true">
+        <div class="modal-content auth-modal" role="dialog" aria-labelledby="authTitle">
+            <button class="auth-modal-close" onclick="hideAuthModal()" aria-label="Close">✕</button>
+            <div id="authLangFlags" class="auth-lang-flags"></div>
+
+            <div class="auth-logo">
+                <div class="auth-logo-box">
+                    <img src="img/logo-tigertag.svg" class="auth-logo-img" alt="TigerTag">
+                </div>
+            </div>
+            <h2 class="auth-title" id="authTitle" data-i18n="authTitle">Bienvenue sur votre TigerScale</h2>
+            <p class="auth-sub" id="authSubText" data-i18n="authSub">Connectez-vous pour synchroniser vos bobines avec le cloud TigerTag.</p>
+
+            <button type="button" class="auth-btn auth-btn-google" id="btnAuthGoogle" onclick="signInWithGoogleBridge()">
+                <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                    <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/>
+                    <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
+                    <path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/>
+                    <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/>
+                </svg>
+                <span data-i18n="authGoogleBtn">Continuer avec Google</span>
+            </button>
+
+            <div class="auth-divider"><span data-i18n="authOr">ou</span></div>
+
+            <!-- signup only -->
+            <input type="text" id="signupDisplayName" data-i18n-placeholder="authDisplayName" placeholder="Nom affiché (optionnel)" autocomplete="name" data-signup-only style="display:none">
+            <!-- always -->
+            <input type="email" id="loginEmail" data-i18n-placeholder="authEmail" placeholder="Adresse e-mail" autocomplete="username">
+            <input type="password" id="loginPassword" data-i18n-placeholder="authPassword" placeholder="Mot de passe" autocomplete="current-password">
+            <!-- signup only -->
+            <input type="password" id="signupConfirmPassword" data-i18n-placeholder="authConfirmPassword" placeholder="Confirmer le mot de passe" autocomplete="new-password" data-signup-only style="display:none">
+
+            <!-- signin only -->
+            <button type="button" class="auth-btn auth-btn-primary" onclick="signInWithEmail()" data-signin-only>
+                <span data-i18n="authSignIn">Se connecter</span>
+            </button>
+            <!-- signup only -->
+            <button type="button" class="auth-btn auth-btn-primary" onclick="signUpWithEmail()" data-signup-only style="display:none">
+                <span data-i18n="authCreateBtn">Créer mon compte</span>
+            </button>
+
+            <div class="auth-error" id="authError" style="display:none"></div>
+
+            <!-- signin footer -->
+            <div class="auth-footer" data-signin-only>
+                <div class="auth-footer-row">
+                    <span data-i18n="authNoAccount">Pas encore de compte ?</span>
+                    <a href="#" onclick="switchAuthMode('signup'); return false;" data-i18n="authSignUp">Créer un compte</a>
+                </div>
+                <div class="auth-footer-row">
+                    <a href="#" onclick="forgotPassword(); return false;" data-i18n="authForgot">Mot de passe oublié ?</a>
+                </div>
+            </div>
+            <!-- signup footer -->
+            <div class="auth-footer" data-signup-only style="display:none">
+                <div class="auth-footer-row">
+                    <span data-i18n="authHaveAccount">Déjà un compte ?</span>
+                    <a href="#" onclick="switchAuthMode('signin'); return false;" data-i18n="authSignIn">Se connecter</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        /* --- Login modal --- */
+        .modal-blocking { background: rgba(15,23,42,0.72); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+        .auth-modal { max-width: 400px; padding: 30px 26px; text-align: center; position: relative; }
+        .auth-modal-close {
+            position: absolute; top: 12px; right: 12px;
+            width: 30px; height: 30px; border-radius: 50%;
+            border: none; background: transparent;
+            color: #a0aec0; font-size: 16px; line-height: 1;
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            transition: background 0.15s, color 0.15s;
+        }
+        .auth-modal-close:hover { background: #f0f0f0; color: #4a5568; }
+        .auth-logo { margin-bottom: 14px; display: flex; align-items: center; justify-content: center; }
+        .auth-logo-box { background: #000; border-radius: 20px; width: 92px; height: 92px; display: flex; align-items: center; justify-content: center; }
+        .auth-logo-img { width: 80px; height: auto; display: block; filter: brightness(0) invert(1); }
+        .auth-title { font-size: 22px; font-weight: 600; margin: 0 0 8px; color: #2c3e50; }
+        .auth-sub { color: #7f8c8d; font-size: 14px; line-height: 1.5; margin: 0 0 24px; }
+        .auth-btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; width: 100%; box-sizing: border-box; border: none; border-radius: 10px; padding: 13px 18px; font-size: 15px; font-weight: 500; cursor: pointer; font-family: inherit; transition: transform .05s, box-shadow .15s, background .15s; }
+        .auth-btn:active { transform: scale(0.98); }
+        .auth-btn-google { background: #fff; color: #3c4043; border: 1px solid #dadce0; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+        .auth-btn-google:hover { box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+        .auth-btn-primary { background: #e67e22; color: #fff; }
+        .auth-btn-primary:hover { background: #d35400; }
+        .auth-divider { display: flex; align-items: center; margin: 18px 0; color: #95a5a6; font-size: 13px; }
+        .auth-divider::before, .auth-divider::after { content: ""; flex: 1; height: 1px; background: #ecf0f1; }
+        .auth-divider span { padding: 0 12px; text-transform: lowercase; }
+        .auth-modal input[type=email], .auth-modal input[type=password] {
+            width: 100%; box-sizing: border-box; padding: 12px 14px; border: 1px solid #ecf0f1;
+            border-radius: 10px; font-size: 14px; margin-bottom: 10px; font-family: inherit;
+            transition: border-color .15s;
+        }
+        .auth-modal input[type=email]:focus, .auth-modal input[type=password]:focus {
+            outline: none; border-color: #e67e22;
+        }
+        .auth-error { background: #fdeaea; color: #c0392b; padding: 10px 12px; border-radius: 8px;
+                      font-size: 13px; margin-top: 12px; text-align: left; line-height: 1.4; }
+        .auth-footer { margin-top: 18px; font-size: 13px; color: #7f8c8d; }
+        .auth-footer-row { margin-bottom: 6px; }
+        .auth-footer a { color: #e67e22; text-decoration: none; margin-left: 4px; }
+        .auth-footer a:hover { text-decoration: underline; }
+        /* --- Language selector in modal --- */
+        .auth-lang-flags { position: absolute; top: 12px; left: 12px; }
+        .auth-lang-trigger {
+            display: flex; align-items: center; gap: 4px;
+            padding: 4px 8px; border: none; border-radius: 8px;
+            background: transparent; cursor: pointer;
+            font-size: 18px; line-height: 1; transition: background .15s;
+        }
+        .auth-lang-trigger:hover { background: #f0f0f0; }
+        .auth-lang-trigger-chev { font-size: 10px; color: #a0aec0; }
+        .auth-lang-list {
+            display: none; position: absolute; top: calc(100% + 4px); left: 0;
+            background: #1a202c; border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px; padding: 6px; list-style: none; margin: 0;
+            min-width: 200px; z-index: 100; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+        }
+        .auth-lang-flags.open .auth-lang-list { display: block; }
+        .auth-lang-item {
+            display: flex; align-items: center; gap: 8px;
+            padding: 8px 10px; border-radius: 7px; cursor: pointer;
+            font-size: 13px; color: #cbd5e0; transition: background .15s, color .15s;
+        }
+        .auth-lang-item:hover { background: rgba(255,255,255,0.08); color: #fff; }
+        .auth-lang-item.active { background: rgba(102,126,234,0.25); color: #a3bffa; font-weight: 600; }
+        .auth-lang-item-flag { font-size: 16px; line-height: 1; }
+        .auth-lang-item-name { flex: 1; }
+        @media (max-width: 420px) {
+            .auth-modal { padding: 24px 20px; }
+            .auth-title { font-size: 20px; }
+        }
+
+        /* --- Account card (post-login) --- */
+        .account-row { display: flex; align-items: center; gap: 14px; padding: 4px 0; }
+        .account-avatar {
+            width: 44px; height: 44px; border-radius: 50%;
+            background: linear-gradient(135deg, #e67e22, #d35400);
+            color: #fff; display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 14px; flex-shrink: 0;
+            text-transform: uppercase; letter-spacing: 0.05em;
+        }
+        .account-info { flex: 1; min-width: 0; overflow: hidden; }
+        .account-label { font-size: 12px; color: #95a5a6; margin-bottom: 2px; }
+        .account-name {
+            font-size: 15px; color: #1a202c; font-weight: 600;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            margin-bottom: 1px;
+        }
+        .account-email {
+            font-size: 12px; color: #718096; font-weight: 400;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        /* --- Debug API panel --- */
+        .dbg-post {
+            display: inline-block; color: #74b9ff; cursor: pointer;
+            text-decoration: none; transition: color .15s;
+        }
+        .dbg-post:hover { color: #fff; }
+        .dbg-post.ok   { color: #55efc4 !important; }
+        .dbg-post.err  { color: #fd79a8 !important; }
+    </style>
+
+    <script src="i18n.js"></script>
+    <script src="script.js"></script>
+    <script>
+    function dbgPost(url, method) {
+        method = method || 'POST';
+        var log = document.getElementById('debugLog');
+        log.textContent = method + ' ' + url + ' …';
+        // Find the span whose onclick calls this url
+        var spans = document.querySelectorAll('.dbg-post');
+        var el = null;
+        for (var i = 0; i < spans.length; i++) {
+            if ((spans[i].getAttribute('onclick') || '').indexOf("'" + url + "'") !== -1) { el = spans[i]; break; }
+        }
+        fetch(url, { method: method, cache: 'no-store' })
+            .then(function(r) {
+                return r.text().then(function(t) { return { ok: r.ok, status: r.status, body: t }; });
+            })
+            .then(function(d) {
+                var preview = d.body.length > 120 ? d.body.substring(0, 120) + '…' : d.body;
+                log.textContent = '✓ ' + d.status + '  ' + preview;
+                if (el) { el.classList.add('ok'); setTimeout(function(){ el.classList.remove('ok'); }, 1500); }
+            })
+            .catch(function(e) {
+                log.textContent = '✗ ' + e;
+                if (el) { el.classList.add('err'); setTimeout(function(){ el.classList.remove('err'); }, 2000); }
+            });
+    }
+    </script>
+
+    <!-- ── Log Side Panel ───────────────────────────────────────────────── -->
+    <div id="logSidePanel" class="log-side-panel">
+        <div class="log-side-header">
+            <div class="log-side-tabs">
+                <button class="log-side-tab active" id="logTabFb" onclick="logTabSwitch('fb')">🔥 Cloud</button>
+                <button class="log-side-tab" id="logTabWs" onclick="logTabSwitch('ws')">🔌 WebSocket</button>
+            </div>
+            <button class="log-side-close" onclick="logPanelClose()">✕</button>
+        </div>
+
+        <!-- Firebase pane -->
+        <div id="logPaneFb" class="log-pane active">
+            <div class="log-pane-toolbar">
+                <span class="ws-log-count"><span id="fbLogCount">0</span> entrées</span>
+                <div class="ws-log-toolbar-btns">
+                    <button class="ws-log-btn" id="fbLogRefreshBtn" onclick="fbLogFetch()">↺</button>
+                    <button class="ws-log-btn" id="fbLogCopyBtn" onclick="fbLogCopy()" title="Copier les logs">📋</button>
+                    <button class="ws-log-btn" onclick="fbLogClear()">🗑</button>
+                </div>
+            </div>
+            <div class="log-pane-entries" id="fbLogContainer">
+                <div class="ws-log-empty">Chargement...</div>
+            </div>
+        </div>
+
+        <!-- WebSocket pane -->
+        <div id="logPaneWs" class="log-pane">
+            <div class="log-pane-toolbar">
+                <label class="ws-log-toggle-wrap">
+                    <input type="checkbox" id="wsLogOnlyChanges" checked onchange="wsLogSetOnlyChanges(this.checked)">
+                    <span>Changements seulement</span>
+                </label>
+                <div class="ws-log-toolbar-btns">
+                    <button class="ws-log-btn" id="wsLogPauseBtn" onclick="wsLogTogglePause()">⏸</button>
+                    <button class="ws-log-btn" id="wsLogCopyBtn" onclick="wsLogCopy()" title="Copier les logs">📋</button>
+                    <button class="ws-log-btn" onclick="wsLogClear()">🗑</button>
+                </div>
+            </div>
+            <div class="ws-log-count" style="padding:0 12px 6px"><span id="wsLogCount">0</span> messages</div>
+            <div class="log-pane-entries" id="wsLogContainer">
+                <div class="ws-log-empty">En attente de messages...</div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

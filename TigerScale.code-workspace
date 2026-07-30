@@ -1,0 +1,33 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "editor.formatOnSave": false,
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+        "files.encoding": "utf8",
+        "files.eol": "\n",
+        "C_Cpp.intelliSenseEngine": "default",
+        "C_Cpp.default.cppStandard": "c++17",
+        "platformio-ide.activateOnlyOnPlatformIOProject": true,
+        "files.associations": {
+            "*.ino": "cpp",
+            "*.h": "cpp"
+        },
+        "editor.rulers": [120],
+        "files.exclude": {
+            "**/.pio/packages": true,
+            "**/.pio/libdeps": true
+        }
+    },
+    "extensions": {
+        "recommendations": [
+            "pioarduino.pioarduino-ide",
+            "platformio.platformio-ide",
+            "ms-vscode.cpptools"
+        ]
+    }
+}

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <!-- Speaker body -->
+  <path d="M3 9v6h4l5 5V4L7 9H3z" fill="black"/>
+  <!-- Small wave -->
+  <path d="M13.5 9.4 A3 3 0 0 1 13.5 14.6" stroke="black" stroke-width="2" stroke-linecap="round"/>
+  <!-- Medium wave -->
+  <path d="M14.5 7.67 A5 5 0 0 1 14.5 16.33" stroke="black" stroke-width="2" stroke-linecap="round"/>
+  <!-- Large wave -->
+  <path d="M15.5 5.94 A7 7 0 0 1 15.5 18.06" stroke="black" stroke-width="2" stroke-linecap="round"/>
+</svg>

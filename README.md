@@ -1,0 +1,172 @@
+<h1 align="center">🐯 TigerScale V3</h1>
+
+<p align="center">
+  <strong>The connected filament scale that knows which spool is on it.</strong><br>
+  Touchscreen, dual NFC readers, live remaining-weight tracking for the open TigerTag standard.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
+  <img src="https://img.shields.io/badge/Platform-ESP32--S3-blue.svg" alt="Platform: ESP32-S3">
+  <img src="https://img.shields.io/badge/Build-PlatformIO-orange.svg" alt="Build: PlatformIO">
+  <img src="https://img.shields.io/badge/UI-LVGL%20v8.4-6c3.svg" alt="UI: LVGL v8.4">
+  <img src="https://img.shields.io/badge/Languages-8-informational.svg" alt="8 languages">
+  <a href="https://discord.gg/3Qv5TSqnJH"><img src="https://img.shields.io/badge/Discord-Join-5865F2.svg" alt="Discord"></a>
+</p>
+
+<p align="center">
+  <img src="data/www/img/logo-tigertag.svg" alt="TigerTag" width="160">
+</p>
+
+---
+
+## What it does
+
+Put a filament spool carrying a [TigerTag](https://tigertag.io) NFC tag on the
+platform. The scale reads the tag, weighs the spool, subtracts the empty spool's
+weight, and shows you **how much filament is actually left** — then syncs it to
+your TigerTag account so every device you own agrees.
+
+No typing in spool weights. No guessing from the diameter of what's left on the
+reel. Put it down, read it, done.
+
+## Why V3 is a different machine
+
+V3 is not a firmware update to [TigerScale V2](https://github.com/TigerTag-Project/Tiger-Scale)
+— it is different hardware, and the two are not interchangeable.
+
+| | V2 | **V3** |
+|---|---|---|
+| MCU | ESP32-WROOM | **ESP32-S3** (16 MB flash, PSRAM) |
+| Display | 0.96" monochrome OLED | **3.5" 480×320 colour touchscreen** |
+| UI | text on an OLED | **LVGL v8.4, full touch UI** |
+| NFC | 2× RC522 | **2× PN532** |
+| Power | USB only | **Battery + AXP2101 PMIC** |
+| Audio | passive buzzer | **ES8311 codec** |
+| Setup | serial / captive portal | **on-screen: WiFi picker, keyboard, calibration wizard** |
+
+If you built a V2, keep using the V2 repository — its firmware will not run on
+this board, and this firmware will not run on that one.
+
+## Features
+
+- **Dual NFC readers** so twin-tagged spools are identified from either side
+- **Precision weighing** through an HX711 and a load cell, with median + adaptive
+  EMA filtering tuned for a kitchen-scale feel
+- **Full touchscreen UI** — WiFi picker with on-screen keyboard, calibration
+  wizard, hardware self-test, language selection, OTA updater
+- **Battery powered**, with charge state and level from the on-board PMIC
+- **8 firmware languages** (EN · PT · FR · ES · DE · ZH · IT · PL) and a
+  **9-language web UI**
+- **Works offline** — brand and material identification comes from a database in
+  the device's own flash, refreshed at most daily, so tag lookups never wait on
+  the network
+- **Its own web UI**, served from the device over LittleFS, mobile-friendly, live
+  over WebSocket at 10 Hz
+- **Over-the-air updates** from Settings → Update
+- **Cloud sync is optional.** The scale is fully usable without an account —
+  see [docs/CLOUD.md](docs/CLOUD.md) for exactly what is sent and stored
+- **No binary blobs.** Everything here compiles from source
+
+## Quick start
+
+```bash
+git clone https://github.com/TigerTag-Project/Tiger-Scale-V3.git
+cd Tiger-Scale-V3
+
+bash scripts/flash.sh --fs --monitor
+```
+
+That builds the reference firmware, flashes it, uploads the web UI and opens the
+serial console. Then follow the on-screen setup: WiFi → sign in → calibrate.
+
+**One thing to get right first.** The NFC transport is chosen at *compile time*
+and must match how your readers are wired. Build the wrong one and the scale
+detects no reader at all, with no error message to tell you why:
+
+| Your wiring | Build with |
+|-------------|-----------|
+| HSU / UART (2 readers) | `bash scripts/flash.sh` — the default, bench-verified |
+| SPI (2 readers) | `bash scripts/flash.sh --env esp32s3` |
+| I²C (1 reader) | `bash scripts/flash.sh --env esp32s3_i2c` |
+
+Wiring diagrams: **[docs/HARDWARE.md](docs/HARDWARE.md)**.
+
+Requires [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/).
+The Arduino IDE cannot build this project — LVGL's config needs an include path
+the IDE has no equivalent for.
+
+## Hardware
+
+| Component | Notes |
+|-----------|-------|
+| Waveshare ESP32-S3-Touch-LCD-3.5 | The 3.5" touch variant specifically |
+| 2× PN532 NFC module | Elechouse V3 style, with the mode switch and pin header |
+| HX711 + 5 kg load cell | |
+| Li-ion battery | Optional — charging is handled on-board |
+| Enclosure | Not yet published for V3 |
+
+Full pinout, bus topology and the wiring for each transport:
+**[docs/HARDWARE.md](docs/HARDWARE.md)**
+
+> ⚠️ **Sealed USB-C-only PN532 dongles will not work with this board.** Not a
+> firmware limitation — the board's USB-C port is wired as a device and can never
+> act as a host. Get modules with a pin header.
+> [The full postmortem](docs/USB_HOST_POSTMORTEM.md) explains why, so you don't
+> have to find out the way we did.
+
+## Documentation
+
+| Document | For |
+|----------|-----|
+| **[docs/INSTALLATION.md](docs/INSTALLATION.md)** | Building, flashing, first boot |
+| **[docs/HARDWARE.md](docs/HARDWARE.md)** | Pinout, buses, wiring per transport |
+| **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** | When something doesn't work |
+| **[docs/CLOUD.md](docs/CLOUD.md)** | What's sent, what's stored, how to wipe it |
+| **[docs/FIRMWARE.md](docs/FIRMWARE.md)** | Internals, for contributors |
+| **[docs/USB_HOST_POSTMORTEM.md](docs/USB_HOST_POSTMORTEM.md)** | Why USB NFC is impossible here |
+| **[CODEMAP.md](CODEMAP.md)** | Section and function map of the firmware |
+| **[CONTRIBUTING.md](CONTRIBUTING.md)** | How to help |
+
+## Contributing
+
+Yes please — especially a V3 enclosure, bench-verification of the SPI and I²C
+wiring, and translations.
+
+The firmware is one ~12 500-line file, which sounds worse than it is:
+[CODEMAP.md](CODEMAP.md) maps every section and function so you can go straight to
+the 60 lines you need. Read [CONTRIBUTING.md](CONTRIBUTING.md) first — it also
+covers the guard scripts you should run before opening a pull request.
+
+## Known limitations
+
+Stated up front rather than discovered later:
+
+- **OTA publishes one binary, built for HSU.** A unit wired for SPI or I²C that
+  takes the published update loses its reader until reflashed over USB.
+- **SPI and I²C builds compile but are not bench-verified.** Only HSU has been
+  confirmed end-to-end on real hardware.
+- **The local HTTP API is unauthenticated.** Anyone on your LAN can read state and
+  trigger a tare.
+- **No V3 enclosure is published yet.**
+- `downloadUserAvatar()` is suspected to hang the device when given a valid URL;
+  the avatar feature should be considered unfinished.
+
+## Part of the TigerTag ecosystem
+
+TigerTag is an open NFC identification standard for 3D-printing materials.
+
+- **[TigerTag-RFID-Guide](https://github.com/TigerTag-Project/TigerTag-RFID-Guide)** — the protocol spec and public registry
+- **[TigerSystem-Docs](https://github.com/TigerTag-Project/TigerSystem-Docs)** — ecosystem source of truth
+- **[Tiger-Scale](https://github.com/TigerTag-Project/Tiger-Scale)** — the V2 scale
+- **[TigerPOD](https://github.com/TigerTag-Project/TigerPOD)** — open desktop NFC reader/writer
+- **[Tiger Studio Manager](https://github.com/TigerTag-Project/TigerTag-Studio-Manager)** — desktop printer and filament manager
+- **SDKs** — [Python](https://github.com/TigerTag-Project/TigerTag-SDK-Python) · [JavaScript](https://github.com/TigerTag-Project/TigerTag-SDK-JS)
+
+## License
+
+[MIT](LICENSE) — build it, sell it, fork it.
+
+Third-party components keep their own licenses; see
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). "TigerTag" and "TigerScale"
+are project names, not a license to imply endorsement.

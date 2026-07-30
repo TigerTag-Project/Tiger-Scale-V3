@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none" stroke="#1a1a1a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Globe outer circle -->
+  <circle cx="50" cy="54" r="28"/>
+  <!-- Vertical meridian (narrow ellipse) -->
+  <ellipse cx="50" cy="54" rx="9" ry="28"/>
+  <!-- Upper latitude arc -->
+  <path d="M 22,46 Q 50,38 78,46"/>
+  <!-- Lower latitude arc -->
+  <path d="M 22,62 Q 50,70 78,62"/>
+
+  <!-- Left speech bubble (top-left, tail points toward globe) -->
+  <path d="M9,2 L31,2 Q36,2 36,7 L36,27 Q36,32 31,32 L21,32 L15,40 L13,32
+           L9,32 Q4,32 4,27 L4,7 Q4,2 9,2 Z" fill="white"/>
+  <text x="20" y="23" text-anchor="middle" font-size="16" font-weight="bold"
+        fill="#1a1a1a" stroke="none" font-family="Arial,sans-serif">A</text>
+
+  <!-- Right speech bubble (bottom-right, tail points toward globe) -->
+  <path d="M68,62 L79,54 L87,62 L91,62 Q96,62 96,67 L96,91 Q96,96 91,96
+           L69,96 Q64,96 64,91 L64,67 Q64,62 68,62 Z" fill="white"/>
+  <text x="80" y="86" text-anchor="middle" font-size="16" font-weight="bold"
+        fill="#1a1a1a" stroke="none" font-family="Arial,sans-serif">文</text>
+</svg>

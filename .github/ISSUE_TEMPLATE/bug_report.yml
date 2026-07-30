@@ -1,0 +1,93 @@
+name: Bug report
+description: Something isn't working
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two fields below matter more than everything else combined: **the build
+        env** and **how your readers are wired**.
+
+        Most "no readers detected" reports turn out to be firmware built for a
+        transport that doesn't match the wiring — which produces no error message
+        at all, so it's invisible without those two facts.
+
+  - type: dropdown
+    id: env
+    attributes:
+      label: Which build env did you flash?
+      options:
+        - esp32s3_hsu (default — HSU / UART wiring)
+        - esp32s3 (SPI wiring)
+        - esp32s3_i2c (I2C wiring)
+        - esp32s3_hsu_debug
+        - esp32s3_i2c_debug
+        - I don't know / I used a prebuilt release binary
+    validations:
+      required: true
+
+  - type: dropdown
+    id: wiring
+    attributes:
+      label: How are your PN532 readers physically wired?
+      options:
+        - HSU / UART (module mode switch OFF/OFF)
+        - SPI (module mode switch OFF/ON)
+        - I2C (module mode switch ON/OFF)
+        - No readers connected
+        - I'm not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Firmware version
+      description: Shown on the boot splash and under Settings, or `TIGERSCALE_FW_VERSION` in §2.
+      placeholder: "2.2.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Place a spool on the platform
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Serial log around the failure
+      description: |
+        `pio device monitor`, or `python3 scripts/watch_logs.py <device-ip>` if the
+        cable is unplugged. Backtraces are decoded automatically by the monitor.
+
+        For a reader problem, a log from `esp32s3_hsu_debug` or `esp32s3_i2c_debug`
+        is far more useful — it prints every byte on the PN532 link.
+      render: shell
+
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware notes
+      description: Board variant, load cell, anything non-standard about your build.
+
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: Before submitting
+      options:
+        - label: I read [docs/TROUBLESHOOTING.md](../blob/main/docs/TROUBLESHOOTING.md)
+        - label: My build env matches my wiring (or I've said above that it might not)

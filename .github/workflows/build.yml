@@ -1,0 +1,104 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Cheap checks first: if a guard fails there is no point burning five build
+  # slots. These are the same scripts contributors run locally.
+  guards:
+    name: consistency guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: i18n — 82 keys present in all 8 language blocks
+        run: bash scripts/check-i18n.sh
+
+      - name: CODEMAP — function line numbers have not drifted
+        run: bash scripts/check-codemap.sh
+
+      - name: TOC — regenerating it produces no diff
+        run: |
+          bash scripts/update_toc.sh
+          if ! git diff --quiet; then
+            echo "::error::The in-file table of contents is out of date."
+            echo "Run 'bash scripts/update_toc.sh' and commit the result."
+            git --no-pager diff
+            exit 1
+          fi
+
+      - name: No mojibake in source, data or scripts
+        run: |
+          # The .ino once accumulated 218 double-encoded sequences that destroyed
+          # every §, em dash and accent, and the TOC generator had been adapted to
+          # match the corruption instead of fixing it. This stops that recurring.
+          #
+          # Scoped to code and data on purpose: the changelog and worklog quote the
+          # damaged byte sequence verbatim in order to explain it, and this workflow
+          # necessarily contains the pattern it searches for.
+          PATHS='TigerTagSplashESP32 data include scripts platformio.ini partitions.csv'
+          # shellcheck disable=SC2086
+          if git grep -l -I -e 'ï¿½' -e "$(printf '\357\277\275')" -- $PATHS ; then
+            echo "::error::Mojibake or U+FFFD found in the files above."
+            echo "Text was decoded with the wrong codec somewhere. Fix the cause,"
+            echo "and do not adapt tooling to match the corruption."
+            exit 1
+          fi
+
+  build:
+    name: ${{ matrix.env }}
+    needs: guards
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env:
+          - esp32s3_hsu        # reference build, bench-verified
+          - esp32s3            # SPI
+          - esp32s3_i2c        # I2C on Wire1
+          - esp32s3_hsu_debug  # + PN532DEBUG
+          - esp32s3_i2c_debug  # + PN532DEBUG
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: Install PlatformIO Core
+        run: pip install --upgrade platformio
+
+      - name: Build
+        run: pio run -e ${{ matrix.env }}
+
+      - name: Report firmware size
+        run: |
+          BIN=".pio/build/${{ matrix.env }}/firmware.bin"
+          SIZE=$(wc -c < "$BIN")
+          echo "### ${{ matrix.env }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "firmware.bin: $SIZE bytes ($((SIZE / 1024)) KiB)" >> "$GITHUB_STEP_SUMMARY"
+          echo "sha256: $(sha256sum "$BIN" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.env }}
+          path: .pio/build/${{ matrix.env }}/firmware.bin
+          retention-days: 14

@@ -1,0 +1,52 @@
+name: Feature request
+description: Suggest an improvement
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A few things have already been investigated and closed. Please check
+        [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md#things-that-are-settled)
+        first — notably USB-connected NFC readers (physically impossible on this
+        board), Arduino IDE support, and motorised spool rotation.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the situation you're in, not the implementation you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What did you have in mind?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the project?
+      options:
+        - Touchscreen UI
+        - Weighing / calibration
+        - NFC reading
+        - Web UI
+        - Cloud sync
+        - OTA updates
+        - Hardware / enclosure
+        - Documentation
+        - Build tooling
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Would you like to work on it?
+      options:
+        - label: I'd be willing to open a pull request
+        - label: I have the hardware to test it

@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Discord
+    url: https://discord.gg/3Qv5TSqnJH
+    about: Questions, build help, and showing off your scale.
+  - name: Security vulnerability
+    url: https://github.com/TigerTag-Project/Tiger-Scale-V3/security/advisories/new
+    about: Report privately — please do not open a public issue.
+  - name: TigerTag protocol and tag questions
+    url: https://github.com/TigerTag-Project/TigerTag-RFID-Guide
+    about: The NFC standard itself lives in its own repository.

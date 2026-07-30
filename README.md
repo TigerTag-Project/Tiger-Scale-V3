@@ -298,7 +298,7 @@ TigerScale V3 exists because people gave it their time, their bench and their
 patience — testing on real hardware, catching what a compiler cannot, and telling
 us plainly when something did not work.
 
-- **OpenMaker**
+- **[OpenMaker](https://github.com/BenGlut)** (BenGlut)
 - **Rui RP3D**
 - **[Ptitlouis6012](https://github.com/Ptitlouis6012)**
 

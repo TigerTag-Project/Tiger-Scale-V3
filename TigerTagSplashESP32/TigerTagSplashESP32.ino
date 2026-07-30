@@ -17,31 +17,31 @@
 //   ---------------------------------------------------- -----------
 //   HARDWARE CONFIGURATION                                 115-  270
 //   OTA CONFIGURATION                                      271-  293
-//   FORWARD DECLARATIONS                                   294-  430
-//   WEIGHT ROUNDING                                        431-  450
-//   GLOBAL OBJECTS                                         451-  786
-//   CONFIGURATION VARIABLES                                787- 1177
-//   OLED DISPLAY                                          1178- 1928
-//   CLOUD PARSING                                         1929- 1943
-//   WIFI SETUP                                            1944- 4717
-//   LITTLEFS                                              4718- 5017
-//   FIREBASE AUTHENTICATION                               5018- 6626
-//   WEBSOCKET                                             6627- 6653
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  6654- 6765
-//   UNIFIED WS FRAME BUILDER                              6766- 6856
-//   WEIGHT FILTER HELPERS                                 6857- 6871
-//   POST-SEND STATE RESET (shared by all send paths)      6872- 6892
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  6893- 7149
-//   WEB SERVER                                            7150- 8426
-//   CLOUD COMMUNICATION                                   8427- 8609
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  8610- 9037
-//   mDNS                                                  9038- 9075
-//   SCALE                                                 9076- 9242
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)   9243- 9360
-//   RFID                                                  9361-10503
-//   OTA — Over-the-air firmware + filesystem update    10504-11061
-//   LVGL bridge + main weigh screen                      11062-11692
-//   SETUP & LOOP                                         11693-12675
+//   FORWARD DECLARATIONS                                   294-  431
+//   WEIGHT ROUNDING                                        432-  451
+//   GLOBAL OBJECTS                                         452-  787
+//   CONFIGURATION VARIABLES                                788- 1191
+//   OLED DISPLAY                                          1192- 1942
+//   CLOUD PARSING                                         1943- 1957
+//   WIFI SETUP                                            1958- 4731
+//   LITTLEFS                                              4732- 5031
+//   FIREBASE AUTHENTICATION                               5032- 6640
+//   WEBSOCKET                                             6641- 6667
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  6668- 6779
+//   UNIFIED WS FRAME BUILDER                              6780- 6870
+//   WEIGHT FILTER HELPERS                                 6871- 6885
+//   POST-SEND STATE RESET (shared by all send paths)      6886- 6906
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  6907- 7163
+//   WEB SERVER                                            7164- 8440
+//   CLOUD COMMUNICATION                                   8441- 8623
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  8624- 9051
+//   mDNS                                                  9052- 9089
+//   SCALE                                                 9090- 9256
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)   9257- 9374
+//   RFID                                                  9375-10517
+//   OTA — Over-the-air firmware + filesystem update    10518-11132
+//   LVGL bridge + main weigh screen                      11133-11763
+//   SETUP & LOOP                                         11764-12762
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -408,6 +408,7 @@ static void otaSetStatus(const char* status, int progress, const String& message
 static bool otaFirmwareSlotAvailable();   // false on this partition table — see its definition
 static bool otaStartJob(const String& fwUrl, const String& fwSha,
                         const String& fsUrl, const String& fsSha);
+static void otaCheckTaskFn(void* arg);
 
 // OTA state globals (definitions; the OTA section below references them as extern).
 String   gOtaStatus     = "idle";   // idle | checking | downloading | flashing | done | error
@@ -1079,6 +1080,19 @@ static String gLastSentIp        = "";
 // Mirrors the Python script: fetch last_update.json, download only what changed.
 const uint32_t DB_CHECK_INTERVAL_MS  = 24UL * 3600UL * 1000UL;  // 24 h
 const uint32_t DB_BOOT_DEFER_MS      = 60000UL; // avoid DB HTTP sync during the first boot minute
+
+// Automatic update check. Without this nothing ever tells the owner a new version
+// exists — they would have to open Settings > Update and wait, which most people
+// never do.
+//
+// The first check runs 20 s after boot, deliberately BEFORE the Firebase sign-in
+// settles: mbedTLS allocates from internal DRAM, and a manifest fetch has failed
+// with "SSL - Memory allocation failed" while a Firebase TLS session was held. The
+// early window is when that memory is most available.
+const uint32_t OTA_CHECK_BOOT_DELAY_MS = 20000UL;      // first check, 20 s after boot
+const uint32_t OTA_CHECK_INTERVAL_MS   = 6UL * 3600UL * 1000UL;  // then every 6 h
+uint32_t gLastOtaCheckMs   = 0;
+bool     gOtaCheckRunning  = false;
 static uint32_t gLastDbCheckMs       = 0;    // 0 = no network DB sync performed yet
 static volatile bool gDbUpdateRunning = false; // guard: don't spawn 2 tasks at once
 static bool     gPostFirebaseStabilizePending = false;
@@ -10622,6 +10636,28 @@ static bool otaStartJob(const String& fwUrl, const String& fwSha,
     return true;
 }
 
+// Background update check. Only ever fetches the manifest and updates the "latest"
+// globals — it never installs anything. Deciding to install stays with the owner,
+// on the Settings > Update screen.
+//
+// On its own task because otaFetchLatest() opens a TLS connection, and doing that
+// from loop() would stall weighing and the UI for the duration.
+static void otaCheckTaskFn(void* /*arg*/) {
+    Serial.printf("[OTA] background check: heap=%u largest=%u\n",
+                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+    if (otaFetchLatest()) {
+        bool newer = gOtaLatestVer.length() > 0
+                     && gOtaLatestVer != String(TIGERSCALE_FW_VERSION);
+        Serial.printf("[OTA] latest=%s running=%s%s\n",
+                      gOtaLatestVer.c_str(), TIGERSCALE_FW_VERSION,
+                      newer ? "  UPDATE AVAILABLE" : "  (up to date)");
+    } else {
+        Serial.println("[OTA] background check failed — manifest unreachable");
+    }
+    gOtaCheckRunning = false;
+    vTaskDelete(NULL);
+}
+
 static void otaSetStatus(const char* status, int progress, const String& message) {
     gOtaStatus   = status;
     gOtaProgress = progress;
@@ -10767,19 +10803,54 @@ static bool otaApply(const String& url,
 // Fetch /version.json from GitHub Pages and populate the "latest" globals.
 // Used by /api/ota/check (called from the local web UI).
 bool otaFetchLatest() {
-    if (!WiFi.isConnected()) return false;
+    if (!WiFi.isConnected()) {
+        Serial.println("[OTA] fetch: no WiFi");
+        return false;
+    }
     WiFiClientSecure client; client.setInsecure();
     HTTPClient http;
     http.setTimeout(8000);
-    if (!http.begin(client, TIGERSCALE_VERSION_URL)) return false;
+    if (!http.begin(client, TIGERSCALE_VERSION_URL)) {
+        Serial.printf("[OTA] fetch: http.begin failed for %s\n", TIGERSCALE_VERSION_URL);
+        return false;
+    }
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     int code = http.GET();
     String resp = http.getString();
     http.end();
-    if (code != 200) return false;
+    if (code != 200) {
+        // Negative codes are HTTPClient's own errors (connection refused, TLS
+        // failure, timeout); positive ones came from the server.
+        Serial.printf("[OTA] fetch: HTTP %d (%s) for %s\n",
+                      code, HTTPClient::errorToString(code).c_str(),
+                      TIGERSCALE_VERSION_URL);
+        return false;
+    }
 
-    StaticJsonDocument<1024> doc;
-    if (deserializeJson(doc, resp)) return false;
+    // Parse through a FILTER, not into a buffer sized for the whole document.
+    //
+    // The published manifest carries far more than this device needs: an entry per
+    // transport for the web installer, partition offsets, release links. It is
+    // ~3.5 KB and will keep growing. A StaticJsonDocument<1024> over the whole
+    // thing fails with NoMemory — which surfaced as "manifest unreachable", making
+    // a parser problem look like a network one.
+    //
+    // With a filter, ArduinoJson skips everything not listed and only the five
+    // fields below are ever allocated, so the manifest can grow without limit.
+    StaticJsonDocument<192> filter;
+    filter["version"]      = true;
+    filter["firmware_sha"] = true;
+    filter["firmware_url"] = true;
+    filter["littlefs_url"] = true;
+    filter["littlefs_sha"] = true;
+
+    StaticJsonDocument<512> doc;
+    DeserializationError jerr = deserializeJson(doc, resp, DeserializationOption::Filter(filter));
+    if (jerr) {
+        Serial.printf("[OTA] fetch: JSON parse failed (%s), %u bytes received\n",
+                      jerr.c_str(), (unsigned)resp.length());
+        return false;
+    }
 
     gOtaLatestVer   = String(doc["version"]      | "");
     gOtaLatestSha   = String(doc["firmware_sha"] | "");
@@ -12011,6 +12082,22 @@ void loop() {
         }
     }
 
+
+    // Automatic update check: once shortly after boot, then every 6 h. Mirrors the
+    // DB sync block above — a one-shot task so loop() is never blocked.
+    if (WiFi.isConnected() && !gOtaCheckRunning && gOtaStatus == "idle") {
+        bool shouldCheck = false;
+        if (gLastOtaCheckMs == 0) {
+            if (millis() >= OTA_CHECK_BOOT_DELAY_MS) shouldCheck = true;
+        } else if (millis() - gLastOtaCheckMs >= OTA_CHECK_INTERVAL_MS) {
+            shouldCheck = true;
+        }
+        if (shouldCheck) {
+            gLastOtaCheckMs  = millis();
+            gOtaCheckRunning = true;
+            xTaskCreatePinnedToCore(otaCheckTaskFn, "otaCheck", 12288, nullptr, 1, nullptr, 0);
+        }
+    }
 
     // -- RFID antenna sleep/wake ----------------------------------------------
     // Silence the 13.56 MHz field when the platform is empty (< 50 g) and no

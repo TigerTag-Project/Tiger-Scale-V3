@@ -6,4 +6,4 @@ this file to the header above.
 
 ---
 
-_Checkpoint: v3.1.1._
+_Checkpoint: documentation commits no longer wait on a firmware release._

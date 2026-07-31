@@ -89,6 +89,23 @@ one fails with "Repository not found":
 gh auth switch -u TigerTag-Project && git push && gh auth switch -u BenGlut
 ```
 
+**Documentation and installer-page commits do not need a release.** The version
+belongs to the firmware, and moving it without moving the firmware is a claim
+every scale in the field then acts on. So:
+
+| What you changed | What happens on push |
+|------------------|----------------------|
+| `README.md`, `docs/`, comments | guards only — the five-env build matrix is skipped |
+| `web-installer/` | guards, plus `pages.yml` redeploys the page in about a minute |
+| the .ino, `data/`, `platformio.ini`, `partitions.csv` | the full build matrix |
+| a `v*` tag | `release.yml` — builds, publishes, deploys Pages |
+
+`pages.yml` never rebuilds firmware. It copies the published binaries off the
+live site with `scripts/fetch-published-site.py`, lays the new page over them and
+refuses to deploy if `version.json` would change — because `otaApply()` verifies
+the SHA-256 in that file before switching the boot partition, so a rebuilt binary
+would be downloaded and then rejected by every scale in the field.
+
 **Releasing** is a tag; everything else is automatic:
 
 ```bash

@@ -46,9 +46,53 @@ jobs:
         run: python3 scripts/check-emoji.py
 
 
+  # Does this commit actually touch the firmware? Most do not — this repository
+  # gets a lot of documentation and installer-page commits, and compiling five
+  # environments to prove a README typo still builds is six wasted minutes every
+  # time. The guards above always run; only the matrix below is conditional.
+  scope:
+    name: does this touch the firmware
+    runs-on: ubuntu-latest
+    outputs:
+      firmware: ${{ steps.check.outputs.firmware }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: check
+        env:
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # Compare against the PR base, the previous push, or — for a first push
+          # or a force-push whose old head is gone — just build.
+          FROM="${BASE:-$BEFORE}"
+          if [ -z "$FROM" ] || [ "$FROM" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$FROM^{commit}" 2>/dev/null; then
+            echo "No usable base to diff against — building everything."
+            echo "firmware=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CHANGED=$(git diff --name-only "$FROM" "${{ github.sha }}")
+          echo "Changed files:"; echo "$CHANGED" | sed 's/^/  /'
+
+          # Anything that can change a compiled artifact. `data/` is in here
+          # because it becomes the LittleFS image the release publishes.
+          if echo "$CHANGED" | grep -qE '^(TigerTagSplashESP32/|include/|lib/|data/|platformio\.ini|partitions\.csv|\.github/workflows/build\.yml)'; then
+            echo "firmware=true" >> "$GITHUB_OUTPUT"
+            echo "-> firmware touched, building all five environments"
+          else
+            echo "firmware=false" >> "$GITHUB_OUTPUT"
+            echo "-> documentation or web installer only, skipping the build matrix"
+          fi
+
   build:
     name: ${{ matrix.env }}
-    needs: guards
+    needs: [guards, scope]
+    if: needs.scope.outputs.firmware == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

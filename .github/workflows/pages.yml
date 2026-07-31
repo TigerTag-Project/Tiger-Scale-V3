@@ -1,0 +1,80 @@
+name: pages
+
+# Redeploy the installer page WITHOUT cutting a firmware release.
+#
+# Most commits here are text: a clearer sentence, a new explanation, a replaced
+# asset. None of that justifies bumping TIGERSCALE_FW_VERSION — a version that
+# moves without the firmware moving is a claim every scale in the field acts on.
+#
+# Why it copies instead of building: see scripts/fetch-published-site.py. Short
+# version — a rebuild yields binaries with different SHA-256 sums than the ones
+# the release published, and otaApply() verifies that hash before switching the
+# boot partition, so every scale would download the update and reject it at the
+# last step. The binaries have to live next to the page (Web Serial fetches each
+# part by relative path, and release assets carry no CORS header and expire), and
+# deploy-pages replaces the whole site, so they must be in the artifact. Copying
+# them from the live site takes about four seconds; rebuilding takes six minutes
+# and breaks the hashes.
+#
+# Firmware changes still go through release.yml and a tag. This is only the page.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web-installer/**'
+      - '.github/workflows/pages.yml'
+      - 'scripts/fetch-published-site.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never race release.yml: if a release is mid-deploy, wait rather than publishing
+# a site assembled from the version it is in the middle of replacing.
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  redeploy:
+    name: redeploy the installer page
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy the published firmware, then lay this page over it
+        run: |
+          set -euo pipefail
+          python3 scripts/fetch-published-site.py --out pages
+          # The page is whatever is in the working tree. It cannot clobber the
+          # copied files: web-installer/ holds no version.json, no manifest-*.json
+          # and no firmware/ directory.
+          cp -R web-installer/. pages/
+          echo "--- pages/ ---"; find pages -type f | sort
+
+      - name: The manifest must be untouched
+        run: |
+          set -euo pipefail
+          # Publishing a changed version.json is precisely the failure this
+          # workflow exists to prevent, so prove it did not happen.
+          curl -fsSL https://tigertag-project.github.io/Tiger-Scale-V3/version.json -o live.json
+          if ! cmp -s live.json pages/version.json; then
+            echo "::error::version.json differs from the published one. Refusing to"
+            echo "::error::deploy: over-the-air updates verify the SHA-256 it carries."
+            diff <(python3 -m json.tool live.json) <(python3 -m json.tool pages/version.json) || true
+            exit 1
+          fi
+          echo "version.json is byte-identical to the live one."
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages/
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

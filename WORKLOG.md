@@ -6,4 +6,4 @@ this file to the header above.
 
 ---
 
-_Checkpoint: v3.1.0 — the update flow._
+_Checkpoint: the web installer rebuilt for newcomers, in nine languages._

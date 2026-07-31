@@ -33,8 +33,7 @@
 </p>
 
 <p align="center">
-  <sub>Nothing to install on your computer: plug the scale into a USB port, open
-  the page in Chrome or Edge, and it flashes itself.</sub>
+  <img src="assets/tigerscale-v3.png" alt="TigerScale V3 with a filament spool on the platform" width="380">
 </p>
 
 ---
@@ -107,15 +106,27 @@ this board, and this firmware will not run on that one.
 
 ## Quick start
 
-### No toolchain: install from your browser
+### Step 1 — install from your browser
 
 <p align="center">
-  <a href="https://tigertag-project.github.io/Tiger-Scale-V3/"><b>Open the web installer</b></a>
+  <a href="https://tigertag-project.github.io/Tiger-Scale-V3/">
+    <img src="assets/install-button.svg" alt="Install TigerScale from your browser" width="440">
+  </a>
 </p>
 
-Plug the board in over USB-C, pick how your NFC readers are wired, click Install.
-Needs Chrome, Edge or Opera on a desktop — Web Serial exists nowhere else. Goes live
-with the first tagged release.
+<p align="center">
+  <b>Plug in your ESP32 &rarr; click Install &rarr; done.</b><br>
+  No toolchain, no command line.
+</p>
+
+One question — how your readers are wired — then it writes everything.
+Chrome, Edge or Opera on a desktop.
+
+### Step 2 — set it up on the scale
+
+WiFi picker, then sign in from **Settings &rarr; Cloud**, then **Settings &rarr;
+Calibration** with a known weight. Put a tagged spool on the platform and it
+identifies itself. From then on the scale updates itself over the air.
 
 ### Or build it yourself
 
@@ -157,9 +168,15 @@ the IDE has no equivalent for.
 | — | 2× M4×30 and 2× M5×30 (load cell), 4× M2×6 (display) | — |
 | 1 | Small speaker | ships with the ESP32-S3 board |
 | 1 | Li-ion battery | optional — the scale runs on USB |
-| — | Enclosure — printable 3MF, Bambu Studio project | [download](https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/tag/enclosure-v1) |
+| — | Enclosure — printable 3MF, Bambu Studio project | [download](https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/download/enclosure/TigerScale-V3-enclosure.3mf) |
 
 Full costed list with every link: **[docs/HARDWARE.md](docs/HARDWARE.md#bill-of-materials)**
+
+<p align="center">
+  <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/download/enclosure/TigerScale-V3-enclosure.3mf">
+    <img src="assets/enclosure-button.svg" alt="Download the case (3MF)" width="290">
+  </a>
+</p>
 
 <p align="center">
   <a href="docs/HARDWARE.md#wiring-diagram">
@@ -247,7 +264,7 @@ manufacturer is actually committing to when they tag a production line.
 </h3>
 
 <p align="center">
-  <a href="https://rosa3d.pl"><img src="assets/partners/rosa3d.svg" alt="Rosa3D" height="72"></a>
+  <a href="https://rosa3d.pl"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/rosa3d-white.svg"><img src="assets/partners/rosa3d-black.svg" alt="Rosa3D" height="104"></picture></a>
 </p>
 
 **[Rosa3D](https://rosa3d.pl)** ships TigerTag+ on **100 % of its 1 kg spool
@@ -263,9 +280,9 @@ nothing to ask for — buy the filament, put it on the scale, it identifies itse
 </h3>
 
 <p align="center">
-  <a href="https://r3d-europe.com"><img src="assets/partners/r3d.svg" alt="R3D" height="72"></a>
+  <a href="https://r3d-europe.com"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/r3d-white.svg"><img src="assets/partners/r3d-black.svg" alt="R3D" height="74"></picture></a>
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://www.esun3d.com"><img src="assets/partners/esun.svg" alt="eSun" height="72"></a>
+  <a href="https://www.esun3d.com"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/esun-white.svg"><img src="assets/partners/esun-black.svg" alt="eSun" height="74"></picture></a>
 </p>
 
 **[R3D](https://r3d-europe.com)** has begun large-scale deployment across its
@@ -284,11 +301,11 @@ scope, and it is worth repeating accurately rather than rounding up.
 </h3>
 
 <p align="center">
-  <a href="https://www.sunlu.com"><img src="assets/partners/sunlu.svg" alt="Sunlu" height="72"></a>
+  <a href="https://www.sunlu.com"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/sunlu-white.svg"><img src="assets/partners/sunlu-black.svg" alt="Sunlu" height="54"></picture></a>
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://www.landu3d.com"><img src="assets/partners/landu.svg" alt="Landu" height="72"></a>
+  <a href="https://www.landu3d.com"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/landu-white.svg"><img src="assets/partners/landu-black.svg" alt="Landu" height="54"></picture></a>
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://www.jamghe.com"><img src="assets/partners/jamghe.svg" alt="JamgHE" height="72"></a>
+  <a href="https://www.jamghe.com"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/jamghe-white.svg"><img src="assets/partners/jamghe-black.svg" alt="JamgHE" height="54"></picture></a>
 </p>
 
 **[Sunlu](https://www.sunlu.com)**, **[Landu](https://www.landu3d.com)** and

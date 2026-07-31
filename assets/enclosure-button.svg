@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="60" viewBox="0 0 300 60" role="img" aria-label="Download the case, 3MF">
+  <title>Download the case (3MF)</title>
+  <rect x="1.5" y="1.5" width="297" height="57" rx="28.5" fill="#12141b" stroke="#ff7a18" stroke-opacity="0.6"/>
+  <g transform="translate(34 19)" fill="none" stroke="#ff7a18" stroke-width="2.6"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M11 0v13"/><path d="M4.6 8.4 11 14.8l6.4-6.4"/><path d="M1.6 20h18.8"/>
+  </g>
+  <text x="72" y="37" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+        font-size="18" font-weight="650" fill="#f4f5f8" letter-spacing="-0.2">Download the case (3MF)</text>
+</svg>

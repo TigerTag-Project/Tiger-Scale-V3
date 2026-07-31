@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="104" viewBox="0 0 480 104" role="img" aria-label="Install TigerScale from your browser">
+  <title>Install TigerScale from your browser</title>
+  <defs>
+    <linearGradient id="tsFill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff8a2b"/>
+      <stop offset="0.55" stop-color="#ff7a18"/>
+      <stop offset="1" stop-color="#e6352b"/>
+    </linearGradient>
+    <linearGradient id="tsGloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="2" y="2" width="476" height="100" rx="50" fill="url(#tsFill)"/>
+  <rect x="2" y="2" width="476" height="50" rx="50" fill="url(#tsGloss)"/>
+  <rect x="2.5" y="2.5" width="475" height="99" rx="49.5" fill="none" stroke="#ffffff" stroke-opacity="0.30"/>
+
+  <!-- USB-C plug feeding a board: the gesture the button asks for. -->
+  <g transform="translate(44 32)" fill="none" stroke="#ffffff" stroke-width="3.2"
+     stroke-linecap="round" stroke-linejoin="round">
+    <rect x="1.6" y="1.6" width="36.8" height="36.8" rx="8"/>
+    <rect x="12" y="12" width="16" height="16" rx="3"/>
+    <path d="M20 12V4.4M20 28v7.6M12 20H4.4M28 20h7.6"/>
+  </g>
+
+  <text x="106" y="45" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+        font-size="24" font-weight="700" fill="#ffffff" letter-spacing="-0.3">Install from your browser</text>
+  <text x="106" y="72" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+        font-size="14.5" font-weight="500" fill="#ffffff" fill-opacity="0.88">No toolchain, no command line</text>
+
+  <path d="M434 40 l12 12 l-12 12" fill="none" stroke="#ffffff" stroke-width="3.4"
+        stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.9"/>
+</svg>

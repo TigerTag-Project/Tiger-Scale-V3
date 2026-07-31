@@ -119,7 +119,7 @@ actually drives. The diagram shows how the reference unit is physically wired; i
 the two ever disagree, the firmware wins and the diagram needs redrawing.
 
 The printable enclosure is published as a Bambu Studio 3MF:
-[Enclosure v1](https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/tag/enclosure-v1). Prices and a fully costed parts list are still to come. See the
+[Enclosure v1](https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/tag/enclosure). Prices and a fully costed parts list are still to come. See the
 [V2 repository](https://github.com/TigerTag-Project/Tiger-Scale) for a complete,
 costed build of the previous generation.
 

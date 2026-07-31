@@ -17,31 +17,31 @@
 //   ---------------------------------------------------- -----------
 //   HARDWARE CONFIGURATION                                 115-  270
 //   OTA CONFIGURATION                                      271-  293
-//   FORWARD DECLARATIONS                                   294-  432
-//   WEIGHT ROUNDING                                        433-  452
-//   GLOBAL OBJECTS                                         453-  788
-//   CONFIGURATION VARIABLES                                789- 1199
-//   OLED DISPLAY                                          1200- 1950
-//   CLOUD PARSING                                         1951- 1965
-//   WIFI SETUP                                            1966- 4912
-//   LITTLEFS                                              4913- 5212
-//   FIREBASE AUTHENTICATION                               5213- 6821
-//   WEBSOCKET                                             6822- 6848
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  6849- 6960
-//   UNIFIED WS FRAME BUILDER                              6961- 7051
-//   WEIGHT FILTER HELPERS                                 7052- 7066
-//   POST-SEND STATE RESET (shared by all send paths)      7067- 7087
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  7088- 7344
-//   WEB SERVER                                            7345- 8621
-//   CLOUD COMMUNICATION                                   8622- 8804
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  8805- 9232
-//   mDNS                                                  9233- 9270
-//   SCALE                                                 9271- 9437
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)   9438- 9555
-//   RFID                                                  9556-10698
-//   OTA — Over-the-air firmware + filesystem update    10699-11328
-//   LVGL bridge + main weigh screen                      11329-11959
-//   SETUP & LOOP                                         11960-12977
+//   FORWARD DECLARATIONS                                   294-  434
+//   WEIGHT ROUNDING                                        435-  454
+//   GLOBAL OBJECTS                                         455-  790
+//   CONFIGURATION VARIABLES                                791- 1207
+//   OLED DISPLAY                                          1208- 1958
+//   CLOUD PARSING                                         1959- 1973
+//   WIFI SETUP                                            1974- 4920
+//   LITTLEFS                                              4921- 5220
+//   FIREBASE AUTHENTICATION                               5221- 6829
+//   WEBSOCKET                                             6830- 6856
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  6857- 6968
+//   UNIFIED WS FRAME BUILDER                              6969- 7059
+//   WEIGHT FILTER HELPERS                                 7060- 7074
+//   POST-SEND STATE RESET (shared by all send paths)      7075- 7095
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  7096- 7352
+//   WEB SERVER                                            7353- 8629
+//   CLOUD COMMUNICATION                                   8630- 8812
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  8813- 9240
+//   mDNS                                                  9241- 9278
+//   SCALE                                                 9279- 9445
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)   9446- 9563
+//   RFID                                                  9564-10706
+//   OTA — Over-the-air firmware + filesystem update    10707-11363
+//   LVGL bridge + main weigh screen                      11364-11994
+//   SETUP & LOOP                                         11995-13012
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -273,7 +273,7 @@ const char* TIGERTAG_FIREBASE_WEB_API_KEY = "AIzaSyCkxPTs_Cv0KVLqsZj-UKWWqIY0Otf
 
 // Embedded build identity — exposed via /api/status and the heartbeat so the
 // app/Studio can compare against the latest published version.json.
-#define TIGERSCALE_FW_VERSION  "3.1.2"
+#define TIGERSCALE_FW_VERSION  "3.1.3"
 #ifndef TIGERSCALE_GIT_SHA
 #define TIGERSCALE_GIT_SHA     "dev"
 #endif
@@ -407,6 +407,8 @@ void pollOtaCommands();
 static void otaSetStatus(const char* status, int progress, const String& message);
 static bool otaBusy();
 static bool otaFirmwareSlotAvailable();   // guards a partial update — see its definition
+static bool otaApplyRetrying(const String& url, const String& sha, int updateType,
+                             std::function<void(int, const String&)> onProgress);
 static bool otaStartJob(const String& fwUrl, const String& fwSha,
                         const String& fsUrl, const String& fsSha);
 static void otaCheckTaskFn(void* arg);
@@ -1090,6 +1092,12 @@ const uint32_t DB_BOOT_DEFER_MS      = 60000UL; // avoid DB HTTP sync during the
 // settles: mbedTLS allocates from internal DRAM, and a manifest fetch has failed
 // with "SSL - Memory allocation failed" while a Firebase TLS session was held. The
 // early window is when that memory is most available.
+// How long a download may go without a single byte before it is called dead.
+const uint32_t OTA_STALL_MS = 30000UL;
+// A stalled image is retried once from scratch before the update is failed: the
+// observed stalls were transient, and asking the user to start over by hand for
+// something the device can retry itself is a poor trade.
+const int OTA_ATTEMPTS = 2;
 const uint32_t OTA_CHECK_BOOT_DELAY_MS = 20000UL;      // first check, 20 s after boot
 const uint32_t OTA_CHECK_INTERVAL_MS   = 6UL * 3600UL * 1000UL;  // then every 6 h
 uint32_t gLastOtaCheckMs   = 0;
@@ -4543,16 +4551,16 @@ static void runOtaMenu() {
     // other way round would reboot into new firmware still serving the old web UI.
     bool ok = true;
     if (haveFs) {
-        ok = otaApply(gOtaLittlefsUrl, gOtaLittlefsSha, U_SPIFFS,
-                      progressTo(0, 50, "downloading"));
+        ok = otaApplyRetrying(gOtaLittlefsUrl, gOtaLittlefsSha, U_SPIFFS,
+                              progressTo(0, 50, "downloading"));
         if (!ok) {
             Serial.println("[OTA] filesystem image failed — aborting before the firmware");
             otaSetStatus("error", 0, "Filesystem update failed");
         }
     }
     if (ok) {
-        ok = otaApply(gOtaFirmwareUrl, gOtaLatestSha, U_FLASH,
-                      progressTo(haveFs ? 50 : 0, haveFs ? 50 : 100, "flashing"));
+        ok = otaApplyRetrying(gOtaFirmwareUrl, gOtaLatestSha, U_FLASH,
+                              progressTo(haveFs ? 50 : 0, haveFs ? 50 : 100, "flashing"));
         if (!ok) otaSetStatus("error", 0, "Firmware update failed");
     }
 
@@ -10754,6 +10762,25 @@ static bool otaFirmwareSlotAvailable() {
     return esp_ota_get_next_update_partition(NULL) != NULL;
 }
 
+// otaApply, retried. Every failure otaApply reports is recoverable by starting
+// the image over: it aborts the Update cleanly and closes the socket before
+// returning false, so a second attempt begins from a known state. The one
+// exception that is NOT worth retrying is a missing OTA slot, which fails
+// identically every time — Update.begin() rejects it before any byte is read.
+static bool otaApplyRetrying(const String& url, const String& sha, int updateType,
+                             std::function<void(int, const String&)> onProgress) {
+    for (int attempt = 1; attempt <= OTA_ATTEMPTS; attempt++) {
+        if (otaApply(url, sha, updateType, onProgress)) return true;
+        if (attempt < OTA_ATTEMPTS) {
+            Serial.printf("[OTA] attempt %d/%d failed — retrying in 2 s\n",
+                          attempt, OTA_ATTEMPTS);
+            if (onProgress) onProgress(0, "Retrying…");
+            delay(2000);
+        }
+    }
+    return false;
+}
+
 // Parameters for one OTA job, owned by otaJobTaskFn which frees them.
 struct OtaJob {
     String fwUrl, fwSha;
@@ -10783,14 +10810,14 @@ static void otaJobTaskFn(void* arg) {
     bool ok = true;
     if (job->fsUrl.length() > 0) {
         otaSetStatus("downloading", 5, "Downloading filesystem…");
-        ok = otaApply(job->fsUrl, job->fsSha, U_SPIFFS,
-                      [](int p, const String& m){ otaSetStatus("downloading", 5 + (p*35)/100, m); });
+        ok = otaApplyRetrying(job->fsUrl, job->fsSha, U_SPIFFS,
+                              [](int p, const String& m){ otaSetStatus("downloading", 5 + (p*35)/100, m); });
         if (!ok) otaSetStatus("error", 0, "Filesystem update failed");
     }
     if (ok && job->fwUrl.length() > 0) {
         otaSetStatus("flashing", 40, "Downloading firmware…");
-        ok = otaApply(job->fwUrl, job->fwSha, U_FLASH,
-                      [](int p, const String& m){ otaSetStatus("flashing", 40 + (p*55)/100, m); });
+        ok = otaApplyRetrying(job->fwUrl, job->fwSha, U_FLASH,
+                              [](int p, const String& m){ otaSetStatus("flashing", 40 + (p*55)/100, m); });
         if (!ok) otaSetStatus("error", 0, "Firmware update failed");
     }
 
@@ -10952,9 +10979,17 @@ static bool otaApply(const String& url,
                 if (onProgress) onProgress(pct, "Downloading…");
             }
         } else {
-            // Idle — bail out if no data for 10s (stalled connection)
-            if (millis() - lastByteMs > 10000) {
-                Serial.println("[OTA] stalled, aborting");
+            // Idle — give up only after a real silence. This was 10 s, which is
+            // aggressive: a TLS record can genuinely gap for longer than that on a
+            // busy device, and the abort looked like a network fault when it was
+            // impatience. The heap is logged because the one stall that was
+            // captured happened with the heap down at ~31 KB, and the next one
+            // should not have to be guessed at.
+            if (millis() - lastByteMs > OTA_STALL_MS) {
+                Serial.printf("[OTA] no data for %lu s at %d/%d bytes — aborting "
+                              "(heap=%u largest=%u)\n",
+                              (unsigned long)(OTA_STALL_MS / 1000), written, total,
+                              (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
                 Update.abort();
                 mbedtls_sha256_free(&shaCtx);
                 http.end();

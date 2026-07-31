@@ -27,31 +27,31 @@ the source, so this table cannot silently disagree with the file.
 |---|------|-------|
 | 1 | Hardware configuration (pins, defines) | 115–270 |
 | 2 | OTA configuration | 271–293 |
-| 3 | Forward declarations | 294–432 |
-| 4 | Weight rounding | 433–452 |
-| 5 | Global objects (incl. `PN532Reader`, RF tuning) | 453–788 |
-| 6 | Configuration variables | 789–1199 |
-| 7 | Display / weigh rendering | 1200–1950 |
-| 8 | Cloud parsing | 1951–1965 |
-| 9 | WiFi setup + every touch/LVGL settings screen | 1966–4912 |
-| 10 | LittleFS | 4913–5212 |
-| 11 | Firebase authentication + Firestore | 5213–6821 |
-| 13 | WebSocket | 6822–6848 |
-| 14 | Cloud worker task (core 0) | 6849–6960 |
-| 15 | Unified WS frame builder | 6961–7051 |
-| 16 | Weight filter helpers | 7052–7066 |
-| 17 | Post-send state reset | 7067–7087 |
-| 18 | Shared weight push handler | 7088–7344 |
-| 19 | Web server (all HTTP routes) | 7345–8621 |
-| 20 | Cloud communication | 8622–8804 |
-| 21 | Weigh workflow state machine | 8805–9232 |
-| 22 | mDNS | 9233–9270 |
-| 23 | Scale (HX711 init, filtering, calibration) | 9271–9437 |
-| AUDIO | ES8311 codec beep (I2S slave, I2C 0x18) | 9438–9555 |
-| 24 | RFID (PN532 via `PN532Reader`, tag reading) | 9556–10698 |
-| 25 | OTA (firmware + filesystem update) | 10699–11328 |
-| LVGL | LVGL bridge + main weigh screen | 11329–11959 |
-| 26 | `setup()` + `loop()` | 11960–12977 |
+| 3 | Forward declarations | 294–434 |
+| 4 | Weight rounding | 435–454 |
+| 5 | Global objects (incl. `PN532Reader`, RF tuning) | 455–790 |
+| 6 | Configuration variables | 791–1207 |
+| 7 | Display / weigh rendering | 1208–1958 |
+| 8 | Cloud parsing | 1959–1973 |
+| 9 | WiFi setup + every touch/LVGL settings screen | 1974–4920 |
+| 10 | LittleFS | 4921–5220 |
+| 11 | Firebase authentication + Firestore | 5221–6829 |
+| 13 | WebSocket | 6830–6856 |
+| 14 | Cloud worker task (core 0) | 6857–6968 |
+| 15 | Unified WS frame builder | 6969–7059 |
+| 16 | Weight filter helpers | 7060–7074 |
+| 17 | Post-send state reset | 7075–7095 |
+| 18 | Shared weight push handler | 7096–7352 |
+| 19 | Web server (all HTTP routes) | 7353–8629 |
+| 20 | Cloud communication | 8630–8812 |
+| 21 | Weigh workflow state machine | 8813–9240 |
+| 22 | mDNS | 9241–9278 |
+| 23 | Scale (HX711 init, filtering, calibration) | 9279–9445 |
+| AUDIO | ES8311 codec beep (I2S slave, I2C 0x18) | 9446–9563 |
+| 24 | RFID (PN532 via `PN532Reader`, tag reading) | 9564–10706 |
+| 25 | OTA (firmware + filesystem update) | 10707–11363 |
+| LVGL | LVGL bridge + main weigh screen | 11364–11994 |
+| 26 | `setup()` + `loop()` | 11995–13012 |
 
 Two gaps and two oddities in that numbering, all deliberate:
 
@@ -74,62 +74,62 @@ Two gaps and two oddities in that numbering, all deliberate:
 |----------|------|---------|
 | `axpRead` | 375 | §3 |
 | `axpBatteryPercent` | 384 | §3 |
-| `roundWeight` | 436 | §4 |
-| `applyPN532RfTuning` | 542 | §5 |
-| `runScreensaver` | 1230 | §7 |
-| `displayWeightWithState` | 1638 | §7 |
-| `tsPollLoop` | 2061 | §9 |
-| `tsBtn` | 2098 | §9 |
-| `tsKeyboard` | 2358 | §9 |
-| `wifiTouchConfigure` | 2558 | §9 |
-| `tsNumericInput` | 2708 | §9 |
-| `runCalibrationWizard` | 2860 | §9 |
-| `runLanguageSettings` | 3476 | §9 |
-| `runHardwareTest` | 3856 | §9 |
-| `lvglAskYesNo` | 4168 | §9 |
-| `runOtaMenu` | 4273 | §9 |
-| `runSettingsMenu` | 4585 | §9 |
-| `setupWiFi` | 4863 | §9 |
-| `setupFileSystem` | 5027 | §10 |
-| `firebaseSignIn` | 5224 | §11 |
-| `fetchApiKeyFromFirestore` | 5310 | §11 |
-| `syncClockFromFirestore` | 5468 | §11 |
-| `readInventoryContainerWeight` | 5911 | §11 |
-| `pushLatestEventToFirestore` | 6508 | §11 |
-| `buildWsFrame` | 6968 | §15 |
-| `resetWeightFilters` | 7055 | §16 |
-| `resetAfterSuccessfulSend` | 7070 | §17 |
-| `handleWeightPushBody` | 7091 | §18 |
-| `setupWebServer` | 7348 | §19 |
-| `sendSingleUidToCloud` | 8625 | §20 |
-| `parseCloudSpoolMeta` | 8681 | §20 |
-| `pushWeightToCloud` | 8731 | §20 |
-| `fetchMetaFromApiByUid` | 8769 | §20 |
-| `handleWeighWorkflow` | 8832 | §21 |
-| `startMDNS` | 9236 | §22 |
-| `setupScale` | 9274 | §23 |
-| `isRapidChange` | 9305 | §23 |
-| `readWeight` | 9341 | §23 |
-| `playSoundTheme` | 9517 | §AUDIO |
-| `rfidSelectReader` | 9589 | §24 |
-| `normalizeRfidHwConfig` | 9643 | §24 |
-| `setupRFID` | 9653 | §24 |
-| `setupServo` | 9860 | §24 |
-| `processAutoTare` | 9874 | §24 |
-| `downloadUserAvatar` | 10152 | §24 |
-| `fetchMetaFromFirestore` | 10400 | §24 |
-| `readTigerTagMetadata` | 10494 | §24 |
-| `pollRFIDReader` | 10578 | §24 |
-| `recoverRFIDReaderIfNeeded` | 10657 | §24 |
-| `isDuplicateRecentUid` | 10677 | §24 |
-| `isUidLatched` | 10681 | §24 |
-| `finishRfidSession` | 10693 | §24 |
-| `otaApply` | 10867 | §25 |
-| `otaFetchLatest` | 11001 | §25 |
-| `lvglBuildMainScreen` | 11508 | §LVGL |
-| `lvglUpdateMainScreen` | 11804 | §LVGL |
-| `setup` | 11963 | §26 |
-| `loop` | 12121 | §26 |
+| `roundWeight` | 438 | §4 |
+| `applyPN532RfTuning` | 544 | §5 |
+| `runScreensaver` | 1238 | §7 |
+| `displayWeightWithState` | 1646 | §7 |
+| `tsPollLoop` | 2069 | §9 |
+| `tsBtn` | 2106 | §9 |
+| `tsKeyboard` | 2366 | §9 |
+| `wifiTouchConfigure` | 2566 | §9 |
+| `tsNumericInput` | 2716 | §9 |
+| `runCalibrationWizard` | 2868 | §9 |
+| `runLanguageSettings` | 3484 | §9 |
+| `runHardwareTest` | 3864 | §9 |
+| `lvglAskYesNo` | 4176 | §9 |
+| `runOtaMenu` | 4281 | §9 |
+| `runSettingsMenu` | 4593 | §9 |
+| `setupWiFi` | 4871 | §9 |
+| `setupFileSystem` | 5035 | §10 |
+| `firebaseSignIn` | 5232 | §11 |
+| `fetchApiKeyFromFirestore` | 5318 | §11 |
+| `syncClockFromFirestore` | 5476 | §11 |
+| `readInventoryContainerWeight` | 5919 | §11 |
+| `pushLatestEventToFirestore` | 6516 | §11 |
+| `buildWsFrame` | 6976 | §15 |
+| `resetWeightFilters` | 7063 | §16 |
+| `resetAfterSuccessfulSend` | 7078 | §17 |
+| `handleWeightPushBody` | 7099 | §18 |
+| `setupWebServer` | 7356 | §19 |
+| `sendSingleUidToCloud` | 8633 | §20 |
+| `parseCloudSpoolMeta` | 8689 | §20 |
+| `pushWeightToCloud` | 8739 | §20 |
+| `fetchMetaFromApiByUid` | 8777 | §20 |
+| `handleWeighWorkflow` | 8840 | §21 |
+| `startMDNS` | 9244 | §22 |
+| `setupScale` | 9282 | §23 |
+| `isRapidChange` | 9313 | §23 |
+| `readWeight` | 9349 | §23 |
+| `playSoundTheme` | 9525 | §AUDIO |
+| `rfidSelectReader` | 9597 | §24 |
+| `normalizeRfidHwConfig` | 9651 | §24 |
+| `setupRFID` | 9661 | §24 |
+| `setupServo` | 9868 | §24 |
+| `processAutoTare` | 9882 | §24 |
+| `downloadUserAvatar` | 10160 | §24 |
+| `fetchMetaFromFirestore` | 10408 | §24 |
+| `readTigerTagMetadata` | 10502 | §24 |
+| `pollRFIDReader` | 10586 | §24 |
+| `recoverRFIDReaderIfNeeded` | 10665 | §24 |
+| `isDuplicateRecentUid` | 10685 | §24 |
+| `isUidLatched` | 10689 | §24 |
+| `finishRfidSession` | 10701 | §24 |
+| `otaApply` | 10894 | §25 |
+| `otaFetchLatest` | 11036 | §25 |
+| `lvglBuildMainScreen` | 11543 | §LVGL |
+| `lvglUpdateMainScreen` | 11839 | §LVGL |
+| `setup` | 11998 | §26 |
+| `loop` | 12156 | §26 |
 
 ## Landmines — read the note before editing these
 

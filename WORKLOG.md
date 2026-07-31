@@ -6,4 +6,4 @@ this file to the header above.
 
 ---
 
-_Checkpoint: the installer page is a build guide too._
+_Checkpoint: V2 marked as the end of its line._

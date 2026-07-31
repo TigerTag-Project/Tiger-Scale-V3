@@ -90,8 +90,11 @@ V3 is not a firmware update to [TigerScale V2](https://github.com/TigerTag-Proje
 | Audio | passive buzzer | **ES8311 codec** |
 | Setup | serial / captive portal | **on-screen: WiFi picker, keyboard, calibration wizard** |
 
-If you built a V2, keep using the V2 repository — its firmware will not run on
-this board, and this firmware will not run on that one.
+If you built a V2 it keeps working, and its
+[repository](https://github.com/TigerTag-Project/Tiger-Scale) stays online — but
+that line is finished and gets no further releases. The two firmwares are not
+interchangeable: V2's will not run on this board, and this one will not run on
+that one.
 
 ## Features
 

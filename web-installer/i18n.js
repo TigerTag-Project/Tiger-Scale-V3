@@ -16,8 +16,8 @@ window.I18N = {
 
 en: {
   lang_name: "English",
-  h1_install: "Install",
-  tagline: "Plug the board into your computer with a USB-C cable and press one button. There is nothing to install on your computer.",
+  h1_install: "Make & Install",
+  tagline: "Buy the parts, wire them up, then plug the board into your computer and press one button. Nothing to install on your computer.",
   fw: "Firmware",
   theme_label: "Switch between light and dark",
   lang_label: "Language",
@@ -82,8 +82,8 @@ en: {
 
 fr: {
   lang_name: "Français",
-  h1_install: "Installer",
-  tagline: "Branchez la carte sur votre ordinateur avec un câble USB-C et cliquez sur un bouton. Il n'y a rien à installer sur votre ordinateur.",
+  h1_install: "Fabriquer et installer",
+  tagline: "Achetez les pièces, câblez-les, puis branchez la carte sur votre ordinateur et cliquez sur un bouton. Rien à installer sur votre ordinateur.",
   fw: "Micrologiciel",
   theme_label: "Basculer entre clair et sombre",
   lang_label: "Langue",
@@ -148,8 +148,8 @@ fr: {
 
 de: {
   lang_name: "Deutsch",
-  h1_install: "Installieren",
-  tagline: "Schließen Sie die Platine mit einem USB-C-Kabel an Ihren Computer an und klicken Sie auf eine Schaltfläche. Auf Ihrem Computer muss nichts installiert werden.",
+  h1_install: "Bauen & installieren",
+  tagline: "Teile kaufen, verkabeln, dann die Platine an den Computer anschließen und eine Schaltfläche drücken. Auf Ihrem Computer muss nichts installiert werden.",
   fw: "Firmware",
   theme_label: "Zwischen hell und dunkel wechseln",
   lang_label: "Sprache",
@@ -214,8 +214,8 @@ de: {
 
 es: {
   lang_name: "Español",
-  h1_install: "Instalar",
-  tagline: "Conecte la placa al ordenador con un cable USB-C y pulse un botón. No hay nada que instalar en su ordenador.",
+  h1_install: "Fabricar e instalar",
+  tagline: "Compre las piezas, conéctelas, luego enchufe la placa al ordenador y pulse un botón. No hay nada que instalar en su ordenador.",
   fw: "Firmware",
   theme_label: "Cambiar entre claro y oscuro",
   lang_label: "Idioma",
@@ -280,8 +280,8 @@ es: {
 
 it: {
   lang_name: "Italiano",
-  h1_install: "Installa",
-  tagline: "Collega la scheda al computer con un cavo USB-C e premi un pulsante. Non c'è nulla da installare sul computer.",
+  h1_install: "Costruisci e installa",
+  tagline: "Compra i pezzi, collegali, poi collega la scheda al computer e premi un pulsante. Non c'è nulla da installare sul computer.",
   fw: "Firmware",
   theme_label: "Passa da chiaro a scuro",
   lang_label: "Lingua",
@@ -346,8 +346,8 @@ it: {
 
 pl: {
   lang_name: "Polski",
-  h1_install: "Zainstaluj",
-  tagline: "Podłącz płytkę do komputera kablem USB-C i naciśnij jeden przycisk. Na komputerze nie trzeba nic instalować.",
+  h1_install: "Zbuduj i zainstaluj",
+  tagline: "Kup części, połącz je, potem podłącz płytkę do komputera i naciśnij jeden przycisk. Na komputerze nie trzeba nic instalować.",
   fw: "Firmware",
   theme_label: "Przełącz jasny i ciemny",
   lang_label: "Język",
@@ -412,8 +412,8 @@ pl: {
 
 pt: {
   lang_name: "Português (BR)",
-  h1_install: "Instalar",
-  tagline: "Conecte a placa ao computador com um cabo USB-C e clique em um botão. Não há nada para instalar no seu computador.",
+  h1_install: "Monte e instale",
+  tagline: "Compre as peças, ligue os fios, depois conecte a placa ao computador e clique em um botão. Não há nada para instalar no seu computador.",
   fw: "Firmware",
   theme_label: "Alternar entre claro e escuro",
   lang_label: "Idioma",
@@ -478,8 +478,8 @@ pt: {
 
 "pt-pt": {
   lang_name: "Português (PT)",
-  h1_install: "Instalar",
-  tagline: "Ligue a placa ao computador com um cabo USB-C e carregue num botão. Não há nada para instalar no seu computador.",
+  h1_install: "Construa e instale",
+  tagline: "Compre as peças, ligue os fios, depois ligue a placa ao computador e carregue num botão. Não há nada para instalar no seu computador.",
   fw: "Firmware",
   theme_label: "Alternar entre claro e escuro",
   lang_label: "Idioma",
@@ -544,8 +544,8 @@ pt: {
 
 zh: {
   lang_name: "中文",
-  h1_install: "安装",
-  tagline: "用 USB-C 数据线把电路板连到电脑，然后点一个按钮。电脑上什么都不用装。",
+  h1_install: "组装与安装",
+  tagline: "买齐零件、接好线，然后把电路板连到电脑，点一个按钮。电脑上什么都不用装。",
   fw: "固件",
   theme_label: "切换浅色和深色",
   lang_label: "语言",

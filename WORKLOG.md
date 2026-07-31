@@ -6,4 +6,4 @@ this file to the header above.
 
 ---
 
-_Checkpoint: partner artwork and the social card._
+_Checkpoint: the installer page is a build guide too._

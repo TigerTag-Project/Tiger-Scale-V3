@@ -17,31 +17,31 @@
 //   ---------------------------------------------------- -----------
 //   HARDWARE CONFIGURATION                                 115-  270
 //   OTA CONFIGURATION                                      271-  293
-//   FORWARD DECLARATIONS                                   294-  431
-//   WEIGHT ROUNDING                                        432-  451
-//   GLOBAL OBJECTS                                         452-  787
-//   CONFIGURATION VARIABLES                                788- 1198
-//   OLED DISPLAY                                          1199- 1949
-//   CLOUD PARSING                                         1950- 1964
-//   WIFI SETUP                                            1965- 4894
-//   LITTLEFS                                              4895- 5194
-//   FIREBASE AUTHENTICATION                               5195- 6803
-//   WEBSOCKET                                             6804- 6830
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  6831- 6942
-//   UNIFIED WS FRAME BUILDER                              6943- 7033
-//   WEIGHT FILTER HELPERS                                 7034- 7048
-//   POST-SEND STATE RESET (shared by all send paths)      7049- 7069
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  7070- 7326
-//   WEB SERVER                                            7327- 8603
-//   CLOUD COMMUNICATION                                   8604- 8786
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  8787- 9214
-//   mDNS                                                  9215- 9252
-//   SCALE                                                 9253- 9419
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)   9420- 9537
-//   RFID                                                  9538-10680
-//   OTA — Over-the-air firmware + filesystem update    10681-11298
-//   LVGL bridge + main weigh screen                      11299-11929
-//   SETUP & LOOP                                         11930-12947
+//   FORWARD DECLARATIONS                                   294-  432
+//   WEIGHT ROUNDING                                        433-  452
+//   GLOBAL OBJECTS                                         453-  788
+//   CONFIGURATION VARIABLES                                789- 1199
+//   OLED DISPLAY                                          1200- 1950
+//   CLOUD PARSING                                         1951- 1965
+//   WIFI SETUP                                            1966- 4912
+//   LITTLEFS                                              4913- 5212
+//   FIREBASE AUTHENTICATION                               5213- 6821
+//   WEBSOCKET                                             6822- 6848
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  6849- 6960
+//   UNIFIED WS FRAME BUILDER                              6961- 7051
+//   WEIGHT FILTER HELPERS                                 7052- 7066
+//   POST-SEND STATE RESET (shared by all send paths)      7067- 7087
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  7088- 7344
+//   WEB SERVER                                            7345- 8621
+//   CLOUD COMMUNICATION                                   8622- 8804
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  8805- 9232
+//   mDNS                                                  9233- 9270
+//   SCALE                                                 9271- 9437
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)   9438- 9555
+//   RFID                                                  9556-10698
+//   OTA — Over-the-air firmware + filesystem update    10699-11328
+//   LVGL bridge + main weigh screen                      11329-11959
+//   SETUP & LOOP                                         11960-12977
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -273,7 +273,7 @@ const char* TIGERTAG_FIREBASE_WEB_API_KEY = "AIzaSyCkxPTs_Cv0KVLqsZj-UKWWqIY0Otf
 
 // Embedded build identity — exposed via /api/status and the heartbeat so the
 // app/Studio can compare against the latest published version.json.
-#define TIGERSCALE_FW_VERSION  "3.1.1"
+#define TIGERSCALE_FW_VERSION  "3.1.2"
 #ifndef TIGERSCALE_GIT_SHA
 #define TIGERSCALE_GIT_SHA     "dev"
 #endif
@@ -405,6 +405,7 @@ static bool otaApply(const String& url, const String& expectedSha, int updateTyp
 bool otaFetchLatest();
 void pollOtaCommands();
 static void otaSetStatus(const char* status, int progress, const String& message);
+static bool otaBusy();
 static bool otaFirmwareSlotAvailable();   // guards a partial update — see its definition
 static bool otaStartJob(const String& fwUrl, const String& fwSha,
                         const String& fsUrl, const String& fsSha);
@@ -4424,6 +4425,10 @@ static void runOtaMenu() {
     // Only Back is clickable at every call site below (Install stays hidden
     // until the flow explicitly reveals it), so a single wait suffices.
     auto exitScreen = [&]() {
+        // Every early exit gets here while the status still reads "checking";
+        // a failed install has already set "error" and keeps it, so the web UI
+        // and Studio can still say what went wrong.
+        if (gOtaStatus == "checking") otaSetStatus("idle", 0, "");
         waitAction();
         lv_scr_load(lvScreen);
         lv_obj_del(scr);
@@ -4432,6 +4437,11 @@ static void runOtaMenu() {
 
     lv_scr_load(scr);
     setStatus(t(I18N_OTA_CHECKING), LVCOL_MUTED);
+    // Publish to /api/status too. Until this was here, an update driven from the
+    // touchscreen was invisible over HTTP: the screen called otaApply() directly
+    // with its own callback and never touched the shared status, so Studio and
+    // the web UI reported "idle, 0%" throughout.
+    otaSetStatus("checking", 0, "");
     pump(1);
 
     if (!WiFi.isConnected()) {
@@ -4489,6 +4499,7 @@ static void runOtaMenu() {
     // back here rather than leaving the page, hence the loop.
     for (;;) {
         if (waitAction() == OA_BACK) {
+            otaSetStatus("idle", 0, "");
             lv_scr_load(lvScreen);
             lv_obj_del(scr);
             { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis()-t0 < 800) delay(20); }
@@ -4514,13 +4525,14 @@ static void runOtaMenu() {
     // web UI and 50-100% for the firmware when the manifest offers a filesystem,
     // the full sweep when it is firmware only -- instead of resetting between them.
     const bool haveFs = gOtaLittlefsUrl.length() > 0;
-    auto progressTo = [&](int base, int span) {
-        return [&, base, span](int pct, const String& /*msg*/) {
+    auto progressTo = [&](int base, int span, const char* phase) {
+        return [&, base, span, phase](int pct, const String& msg) {
             int overall = base + (span * pct / 100);
             lv_arc_set_value(ring, overall);
             char pctBuf[8];
             snprintf(pctBuf, sizeof(pctBuf), "%d%%", overall);
             lv_label_set_text(ringPct, pctBuf);
+            otaSetStatus(phase, overall, msg);
             lv_timer_handler();
         };
     };
@@ -4531,12 +4543,17 @@ static void runOtaMenu() {
     // other way round would reboot into new firmware still serving the old web UI.
     bool ok = true;
     if (haveFs) {
-        ok = otaApply(gOtaLittlefsUrl, gOtaLittlefsSha, U_SPIFFS, progressTo(0, 50));
-        if (!ok) Serial.println("[OTA] filesystem image failed — aborting before the firmware");
+        ok = otaApply(gOtaLittlefsUrl, gOtaLittlefsSha, U_SPIFFS,
+                      progressTo(0, 50, "downloading"));
+        if (!ok) {
+            Serial.println("[OTA] filesystem image failed — aborting before the firmware");
+            otaSetStatus("error", 0, "Filesystem update failed");
+        }
     }
     if (ok) {
         ok = otaApply(gOtaFirmwareUrl, gOtaLatestSha, U_FLASH,
-                      progressTo(haveFs ? 50 : 0, haveFs ? 50 : 100));
+                      progressTo(haveFs ? 50 : 0, haveFs ? 50 : 100, "flashing"));
+        if (!ok) otaSetStatus("error", 0, "Firmware update failed");
     }
 
     if (!ok) {
@@ -4555,6 +4572,7 @@ static void runOtaMenu() {
     lv_label_set_text(ringPct, "100%");
     lv_label_set_text(ringMsg, t(I18N_REBOOTING));
     lv_obj_add_flag(ringWarn, LV_OBJ_FLAG_HIDDEN);
+    otaSetStatus("done", 100, "Rebooting…");
     pump(2000);
     ESP.restart();
 }
@@ -10824,6 +10842,18 @@ static void otaCheckTaskFn(void* /*arg*/) {
     vTaskDelete(NULL);
 }
 
+// True only while an update is genuinely under way.
+//
+// "error" is deliberately NOT busy. It is the residue of a finished attempt, kept
+// so the web UI and Studio can still say what failed — but the automatic check in
+// loop() used to require the status to be exactly "idle", so one failed update
+// silently disabled update checking until the next reboot. That is the opposite
+// of what you want after a failure.
+static bool otaBusy() {
+    return gOtaStatus == "checking" || gOtaStatus == "downloading"
+        || gOtaStatus == "flashing" || gOtaStatus == "done";
+}
+
 static void otaSetStatus(const char* status, int progress, const String& message) {
     gOtaStatus   = status;
     gOtaProgress = progress;
@@ -12251,7 +12281,7 @@ void loop() {
 
     // Automatic update check: once shortly after boot, then every 6 h. Mirrors the
     // DB sync block above — a one-shot task so loop() is never blocked.
-    if (WiFi.isConnected() && !gOtaCheckRunning && gOtaStatus == "idle") {
+    if (WiFi.isConnected() && !gOtaCheckRunning && !otaBusy()) {
         bool shouldCheck = false;
         if (gLastOtaCheckMs == 0) {
             if (millis() >= OTA_CHECK_BOOT_DELAY_MS) shouldCheck = true;

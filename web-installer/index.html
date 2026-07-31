@@ -274,12 +274,36 @@
 
   /* --- install ------------------------------------------------------------ */
   .cta { text-align:center; margin:.3rem 0 .4rem; }
-  esp-web-install-button {
-    --esp-tools-button-color:var(--brand);
-    --esp-tools-button-text-color:#fff;
-    --esp-tools-button-border-radius:999px;
+  /* The --esp-tools-button-* variables only style the component's OWN default
+     button. The moment you pass a <button slot="activate">, that button is yours
+     and arrives completely unstyled — which is why this looked like plain text
+     rather than the one thing on the page you are meant to press. */
+  esp-web-install-button button[slot="activate"] {
+    display:inline-flex; align-items:center; justify-content:center; gap:.6rem;
+    padding:1.15rem 2.8rem; font-family:inherit; font-size:1.18rem; font-weight:700;
+    letter-spacing:-.01em; color:#fff; cursor:pointer;
+    border:none; border-radius:999px;
+    background:linear-gradient(96deg, var(--brand), var(--ember));
+    box-shadow:0 6px 22px rgba(255,122,24,.34), 0 1px 2px rgba(0,0,0,.3);
+    transition:transform .14s ease, box-shadow .18s ease, filter .18s ease;
   }
-  .cta small { display:block; margin-top:.85rem; color:var(--faint); font-size:.82rem; }
+  esp-web-install-button button[slot="activate"]:hover {
+    transform:translateY(-2px); filter:brightness(1.06);
+    box-shadow:0 10px 30px rgba(255,122,24,.44), 0 1px 2px rgba(0,0,0,.3);
+  }
+  esp-web-install-button button[slot="activate"]:active { transform:translateY(0); }
+  esp-web-install-button button[slot="activate"]:focus-visible {
+    outline:3px solid var(--ring); outline-offset:3px;
+  }
+  /* A slow pulse on the ring, so the eye lands here first. */
+  @media (prefers-reduced-motion: no-preference) {
+    esp-web-install-button button[slot="activate"] { animation:ctaPulse 2.8s ease-in-out infinite; }
+    @keyframes ctaPulse {
+      0%, 100% { box-shadow:0 6px 22px rgba(255,122,24,.34), 0 0 0 0 rgba(255,122,24,.42); }
+      55%      { box-shadow:0 6px 22px rgba(255,122,24,.34), 0 0 0 14px rgba(255,122,24,0); }
+    }
+  }
+  .cta small { display:block; margin-top:1rem; color:var(--faint); font-size:.82rem; }
 
   /* --- callout ------------------------------------------------------------ */
   .note {
@@ -456,7 +480,7 @@
   </div>
 
   <div class="step"><span class="n">3</span><h2 data-i18n="s2_title"></h2></div>
-  <div class="panel">
+  <div class="panel" style="padding:2.1rem 1.4rem">
     <div class="cta">
       <esp-web-install-button id="installer" manifest="manifest-esp32s3_hsu.json">
         <button slot="activate" data-i18n="btn"></button>

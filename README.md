@@ -23,8 +23,18 @@
 </p>
 
 <p align="center">
-  <a href="https://tigertag-project.github.io/Tiger-Scale-V3/"><b>Install it from your browser</b></a>
-  &nbsp;&middot;&nbsp;
+  <a href="https://tigertag-project.github.io/Tiger-Scale-V3/">
+    <img src="assets/install-button.svg" alt="Install TigerScale from your browser" width="420">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/download/enclosure/TigerScale-V3-enclosure.3mf">
+    <img src="assets/enclosure-button.svg" alt="Download the case (3MF)" width="270">
+  </a>
+</p>
+
+<p align="center">
   <a href="#what-it-does">What it does</a>
   &nbsp;&middot;&nbsp;
   <a href="#hardware">Build one</a>
@@ -108,18 +118,9 @@ this board, and this firmware will not run on that one.
 
 ### Step 1 — install from your browser
 
-<p align="center">
-  <a href="https://tigertag-project.github.io/Tiger-Scale-V3/">
-    <img src="assets/install-button.svg" alt="Install TigerScale from your browser" width="440">
-  </a>
-</p>
-
-<p align="center">
-  <b>Plug in your ESP32 &rarr; click Install &rarr; done.</b><br>
-  No toolchain, no command line.
-</p>
-
-One question — how your readers are wired — then it writes everything.
+**Plug in your ESP32 &rarr; click Install &rarr; done.** Use the button at the top
+of this page. One question — how your readers are wired — then it writes the
+bootloader, the partition table, the firmware and the web interface.
 Chrome, Edge or Opera on a desktop.
 
 ### Step 2 — set it up on the scale
@@ -172,11 +173,24 @@ the IDE has no equivalent for.
 
 Full costed list with every link: **[docs/HARDWARE.md](docs/HARDWARE.md#bill-of-materials)**
 
-<p align="center">
-  <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/download/enclosure/TigerScale-V3-enclosure.3mf">
-    <img src="assets/enclosure-button.svg" alt="Download the case (3MF)" width="290">
-  </a>
-</p>
+### Ready to slice
+
+The enclosure is one **[`.3mf` project](https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/download/enclosure/TigerScale-V3-enclosure.3mf)** with the plates already laid out —
+open it in Bambu Studio or Orca and press Slice. No orientation to set, no
+supports to place.
+
+| Part | What it is |
+|------|------------|
+| `base` | Bottom shell, carries the load cell and the HX711 |
+| `plateau` | The platform the spool sits on |
+| `suporte` | Load-cell support |
+| `ecran` | Bezel for the 3.5" touchscreen |
+| `tampa` &middot; `tampa rfid` | Top cover and the cover over the NFC bay |
+| `traseira` | Back panel |
+
+That link is permanent: it always serves the current revision, so it stays valid
+when the enclosure is updated. Any slicer that reads 3MF will open the file,
+though the plate arrangement is Bambu-specific.
 
 <p align="center">
   <a href="docs/HARDWARE.md#wiring-diagram">

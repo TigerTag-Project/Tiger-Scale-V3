@@ -27,10 +27,16 @@ name: pages
 # The ONLY thing in this repository that deploys Pages. release.yml deliberately
 # does not, because two deployers racing for the same commit is what broke it.
 on:
-  # A release just landed: publish the site around it. This is what carries a new
-  # firmware version to the scales, so it is the most important trigger here.
-  release:
-    types: [published]
+  # Called by release.yml once it has published, which is what carries a new
+  # firmware version to the scales.
+  #
+  # It is `workflow_call` and not `release: published` for a reason that costs a
+  # release to learn: GitHub does not raise triggering events for anything created
+  # with the built-in GITHUB_TOKEN. release.yml publishes with that token, so a
+  # `release` trigger here would sit silently and never fire — which is exactly
+  # what happened to v3.1.3. Being called runs inside the caller's own run, so no
+  # event needs to be raised at all.
+  workflow_call:
   # Page-only edits, which need no release at all.
   push:
     branches: [main]

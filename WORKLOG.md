@@ -6,4 +6,4 @@ this file to the header above.
 
 ---
 
-_Checkpoint: v3.1.3._
+_Checkpoint: partner artwork and the social card._

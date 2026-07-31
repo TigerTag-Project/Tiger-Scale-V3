@@ -31,6 +31,10 @@ on:
 
 permissions:
   contents: write
+  # Granted for the deploy job below, which calls pages.yml. A called workflow
+  # cannot hold permissions the caller does not have.
+  pages: write
+  id-token: write
 
 concurrency:
   group: release
@@ -192,13 +196,21 @@ jobs:
             --title "TigerScale V3 v$VERSION" \
             --notes-file "docs/release-notes/v$VERSION.md"
 
-  # Publishing the page is NOT this workflow's job — see pages.yml, which is the
-  # single thing in this repository allowed to deploy Pages. It fires on
-  # `release: published`, assembles the site around the release assets and
-  # verifies the result against the live site.
+  # Publishing the page is NOT done here. pages.yml is the single thing in this
+  # repository allowed to deploy Pages, and this job calls it once the release
+  # exists, so the site is assembled around assets that are already downloadable.
   #
   # It used to be a job here, and that was the bug: two workflows deploying for
   # the same commit minutes apart. GitHub reported both successful, marked the
   # older inactive, and went on serving it. version.json advertised the previous
   # version, so every scale kept reporting "up to date" against a release that
   # was already out. Nothing was red anywhere.
+
+  deploy-page:
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml

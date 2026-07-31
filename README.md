@@ -302,7 +302,7 @@ manufacturer is actually committing to when they tag a production line.
 </h3>
 
 <p align="center">
-  <a href="https://rosa3d.pl"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/rosa3d-white.svg"><img src="assets/partners/rosa3d-black.svg" alt="Rosa3D" height="104"></picture></a>
+  <a href="https://rosa3d.pl"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/rosa3d-white.svg"><img src="assets/partners/rosa3d-black.svg" alt="Rosa3D" height="150"></picture></a>
 </p>
 
 **[Rosa3D](https://rosa3d.pl)** ships TigerTag+ on **100 % of its 1 kg spool
@@ -352,17 +352,17 @@ scope, and it is worth repeating accurately rather than rounding up.
 ### It ships on real boxes
 
 <p align="center">
-  <img src="assets/partner-box-rosa3d.jpg" alt="Rosa3D retail box carrying the TigerTag RFID mark" width="220">
-  <img src="assets/partner-box-esun.jpg" alt="eSun retail box carrying the TigerTag RFID mark" width="220">
-  <img src="assets/partner-box-sunlu.jpg" alt="Sunlu retail box carrying the TigerTag RFID mark" width="220">
+  <img src="assets/partner-box-rosa3d.png" alt="Rosa3D retail box carrying the TigerTag RFID mark" width="220">
+  <img src="assets/partner-box-esun.png" alt="eSun retail box carrying the TigerTag RFID mark" width="220">
+  <img src="assets/partner-box-sunlu.png" alt="Sunlu retail box carrying the TigerTag RFID mark" width="220">
 </p>
 
 ### Integration in progress
 
 <p align="center">
-  <a href="https://nanovia.tech"><img src="assets/partners/nanovia.svg" alt="Nanovia" height="72"></a>
+  <a href="https://nanovia.tech"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/nanovia-white.svg"><img src="assets/partners/nanovia-black.svg" alt="Nanovia" height="62"></picture></a>
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://www.filforme.com"><img src="assets/partners/filforme.svg" alt="Filforme" height="72"></a>
+  <a href="https://www.filforme.com"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/filforme-white.svg"><img src="assets/partners/filforme-black.svg" alt="Filforme" height="62"></picture></a>
 </p>
 
 **[Nanovia](https://nanovia.tech)** and **[Filforme](https://www.filforme.com)**

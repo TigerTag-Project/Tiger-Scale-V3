@@ -6,4 +6,4 @@ this file to the header above.
 
 ---
 
-_Checkpoint: the web installer rebuilt for newcomers, in nine languages._
+_Checkpoint: v3.1.1._

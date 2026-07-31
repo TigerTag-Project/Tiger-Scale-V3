@@ -213,6 +213,30 @@ Full pinout, bus topology and the wiring for each transport:
 > [The full postmortem](docs/USB_HOST_POSTMORTEM.md) explains why, so you don't have
 > to find out the way we did.
 
+## Make and sell it
+
+**Anyone can manufacture and sell TigerScale hardware. No licence fee, no
+royalty, no registration.**
+
+1. Build it — bill of materials and wiring in [docs/HARDWARE.md](docs/HARDWARE.md),
+   enclosure as a [printable 3MF](https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/download/enclosure/TigerScale-V3-enclosure.3mf).
+2. Flash the official firmware from the
+   [web installer](https://tigertag-project.github.io/Tiger-Scale-V3/) — it always
+   serves the current release, and the scale updates itself over the air after that.
+3. Ship it.
+
+The only condition for calling your product **TigerScale** is running the official
+firmware unmodified, so every unit behaves the same way inside the TigerTag
+ecosystem. Forks are welcome — give them a different name.
+
+> [!NOTE]
+> V3 picks its NFC transport at compile time, so flash the build that matches the
+> wiring you assembled. The wrong one gives a scale that starts up perfectly and
+> never sees a tag, with nothing on screen to say why. All three builds are
+> official; the installer asks that question first.
+
+Full terms: **[TRADEMARK.md](TRADEMARK.md)**.
+
 ## Documentation
 
 | Document | For |
@@ -432,4 +456,5 @@ TigerTag is an open NFC identification standard for 3D-printing materials.
 
 Third-party components keep their own licenses; see
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). "TigerTag" and "TigerScale"
-are project names, not a license to imply endorsement.
+are project names, not a license to imply endorsement — the terms for using them
+on a product you sell are in [TRADEMARK.md](TRADEMARK.md).

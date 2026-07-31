@@ -6,4 +6,4 @@ this file to the header above.
 
 ---
 
-_Checkpoint: v3.1.2._
+_Checkpoint: trademark policy ported from V2._

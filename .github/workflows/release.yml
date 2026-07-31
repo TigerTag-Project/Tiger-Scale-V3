@@ -31,8 +31,6 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 concurrency:
   group: release
@@ -183,10 +181,6 @@ jobs:
           name: dist
           path: dist/
 
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: pages/
-
       - name: Publish the GitHub Release
         if: steps.version.outputs.publish == 'true'
         env:
@@ -198,13 +192,13 @@ jobs:
             --title "TigerScale V3 v$VERSION" \
             --notes-file "docs/release-notes/v$VERSION.md"
 
-  deploy-pages:
-    needs: build
-    if: needs.build.outputs.publish == 'true'
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
-      - id: deploy
-        uses: actions/deploy-pages@v4
+  # Publishing the page is NOT this workflow's job — see pages.yml, which is the
+  # single thing in this repository allowed to deploy Pages. It fires on
+  # `release: published`, assembles the site around the release assets and
+  # verifies the result against the live site.
+  #
+  # It used to be a job here, and that was the bug: two workflows deploying for
+  # the same commit minutes apart. GitHub reported both successful, marked the
+  # older inactive, and went on serving it. version.json advertised the previous
+  # version, so every scale kept reporting "up to date" against a release that
+  # was already out. Nothing was red anywhere.

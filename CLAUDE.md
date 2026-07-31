@@ -91,20 +91,40 @@ gh auth switch -u TigerTag-Project && git push && gh auth switch -u BenGlut
 
 **Documentation and installer-page commits do not need a release.** The version
 belongs to the firmware, and moving it without moving the firmware is a claim
-every scale in the field then acts on. So:
+every scale in the field then acts on.
 
 | What you changed | What happens on push |
 |------------------|----------------------|
 | `README.md`, `docs/`, comments | guards only — the five-env build matrix is skipped |
-| `web-installer/` | guards, plus `pages.yml` redeploys the page in about a minute |
+| `web-installer/` | guards, plus `pages.yml` redeploys in about a minute |
 | the .ino, `data/`, `platformio.ini`, `partitions.csv` | the full build matrix |
-| a `v*` tag | `release.yml` — builds, publishes, deploys Pages |
+| a `v*` tag | `release.yml` builds and publishes; `pages.yml` then deploys |
 
-`pages.yml` never rebuilds firmware. It copies the published binaries off the
-live site with `scripts/fetch-published-site.py`, lays the new page over them and
-refuses to deploy if `version.json` would change — because `otaApply()` verifies
-the SHA-256 in that file before switching the boot partition, so a rebuilt binary
-would be downloaded and then rejected by every scale in the field.
+**`pages.yml` is the only thing allowed to deploy Pages.** `release.yml`
+deliberately does not, and must not be given that job back. Two workflows
+deploying for the same commit is what broke it once: GitHub reported both
+deployments successful, marked the older inactive, and went on serving it, so
+`version.json` advertised the previous version and every scale kept reporting
+"up to date" against a release that was already out. Nothing was red anywhere —
+the only way to see it was to fetch the site and compare it to the release.
+
+Three properties keep that from recurring, and all three matter:
+
+- **It assembles around the latest *release*, never around what is live.** So it
+  produces the same correct site whether it runs before or after a release, and
+  ordering stops being a question.
+- **It rebuilds nothing.** The app images are the release assets themselves, so
+  the SHA-256 in `version.json` is the hash of the exact bytes the OTA will
+  download. `otaApply()` verifies that hash before switching the boot partition;
+  a rebuilt binary would be downloaded and then rejected by every scale.
+- **It fetches the site back and checks it** (`scripts/verify-published-site.py`),
+  and an hourly run repairs the site if a deployment is ever lost again.
+
+Run that checker by hand any time you doubt what the scales can see:
+
+```bash
+python3 scripts/verify-published-site.py
+```
 
 **Releasing** is a tag; everything else is automatic:
 

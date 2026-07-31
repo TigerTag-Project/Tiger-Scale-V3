@@ -6,25 +6,43 @@ name: pages
 # asset. None of that justifies bumping TIGERSCALE_FW_VERSION — a version that
 # moves without the firmware moving is a claim every scale in the field acts on.
 #
-# Why it copies instead of building: see scripts/fetch-published-site.py. Short
-# version — a rebuild yields binaries with different SHA-256 sums than the ones
-# the release published, and otaApply() verifies that hash before switching the
-# boot partition, so every scale would download the update and reject it at the
-# last step. The binaries have to live next to the page (Web Serial fetches each
-# part by relative path, and release assets carry no CORS header and expire), and
-# deploy-pages replaces the whole site, so they must be in the artifact. Copying
-# them from the live site takes about four seconds; rebuilding takes six minutes
-# and breaks the hashes.
+# The site is assembled around the LATEST PUBLISHED RELEASE, never around
+# whatever happens to be live. That distinction is the whole design, and it was
+# learned the hard way: an earlier version copied version.json off the live site,
+# which meant it could only ever republish what was already there. When the
+# release workflow and this one both deployed for the same commit, the site was
+# left serving the older of the two and the new release became invisible to every
+# scale — they kept seeing the previous version. Deriving from the release
+# removes the ordering question: run this before or after a release and it
+# produces the same, correct site.
+#
+# Nothing is rebuilt. The app images are the release assets themselves, so the
+# SHA-256 sums in version.json are the hashes of the exact bytes the OTA will
+# download — correct by construction rather than by hope. otaApply() verifies
+# that hash before switching the boot partition, so a rebuilt binary would be
+# downloaded and then rejected by every scale in the field.
 #
 # Firmware changes still go through release.yml and a tag. This is only the page.
 
+# The ONLY thing in this repository that deploys Pages. release.yml deliberately
+# does not, because two deployers racing for the same commit is what broke it.
 on:
+  # A release just landed: publish the site around it. This is what carries a new
+  # firmware version to the scales, so it is the most important trigger here.
+  release:
+    types: [published]
+  # Page-only edits, which need no release at all.
   push:
     branches: [main]
     paths:
       - 'web-installer/**'
       - '.github/workflows/pages.yml'
       - 'scripts/fetch-published-site.py'
+      - 'scripts/make-manifest.py'
+  # Safety net. If a deployment is ever silently lost again, this repairs it
+  # within the hour instead of leaving every scale told it is up to date.
+  schedule:
+    - cron: '17 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -32,11 +50,14 @@ permissions:
   pages: write
   id-token: write
 
-# Never race release.yml: if a release is mid-deploy, wait rather than publishing
-# a site assembled from the version it is in the middle of replacing.
+# Shared with release.yml's deploy job: two Pages deployments for the same commit
+# is exactly what broke this once.
 concurrency:
-  group: github-pages
+  group: github-pages-deploy
   cancel-in-progress: false
+
+env:
+  OTA_ENV: esp32s3_hsu
 
 jobs:
   redeploy:
@@ -48,33 +69,80 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Copy the published firmware, then lay this page over it
+      - name: Is the live site already current?
+        id: state
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] \
+             && python3 scripts/verify-published-site.py --quiet; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Nothing to repair."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Assemble around the latest release
+        if: steps.state.outputs.skip != 'true'
+        id: assemble
         run: |
           set -euo pipefail
-          python3 scripts/fetch-published-site.py --out pages
-          # The page is whatever is in the working tree. It cannot clobber the
-          # copied files: web-installer/ holds no version.json, no manifest-*.json
+          python3 scripts/fetch-published-site.py --out pages | tee assemble.log
+          VERSION=$(grep -oE '^version=.+' assemble.log | cut -d= -f2)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          # The manifest is regenerated from the release assets that were just
+          # downloaded, so every hash in it is the hash of a published byte.
+          python3 scripts/make-manifest.py \
+            --version "$VERSION" \
+            --repo "${{ github.repository }}" \
+            --ota-env "$OTA_ENV" \
+            --dist pages/dist \
+            --web-installer pages \
+            --out pages/version.json
+
+          # dist/ was only a staging area for the hashing; the factory images are
+          # already on the release and do not need a second home.
+          rm -rf pages/dist
+
+          # The page itself is whatever is in the working tree. It cannot clobber
+          # the above: web-installer/ holds no version.json, no manifest-*.json
           # and no firmware/ directory.
           cp -R web-installer/. pages/
           echo "--- pages/ ---"; find pages -type f | sort
 
-      - name: The manifest must be untouched
+      - name: The manifest must describe the release it claims
+        if: steps.state.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.assemble.outputs.version }}
         run: |
           set -euo pipefail
-          # Publishing a changed version.json is precisely the failure this
-          # workflow exists to prevent, so prove it did not happen.
-          curl -fsSL https://tigertag-project.github.io/Tiger-Scale-V3/version.json -o live.json
-          if ! cmp -s live.json pages/version.json; then
-            echo "::error::version.json differs from the published one. Refusing to"
-            echo "::error::deploy: over-the-air updates verify the SHA-256 it carries."
-            diff <(python3 -m json.tool live.json) <(python3 -m json.tool pages/version.json) || true
-            exit 1
-          fi
-          echo "version.json is byte-identical to the live one."
+          # Prove the published binary and the hash we are about to advertise are
+          # the same object. If these ever disagree, every scale downloads the
+          # update and rejects it at the final check — silently, and only in the
+          # field.
+          SAID=$(python3 -c "import json;print(json.load(open('pages/version.json'))['firmware_sha'])")
+          GOT=$(sha256sum "pages/firmware/firmware-$OTA_ENV.bin" | cut -d' ' -f1)
+          SAY_V=$(python3 -c "import json;print(json.load(open('pages/version.json'))['version'])")
+
+          echo "manifest version : $SAY_V (expected $VERSION)"
+          echo "manifest sha     : $SAID"
+          echo "served binary    : $GOT"
+
+          [ "$SAY_V" = "$VERSION" ] || { echo "::error::version mismatch"; exit 1; }
+          [ "$SAID"  = "$GOT"     ] || { echo "::error::the manifest hash is not the hash of the binary being served"; exit 1; }
+          echo "OK — the manifest describes exactly what is being served."
 
       - uses: actions/upload-pages-artifact@v3
+        if: steps.state.outputs.skip != 'true'
         with:
           path: pages/
 
       - id: deploy
+        if: steps.state.outputs.skip != 'true'
         uses: actions/deploy-pages@v4
+
+      # Deploying is not the same as being served. GitHub reported success on the
+      # deployment that was then silently ignored, so the only trustworthy signal
+      # is fetching the site back and comparing it to the release.
+      - name: Prove the live site now serves that release
+        if: steps.state.outputs.skip != 'true'
+        run: python3 scripts/verify-published-site.py --wait 300

@@ -6,4 +6,4 @@ this file to the header above.
 
 ---
 
-_Checkpoint: trademark policy ported from V2._
+_Checkpoint: one deployer for Pages._

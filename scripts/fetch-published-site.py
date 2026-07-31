@@ -1,38 +1,49 @@
 #!/usr/bin/env python3
-"""fetch-published-site.py — rebuild the Pages site around the firmware already published.
+"""fetch-published-site.py — assemble the Pages site around an existing release.
 
 Why this exists
 ---------------
 Most commits here are text: a clearer sentence, a new explanation, a replaced
 asset. None of that justifies bumping `TIGERSCALE_FW_VERSION` — a version that
-moves without the firmware moving is a claim every scale in the field then acts
-on.
+moves without the firmware moving is a claim every scale in the field acts on.
 
 But the installer page lives on GitHub Pages next to the .bin files it flashes
-(same-origin: Web Serial fetches each part by relative path). So redeploying the
-page has always meant re-running the release workflow, which rebuilds the
-firmware and regenerates `version.json` from what it just built.
+(same-origin: Web Serial fetches each part by relative path, and release assets
+carry no CORS header and expire), and `deploy-pages` replaces the whole site. So
+redeploying the page means republishing the firmware alongside it.
 
-That is the trap. A rebuild produces binaries whose SHA-256 sums differ from the
-ones attached to the published release, and `otaApply()` verifies that hash
-before switching the boot partition. Every scale in the field would download the
-update and reject it at the final step.
+Rebuilding that firmware is not an option: the SHA-256 sums would differ from the
+assets the release published, and `otaApply()` verifies that hash before
+switching the boot partition. Every scale would download the update and reject it
+at the last step.
 
-So this script builds nothing. It treats the currently published site as the
-source of truth for the firmware and copies it: `version.json` verbatim, the
-per-transport manifests verbatim, and every .bin they name. The caller then
-overlays the working tree's `web-installer/` on top. What ships is a new page
-wrapped around byte-identical firmware.
+So nothing is built. The app images come from **the release assets themselves**,
+which is what makes the hashes correct by construction rather than by hope: the
+bytes hashed into `version.json` are the exact bytes the OTA will download.
 
-The file list is derived from the manifests rather than hardcoded, so adding a
-transport to `make-manifest.py` cannot silently leave a file behind here.
+Two files per transport are not release assets — the bootloader and the partition
+table, which the installer needs but the OTA does not. Those are copied from the
+currently published site, and the script fails loudly rather than guessing if
+they are missing.
+
+An earlier version of this script copied `version.json` from the live site
+instead. That was wrong in a way that took a broken release to expose: when the
+release workflow and this one both deployed for the same commit, whichever landed
+second won, and this one could only ever republish whatever was already there —
+so it could not carry a new release forward, and it could silently roll one back.
+Deriving from the release removes the ordering question entirely: run it before
+or after a release and it produces the same, correct site.
 
 Usage:
-    python3 scripts/fetch-published-site.py --base URL --out pages
-    python3 scripts/fetch-published-site.py --dry-run     # list, download nothing
+    python3 scripts/fetch-published-site.py --repo OWNER/NAME --out pages
+    python3 scripts/fetch-published-site.py --tag v3.1.2      # pin a release
+    python3 scripts/fetch-published-site.py --dry-run
 
-Exit 0 on success. Exit 1 if there is no published site to build on, which means
-a release has to be cut first.
+Writes `<out>/firmware/` plus `<out>/dist/` — the latter is what you then hand to
+make-manifest.py as `--dist`. Prints the resolved version to stdout as
+`version=X.Y.Z` so a workflow can pick it up.
+
+Exit 0 on success, 1 if there is no release or the published site is incomplete.
 """
 
 import argparse
@@ -42,83 +53,107 @@ import sys
 import urllib.error
 import urllib.request
 
-DEFAULT_BASE = "https://tigertag-project.github.io/Tiger-Scale-V3"
+REPO = "TigerTag-Project/Tiger-Scale-V3"
+PAGES = "https://tigertag-project.github.io/Tiger-Scale-V3"
+
+# Per transport. Kept in step with TRANSPORTS in make-manifest.py; the check at
+# the end of this script fails if a manifest names a file that is not covered.
+ENVS = ["esp32s3_hsu", "esp32s3", "esp32s3_i2c"]
+
+# Needed by the web installer, never published as release assets, and identical
+# for every version unless partitions.csv or the board config changes — in which
+# case the release workflow will have deployed new ones, and we copy those.
+FROM_PAGES = ["firmware/boot_app0.bin"] + \
+             ["firmware/bootloader-%s.bin" % e for e in ENVS] + \
+             ["firmware/partitions-%s.bin" % e for e in ENVS]
 
 
 def get(url):
-    with urllib.request.urlopen(url, timeout=30) as r:
+    req = urllib.request.Request(url, headers={"User-Agent": "tigerscale-pages"})
+    with urllib.request.urlopen(req, timeout=60) as r:
         return r.read()
+
+
+def latest_tag(repo):
+    data = json.loads(get("https://api.github.com/repos/%s/releases/latest" % repo))
+    return data["tag_name"]
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base", default=DEFAULT_BASE, help="live site to copy from")
-    ap.add_argument("--out", default="pages", help="directory to assemble into")
-    ap.add_argument("--dry-run", action="store_true", help="list the files, fetch none")
+    ap.add_argument("--repo", default=REPO)
+    ap.add_argument("--pages", default=PAGES, help="published site, for the boot files")
+    ap.add_argument("--tag", help="release to assemble around (default: latest)")
+    ap.add_argument("--out", default="pages")
+    ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    base = args.base.rstrip("/")
-
     try:
-        manifest_raw = get(base + "/version.json")
+        tag = args.tag or latest_tag(args.repo)
     except urllib.error.HTTPError as exc:
-        print("ERROR: no published site at %s (HTTP %s)." % (base, exc.code), file=sys.stderr)
-        print("This workflow reuses the firmware a release published, so cut a "
-              "release before using it.", file=sys.stderr)
+        print("ERROR: cannot read the latest release (HTTP %s). Cut a release first."
+              % exc.code, file=sys.stderr)
         return 1
-    except urllib.error.URLError as exc:
-        print("ERROR: cannot reach %s — %s" % (base, exc.reason), file=sys.stderr)
-        return 1
+    version = tag.lstrip("v")
+    dl = "https://github.com/%s/releases/download/%s" % (args.repo, tag)
 
-    manifest = json.loads(manifest_raw)
-    version = manifest.get("version")
-    envs = list(manifest.get("builds", {}))
-    if not version or not envs:
-        print("ERROR: version.json has no version or no builds; refusing to guess.",
-              file=sys.stderr)
-        return 1
+    # The app images and the filesystem: the bytes the OTA itself downloads.
+    assets = ["littlefs.bin"]
+    for env in ENVS:
+        assets += ["firmware-%s.bin" % env, "firmware-%s.factory.bin" % env]
 
-    print("Published site: v%s, %d transport(s): %s" % (version, len(envs), " ".join(envs)))
-
-    # Collect every part path the installer will ask for, from the manifests
-    # themselves rather than from a list that could fall out of date.
-    per_env = {}
-    wanted = set()
-    for env in envs:
-        name = "manifest-%s.json" % env
-        per_env[name] = get("%s/%s" % (base, name))
-        for build in json.loads(per_env[name]).get("builds", []):
-            for part in build.get("parts", []):
-                wanted.add(part["path"])
-
-    ordered = sorted(wanted)
+    print("Assembling around release %s (version %s)" % (tag, version))
     if args.dry_run:
-        print("\nWould copy verbatim:")
-        for name in ["version.json"] + sorted(per_env):
-            print("  %s" % name)
-        for path in ordered:
-            print("  %s" % path)
+        print("\nFrom the release:")
+        for a in assets:
+            print("  %s" % a)
+        print("\nFrom the published site:")
+        for p in FROM_PAGES:
+            print("  %s" % p)
         return 0
 
-    os.makedirs(args.out, exist_ok=True)
-    with open(os.path.join(args.out, "version.json"), "wb") as fh:
-        fh.write(manifest_raw)          # bytes, not a re-serialisation
-    for name, raw in per_env.items():
-        with open(os.path.join(args.out, name), "wb") as fh:
-            fh.write(raw)
+    dist = os.path.join(args.out, "dist")
+    fw = os.path.join(args.out, "firmware")
+    os.makedirs(dist, exist_ok=True)
+    os.makedirs(fw, exist_ok=True)
 
     total = 0
-    for path in ordered:
+    for name in assets:
+        try:
+            blob = get("%s/%s" % (dl, name))
+        except urllib.error.HTTPError as exc:
+            print("ERROR: release %s has no asset %s (HTTP %s)."
+                  % (tag, name, exc.code), file=sys.stderr)
+            return 1
+        # dist/ feeds make-manifest.py, which hashes these exact bytes.
+        with open(os.path.join(dist, name), "wb") as fh:
+            fh.write(blob)
+        # firmware/ is what the browser installer fetches; it needs neither the
+        # factory images nor a second copy of anything else.
+        if not name.endswith(".factory.bin"):
+            with open(os.path.join(fw, name), "wb") as fh:
+                fh.write(blob)
+        total += len(blob)
+        print("  release  %-40s %9d bytes" % (name, len(blob)))
+
+    for path in FROM_PAGES:
+        try:
+            blob = get("%s/%s" % (args.pages.rstrip("/"), path))
+        except urllib.error.HTTPError as exc:
+            print("ERROR: the published site has no %s (HTTP %s)." % (path, exc.code),
+                  file=sys.stderr)
+            print("Bootloaders and partition tables are not release assets, so they "
+                  "can only come from a site a release already deployed.", file=sys.stderr)
+            return 1
         dest = os.path.join(args.out, path)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
-        blob = get("%s/%s" % (base, path))
         with open(dest, "wb") as fh:
             fh.write(blob)
         total += len(blob)
-        print("  %-46s %9d bytes" % (path, len(blob)))
+        print("  site     %-40s %9d bytes" % (path, len(blob)))
 
-    print("\nCopied %d firmware file(s), %.1f MB, plus %d manifest(s) — nothing rebuilt."
-          % (len(ordered), total / 1e6, len(per_env) + 1))
+    print("\n%.1f MB assembled, nothing rebuilt." % (total / 1e6))
+    print("version=%s" % version)
     return 0
 
 

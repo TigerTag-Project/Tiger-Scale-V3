@@ -337,7 +337,7 @@
 #define LV_USE_BMP 0
 #define LV_USE_SJPG 0
 #define LV_USE_GIF 0
-#define LV_USE_QRCODE 0
+#define LV_USE_QRCODE 1
 #define LV_USE_FREETYPE 0
 #define LV_USE_TINY_TTF 0
 #define LV_USE_RLOTTIE 0

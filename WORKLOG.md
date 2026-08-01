@@ -6,4 +6,4 @@ this file to the header above.
 
 ---
 
-_Checkpoint: account pairing specified._
+_Checkpoint: QR widget enabled for account pairing._

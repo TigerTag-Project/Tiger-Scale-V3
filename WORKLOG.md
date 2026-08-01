@@ -6,4 +6,4 @@ this file to the header above.
 
 ---
 
-_Checkpoint: V2 marked as the end of its line._
+_Checkpoint: account pairing specified._

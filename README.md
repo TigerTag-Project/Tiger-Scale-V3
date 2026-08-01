@@ -114,7 +114,9 @@ that one.
   over WebSocket at 10 Hz
 - **Over-the-air updates** from Settings → Update
 - **Cloud sync is optional.** The scale is fully usable without an account —
-  see [docs/CLOUD.md](docs/CLOUD.md) for exactly what is sent and stored
+  see [docs/CLOUD.md](docs/CLOUD.md) for exactly what is sent and stored, and
+  [docs/ACCOUNT-PAIRING.md](docs/ACCOUNT-PAIRING.md) for how an account without a
+  password gets linked
 - **No binary blobs.** Everything here compiles from source
 
 ## Quick start

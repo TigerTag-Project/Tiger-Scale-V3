@@ -150,10 +150,14 @@ a debugging session at least once.
 | `otaApply` | `firmware_url` must point at the plain `firmware.bin`. `Update.begin()`/`write()` only replace the app partition, so handing it a `firmware.factory.bin` corrupts the bootloader and partition table. |
 | `applyPN532RfTuning` | Sets TX drive and RX sensitivity together via `RFConfiguration` CfgItem 0x0A, through the library's public `sendCommandCheckAck()` — no library patch needed. The 5-level table exists because the two antennas sit ~75 mm apart facing each other and cross-talk; the levels span only the low-power end, which is the range that matters for that. Default level 3. |
 | `tsKeyboard` | The shift-key highlight uses an `LV_EVENT_DRAW_PART_BEGIN` callback on a specific button index, **not** `LV_STATE_CHECKED`. `LV_KEYBOARD_CTRL_BTN_FLAGS` bakes `LV_BTNMATRIX_CTRL_CHECKED` into every control key, so styling via that state lights up shift, 1# and backspace all at once, and lights them from creation regardless of actual state. |
+| `liveCapture` | Reads the canvas **once** per band, into a scratch buffer, then hashes and encodes that copy. Hashing the canvas and encoding the canvas as two separate reads lets a repaint slip in between, and the viewer is then recorded as holding a band it never received — a permanent artifact that only a reconnect clears. It must also return early when there are no viewers: the working buffers are only allocated while someone is watching, and running it without them wrote to a null pointer and panicked core 0. |
+| `liveHandleRequest` | Every response is **keep-alive**, deliberately. Closing them meant one TCP connection per tap; the scale closes first, so each sat in `TIME_WAIT` for two minutes against lwIP's ten sockets. A minute of ordinary clicking exhausted them and the port refused connections outright — the feature worked, stopped dead, then recovered a minute later on its own. Do not "tidy" these back to `Connection: close`. |
+| `liveEnsureBuffers` | Only the scratch band belongs in internal DRAM; the encoded band does not. Putting both there cost 20 KB and produced an oscillation rather than speed — taking the memory crossed the free-heap floor, which hung the viewers up, which freed the memory, which let them reconnect and take it again. |
+| `tsRead` | Injects the remote tap **before** touching the panel, and that placement is the point: LVGL's `read_cb` and the screens that still poll directly both come through here, so injecting one level up would leave the raw-touch screens unreachable from the browser. The press is held by a read count, not only by a clock, so it does not depend on how often the caller happens to poll. |
 
 ## Parallel-file pattern — i18n
 
-`TigerTagSplashESP32/i18n.h` holds **82 keys × 8 language blocks**
+`TigerTagSplashESP32/i18n.h` holds **103 keys × 8 language blocks**
 (EN/PT/FR/ES/DE/ZH/IT/PL). Adding one key means editing **all 8 blocks**, in the
 same order as the enum. `bash scripts/check-i18n.sh` must exit 0 before you
 compile — it discovers the language list from the file itself, so a 9th language

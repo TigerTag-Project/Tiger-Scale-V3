@@ -212,9 +212,17 @@ visible ink, so use a bitmap for small icons; widgets whose constructors call
 single control key; and never let raw-`gfx` drawing happen while an LVGL screen
 is loaded.
 
+**You do not have to photograph the device to see a screen.** Turn on Settings →
+LAN → Live view, open `http://<scale-ip>/live` with the code shown on that page,
+and you get the panel in a browser with clicks going back the other way. It is a
+hardware round-trip saved on every visual change — a mockup is still the first
+step, but this is how you check the real thing afterwards. §LIVE in the .ino,
+and [`docs/FIRMWARE.md`](docs/FIRMWARE.md#live-view) for how it works and what it
+refuses to do to the heap.
+
 ## i18n
 
-`TigerTagSplashESP32/i18n.h` — **88 keys × 8 languages** (EN/PT/FR/ES/DE/ZH/IT/PL).
+`TigerTagSplashESP32/i18n.h` — **103 keys × 8 languages** (EN/PT/FR/ES/DE/ZH/IT/PL).
 
 1. Add the key to the enum, before `I18N_COUNT`.
 2. Add one entry to **every** language block, in the same order as the enum.

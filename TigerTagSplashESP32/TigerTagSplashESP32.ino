@@ -15,34 +15,34 @@
 //
 //   TABLE OF CONTENTS                                     line range
 //   ---------------------------------------------------- -----------
-//   HARDWARE CONFIGURATION                                 200-  355
-//   OTA CONFIGURATION                                      356-  378
-//   FORWARD DECLARATIONS                                   379-  524
-//   WEIGHT ROUNDING                                        525-  544
-//   GLOBAL OBJECTS                                         545-  880
-//   CONFIGURATION VARIABLES                                881- 1297
-//   OLED DISPLAY                                          1298- 2048
-//   CLOUD PARSING                                         2049- 2063
-//   WIFI SETUP                                            2064- 5662
-//   LITTLEFS                                              5663- 5962
-//   FIREBASE AUTHENTICATION                               5963- 7571
-//   WEBSOCKET                                             7572- 7598
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  7599- 7710
-//   UNIFIED WS FRAME BUILDER                              7711- 7801
-//   WEIGHT FILTER HELPERS                                 7802- 7816
-//   POST-SEND STATE RESET (shared by all send paths)      7817- 7837
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  7838- 8094
-//   WEB SERVER                                            8095- 9380
-//   CLOUD COMMUNICATION                                   9381- 9563
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  9564- 9991
-//   mDNS                                                  9992-10029
-//   SCALE                                                10030-10196
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  10197-10314
-//   RFID                                                 10315-11457
-//   OTA — Over-the-air firmware + filesystem update    11458-12114
-//   LVGL bridge + main weigh screen                      12115-12764
-//   Remote live view: the screen out, taps back in       12765-13564
-//   SETUP & LOOP                                         13565-14586
+//   HARDWARE CONFIGURATION                                 208-  363
+//   OTA CONFIGURATION                                      364-  386
+//   FORWARD DECLARATIONS                                   387-  532
+//   WEIGHT ROUNDING                                        533-  552
+//   GLOBAL OBJECTS                                         553-  888
+//   CONFIGURATION VARIABLES                                889- 1305
+//   OLED DISPLAY                                          1306- 2056
+//   CLOUD PARSING                                         2057- 2071
+//   WIFI SETUP                                            2072- 5676
+//   LITTLEFS                                              5677- 5976
+//   FIREBASE AUTHENTICATION                               5977- 7585
+//   WEBSOCKET                                             7586- 7612
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  7613- 7724
+//   UNIFIED WS FRAME BUILDER                              7725- 7815
+//   WEIGHT FILTER HELPERS                                 7816- 7830
+//   POST-SEND STATE RESET (shared by all send paths)      7831- 7851
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  7852- 8108
+//   WEB SERVER                                            8109- 9394
+//   CLOUD COMMUNICATION                                   9395- 9577
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  9578-10005
+//   mDNS                                                 10006-10043
+//   SCALE                                                10044-10210
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  10211-10328
+//   RFID                                                 10329-11471
+//   OTA — Over-the-air firmware + filesystem update    11472-12128
+//   LVGL bridge + main weigh screen                      12129-12778
+//   Remote live view: the screen out, taps back in       12779-13606
+//   SETUP & LOOP                                         13607-14634
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -155,14 +155,22 @@ static volatile uint32_t gLiveFrameSeq = 0;
 // Worst case is a band with no repeats at all: 40 literal chunks of 128 pixels,
 // each costing one token byte plus 256 payload bytes.
 #define LIVE_ENC_CAP      (LIVE_BAND_BYTES + (LIVE_BAND_PIX / 128) + 64)
-#define LIVE_MAX_VIEWERS  3
-#define LIVE_OUT_CAP      4096
+// Two, which is what the feature is for: one person watching and one more
+// looking over their shoulder, or Tiger Studio alongside a browser. A third
+// stream was supported for a while and was not free — each viewer multiplies
+// the pbufs in flight, and three of them took free internal RAM to five figures
+// below where two of them sit.
+#define LIVE_MAX_VIEWERS  2
+// Payload per HTTP chunk, plus room to write the chunk framing around it in
+// place — see liveFlushOut() for why that matters more than it looks.
+#define LIVE_OUT_CAP      8192
+#define LIVE_OUT_HDR      8      // "2000\r\n" right-aligned, never more
 
 struct LiveViewer {
     int      fd;
     bool     primed;                       // has it been sent a full screen yet
     uint32_t band[LIVE_BANDS];             // what it is known to be showing
-    uint8_t  out[LIVE_OUT_CAP];
+    uint8_t  out[LIVE_OUT_HDR + LIVE_OUT_CAP + 2];   // header | payload | CRLF
     size_t   outLen;
     uint32_t lastTxMs;
 };
@@ -5648,6 +5656,12 @@ void setupWiFi() {
     cloudOK = connected;
 
     if (connected) {
+        // Again, now that there is an association. The call above happens
+        // before WiFi.begin(), and the driver puts power save back the way it
+        // likes it when it associates — so the setting that was made once at
+        // the top was, in practice, not the setting in force. A ping to this
+        // unit averaged 34 ms with a 152 ms tail until this line existed.
+        WiFi.setSleep(false);
         startMDNS();
         configTime(0, 0, "pool.ntp.org", "time.nist.gov");
         Serial.println("[NTP] configTime set - waiting for sync...");
@@ -12840,9 +12854,12 @@ static void lvglUpdateMainScreen(float weight, const String& uid, OledState stat
 // ones it has connected — the remote screen freezes for a moment and then
 // resumes. Only below HARD, where something else really is about to fail, does
 // it hang up and close the listener.
-#define LIVE_HEAP_HARD    20000
-#define LIVE_HEAP_FLOOR   30000
-#define LIVE_HEAP_RESUME  40000
+// Pausing is cheap — the remote screen freezes for a moment — so the floor sits
+// high and is crossed often and harmlessly. Hanging up is the expensive one, so
+// its threshold sits well clear of the floor.
+#define LIVE_HEAP_HARD    26000
+#define LIVE_HEAP_FLOOR   40000
+#define LIVE_HEAP_RESUME  52000
 // After hanging up, wait for the heap to stay healthy for this long before
 // listening again. Without it the feature reconnects the instant it recovers,
 // takes its memory back, crosses the floor again and hangs up — measured as a
@@ -12858,11 +12875,14 @@ static void lvglUpdateMainScreen(float weight, const String& uid, OledState stat
 // and pbufs come from the same internal heap the rest of the firmware needs.
 // Hammered without a cap, two viewers took free internal RAM down to under a
 // kilobyte — the scale was moments from dying of a bench tool.
-#define LIVE_RATE_BPS     250000
+#define LIVE_RATE_BPS     120000
 #define LIVE_BUDGET_CAP   65536
 #define LIVE_BUDGET_MIN   8192     // below this, wait rather than start a pass
 #define LIVE_SWEEP_MS     500      // safety re-scan when LVGL reports nothing
-#define LIVE_PING_MS      15000
+// Also the liveness check. A browser that goes away cleanly sends a FIN and is
+// noticed at once; one that is killed outright is only found when a write to it
+// fails, so the ping doubles as how quickly a dead viewer stops holding a slot.
+#define LIVE_PING_MS      5000
 #define LIVE_REQ_MS       400      // how long a fresh connection gets to speak
 
 #define LIVE_MSG_HELLO        1
@@ -12873,8 +12893,12 @@ static void lvglUpdateMainScreen(float weight, const String& uid, OledState stat
 
 // Keep-alive connections that are not viewers: the page fetch and, above all,
 // the one the browser reuses for every tap.
-#define LIVE_MAX_CTRL     4
-#define LIVE_CTRL_IDLE_MS 45000
+// Six slots and a long idle timeout, both on purpose. A browser holds its
+// keep-alive connections for minutes and will happily send the next tap down
+// one the scale has quietly closed — and since a tap is a POST, it does not
+// retry. Closing early loses clicks; the page retries once as well.
+#define LIVE_MAX_CTRL     6
+#define LIVE_CTRL_IDLE_MS 120000
 
 static int         gLiveCtrl[LIVE_MAX_CTRL];
 static uint32_t    gLiveCtrlAtMs[LIVE_MAX_CTRL];
@@ -12964,23 +12988,33 @@ static bool liveSend(int fd, const void *p, size_t n) {
     return true;
 }
 
-// One HTTP chunk. Chunked rather than read-until-close because every browser
-// streams it without buffering, and the eight bytes of framing per frame are
-// not worth an interoperability question.
-static bool liveChunk(int fd, const void *p, size_t n) {
-    if (!n) return true;
-    char hdr[16];
-    int hl = snprintf(hdr, sizeof(hdr), "%X\r\n", (unsigned)n);
-    return liveSend(fd, hdr, (size_t)hl) && liveSend(fd, p, n) && liveSend(fd, "\r\n", 2);
-}
 
 static uint32_t gLiveSendUs = 0;   // time spent blocked in send(), per pass
+static volatile uint32_t gLiveTapArmedMs = 0;  // for the tap-to-frame timing line
+static uint32_t gLiveLvglMs = 0;               // tap -> the scale finished redrawing
 static int32_t  gLiveBudget = LIVE_BUDGET_CAP;
 
+// One HTTP chunk, in one write.
+//
+// Chunked rather than read-until-close because every browser streams it without
+// buffering. The framing is built around the payload in place, so the whole
+// chunk leaves in a single send() — the earlier version sent the size line, the
+// payload and the trailing CRLF as three separate calls, and with TCP_NODELAY
+// set that is three TCP segments per chunk, two of them a handful of bytes.
+// Those tiny segments cost window space and round trips, and the round trips
+// were most of the click-to-repaint delay.
 static bool liveFlushOut(LiveViewer *v) {
     if (!v->outLen) return true;
+
+    char hdr[LIVE_OUT_HDR + 1];
+    int hl = snprintf(hdr, sizeof(hdr), "%X\r\n", (unsigned)v->outLen);
+    uint8_t *start = v->out + LIVE_OUT_HDR - hl;
+    memcpy(start, hdr, (size_t)hl);
+    v->out[LIVE_OUT_HDR + v->outLen]     = '\r';
+    v->out[LIVE_OUT_HDR + v->outLen + 1] = '\n';
+
     uint32_t s0 = micros();
-    bool ok = liveChunk(v->fd, v->out, v->outLen);
+    bool ok = liveSend(v->fd, start, (size_t)hl + v->outLen + 2);
     gLiveSendUs += micros() - s0;
     gLiveBytesTx += v->outLen;
     gLiveBudget  -= (int32_t)v->outLen;
@@ -12995,7 +13029,7 @@ static bool liveOut(LiveViewer *v, const void *p, size_t n) {
         size_t room = LIVE_OUT_CAP - v->outLen;
         if (!room) { if (!liveFlushOut(v)) return false; room = LIVE_OUT_CAP; }
         size_t take = n < room ? n : room;
-        memcpy(v->out + v->outLen, b, take);
+        memcpy(v->out + LIVE_OUT_HDR + v->outLen, b, take);
         v->outLen += take; b += take; n -= take;
     }
     return true;
@@ -13222,6 +13256,7 @@ static bool liveHandleRequest(int fd) {
                 gLiveTapY     = (int16_t)y;
                 gLiveTapReads = 0;
                 gLiveTapAtMs  = millis();
+                gLiveTapArmedMs = gLiveTapAtMs;
                 gLiveTapPhase = LIVE_TAP_PRESS;  // set last: it arms the machine
             }
         }
@@ -13327,9 +13362,11 @@ static bool liveCapture() {
         if (millis() - lastLog > 1000) {
             lastLog = millis();
             uint32_t total = millis() - t0, send = gLiveSendUs / 1000;
-            Serial.printf("[LIVE] %d bands in %lu ms (encode %lu, send %lu)\n",
-                          nb, (unsigned long)total,
+            uint32_t sinceTap = gLiveTapArmedMs ? (millis() - gLiveTapArmedMs) : 0;
+            Serial.printf("[LIVE] %d bands: tap+%lu = scale redraw %lu + encode %lu + send %lu\n",
+                          nb, (unsigned long)sinceTap, (unsigned long)gLiveLvglMs,
                           (unsigned long)(total - send), (unsigned long)send);
+            gLiveTapArmedMs = 0;
         }
     }
     return sent;
@@ -13527,6 +13564,11 @@ static void liveTask(void *) {
         // Capture when LVGL has just finished a screen, or on the slow sweep
         // that exists to catch the paths that bypass LVGL entirely — the boot
         // splash and the screensaver draw straight onto the canvas.
+        // How long the scale itself took to redraw after the tap, measured
+        // separately from how long this feature then took to ship it. Without
+        // the split, a slow settings screen looks like a slow mirror.
+        if (seq != seen && gLiveTapArmedMs) gLiveLvglMs = now - gLiveTapArmedMs;
+
         bool due = !gLiveStarved && gLiveBudget >= LIVE_BUDGET_MIN &&
                    ((seq != seen) || (now - lastSweep >= LIVE_SWEEP_MS));
         if (due) {
@@ -13800,6 +13842,12 @@ void loop() {
         if (lastConnectedSSID.length() == 0) {
             lastConnectedSSID = currentSSID;
         }
+        // Keep asserting it. A reconnection restores the driver's default, and
+        // modem sleep costs hundreds of milliseconds on every packet the scale
+        // serves — the live view, the WebSocket the web UI runs on, and the OTA
+        // download all pay it. Once every 10 s is free.
+        static uint32_t lastPs = 0;
+        if (millis() - lastPs > 10000) { lastPs = millis(); WiFi.setSleep(false); }
     }
 
     if (ENABLE_FIREBASE_BACKGROUND && !lastServerReadyLog && millis() >= gFirebaseBootReadyAtMs) {

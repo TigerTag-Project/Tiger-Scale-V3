@@ -130,7 +130,12 @@ cv.onpointerdown=async e=>{
   const r=cv.getBoundingClientRect();
   const x=Math.round((e.clientX-r.left)/r.width*W),y=Math.round((e.clientY-r.top)/r.height*H);
   pending=performance.now();
-  try{await fetch('/tap?c='+encodeURIComponent(localStorage.tsLive||'')+'&x='+x+'&y='+y,{method:'POST'})}catch(_){}
+  const u='/tap?c='+encodeURIComponent(localStorage.tsLive||'')+'&x='+x+'&y='+y;
+  // Once more on failure. The browser reuses a keep-alive connection for this,
+  // and if the scale closed that one in the meantime the POST simply fails --
+  // a POST is not retried automatically, so the click would just vanish.
+  try{await fetch(u,{method:'POST'})}
+  catch(_){try{await fetch(u,{method:'POST'})}catch(_){}}
 };
 $('go').onclick=()=>run($('code').value.trim());
 $('code').onkeydown=e=>{if(e.key==='Enter')$('go').click()};

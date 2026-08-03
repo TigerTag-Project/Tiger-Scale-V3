@@ -150,6 +150,87 @@ snapshot on connect and every 30 s.
 Because it is *async*, handlers must not block. The heavy Firestore work is
 dispatched to a worker task pinned to core 0 (§14).
 
+## Live view
+
+A bench tool: the panel, in a browser, with clicks going back the other way.
+Open `http://<scale-ip>/live` (port 80 redirects to the real server on 81) and
+type the six-character code from Settings → LAN. The switch on that page turns
+the whole thing on and off. §LIVE in the .ino holds the implementation.
+
+The design turns on one fact: **`gfx` is an `Arduino_Canvas`, so a complete
+480×320 RGB565 framebuffer already exists** and `getFramebuffer()` hands it over.
+The screen is therefore readable in full at any instant, and no frame ever has
+to be reconstructed from the rectangles LVGL repaints. That is what makes a
+viewer arriving late get a correct picture rather than a patched-together one.
+
+- **Capture is timed off `lv_disp_flush_is_last()`**, which marks the end of a
+  whole LVGL refresh. Sampling at any other moment can catch a half-drawn
+  screen. A 500 ms sweep runs as well, to catch the paths that bypass LVGL —
+  the boot splash and the screensaver draw straight onto the canvas.
+- **The unit is a band of 16 landscape columns.** Rotation 3 stores a landscape
+  column contiguously, so a band is one unbroken 10 240-byte block. Each band is
+  copied out, hashed, and sent only if its hash differs from what that viewer is
+  known to hold. A whole screen is 30 bands and about 21 KB after RLE.
+- **A frame is delimited by its end, not counted at its start.** The browser
+  decodes bands into an off-screen `ImageData` and calls `putImageData()` once,
+  on `FRAME_END`. Nothing partial ever reaches the visible canvas, so a page
+  change arrives as one image by construction rather than by tuning.
+- **Raw lwIP sockets, not the async server on port 80.** `ESPAsyncWebServer`
+  copies every message into an internal-RAM queue capped in messages rather than
+  bytes, so a viewer that stops draining becomes a heap leak that kills the
+  device somewhere else; AsyncTCP is also not callable from an arbitrary task.
+  A blocking `send()` in the live task, against a fixed buffer, *is* the
+  backpressure: a slow viewer costs time, never memory.
+- **Keep-alive is load-bearing.** Answering each tap with `Connection: close`
+  meant one TCP connection per click, and since the scale closes first, each sat
+  in `TIME_WAIT` for two minutes. lwIP is built with ten sockets, so a minute of
+  ordinary clicking exhausted them and the port began refusing connections — the
+  feature worked beautifully and then simply stopped, recovering a minute later.
+  One pooled connection now carries every tap.
+- **Taps are injected inside `tsRead()`**, not at the LVGL input driver, because
+  that is the one place both consumers meet: LVGL's `read_cb` calls it, and so
+  do the screens that still poll the panel directly.
+- **Two viewers, deliberately.** Each one multiplies the pbufs in flight, and a
+  third took free internal RAM tens of kilobytes below where two sit. A ping
+  every 5 s doubles as the liveness check, so a browser that is killed rather
+  than closed stops holding a slot within a few seconds.
+
+### What it actually costs
+
+Measured on the bench with two viewers in Chrome, navigating for ten minutes.
+The firmware logs this split itself — see the `[LIVE]` line in `liveCapture()`.
+
+| From a click to the new screen appearing | avg |
+|---|---|
+| the scale rebuilding its own screen | **598 ms** |
+| encoding all 30 bands | 34 ms |
+| sending them | 124 ms |
+| **total** | **756 ms** |
+
+**Four fifths of that is the scale, not the mirror.** A finger on the glass waits
+the same ~600 ms for the settings page to be built; the live view adds about
+158 ms on top. If this number needs to come down, the work is in the LVGL screen
+builders (`runSettingsMenu()` creates roughly a hundred objects, most of them
+hand-drawn vector icons), not here. Keep the split in mind before optimising the
+wrong half — that log line exists precisely because a slow screen and a slow
+mirror are indistinguishable without it.
+
+The send is round trips rather than computation: 21 KB against lwIP's ~5.7 KB
+window is four of them, and on the bench LAN a ping to the *gateway* already
+averages 25 ms with a 140 ms tail. On a quieter link it lands proportionally
+sooner. Making it meaningfully faster means sending fewer bytes, not faster code.
+
+An untouched screen costs 2 bytes per 30 s. Ten minutes of continuous navigation
+leaves the long-running view pixel-identical to a viewer that has only just
+connected — which is the real test for residue, since a viewer that just arrived
+cannot be carrying any.
+
+It also gives memory back rather than taking it. The 10 KB scratch band is held
+only while someone is actually watching, an outgoing byte budget caps sustained
+traffic (every byte passes through an lwIP pbuf, and pbufs come from the same
+internal heap everything else needs), and below a free-heap floor it stops
+capturing, then hangs up entirely below a harder one.
+
 ## OTA
 
 `otaFetchLatest()` reads `version.json` from GitHub Pages and compares `version`

@@ -197,17 +197,18 @@ viewer arriving late get a correct picture rather than a patched-together one.
 
 ### What it actually costs
 
-Measured on the bench with two viewers in Chrome, navigating for ten minutes.
-The firmware logs this split itself — see the `[LIVE]` line in `liveCapture()`.
+Measured on the bench with two viewers in Chrome, over 236 page changes in five
+minutes. The firmware logs this split itself — see the `[LIVE]` line in
+`liveCapture()`.
 
 | From a click to the new screen appearing | avg |
 |---|---|
-| the scale rebuilding its own screen | **598 ms** |
-| encoding all 30 bands | 34 ms |
-| sending them | 124 ms |
-| **total** | **756 ms** |
+| the scale rebuilding its own screen | **483 ms** |
+| encoding all 30 bands | 32 ms |
+| sending them | 119 ms |
+| **total** | **638 ms** |
 
-**Four fifths of that is the scale, not the mirror.** A finger on the glass waits
+**Three quarters of that is the scale, not the mirror.** A finger on the glass waits
 the same ~600 ms for the settings page to be built; the live view adds about
 158 ms on top. If this number needs to come down, the work is in the LVGL screen
 builders (`runSettingsMenu()` creates roughly a hundred objects, most of them
@@ -220,10 +221,15 @@ window is four of them, and on the bench LAN a ping to the *gateway* already
 averages 25 ms with a 140 ms tail. On a quieter link it lands proportionally
 sooner. Making it meaningfully faster means sending fewer bytes, not faster code.
 
-An untouched screen costs 2 bytes per 30 s. Ten minutes of continuous navigation
-leaves the long-running view pixel-identical to a viewer that has only just
-connected — which is the real test for residue, since a viewer that just arrived
-cannot be carrying any.
+An untouched screen costs 2 bytes per 30 s. Continuous navigation leaves the
+long-running view pixel-identical to a viewer that has only just connected —
+which is the real test for residue, since a viewer that just arrived cannot be
+carrying any.
+
+That five-minute run is roughly twenty times what a person does, and it is the
+load the guards are sized against: free internal RAM bottomed out at 9.4 KB,
+capture paused nineteen times and hung up once, and nothing else on the scale
+noticed — no reset, no missed weighing, no dropped reader.
 
 It also gives memory back rather than taking it. The 10 KB scratch band is held
 only while someone is actually watching, an outgoing byte budget caps sustained

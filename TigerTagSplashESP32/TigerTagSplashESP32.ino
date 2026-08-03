@@ -15,33 +15,34 @@
 //
 //   TABLE OF CONTENTS                                     line range
 //   ---------------------------------------------------- -----------
-//   HARDWARE CONFIGURATION                                 139-  294
-//   OTA CONFIGURATION                                      295-  317
-//   FORWARD DECLARATIONS                                   318-  463
-//   WEIGHT ROUNDING                                        464-  483
-//   GLOBAL OBJECTS                                         484-  819
-//   CONFIGURATION VARIABLES                                820- 1236
-//   OLED DISPLAY                                          1237- 1987
-//   CLOUD PARSING                                         1988- 2002
-//   WIFI SETUP                                            2003- 5578
-//   LITTLEFS                                              5579- 5878
-//   FIREBASE AUTHENTICATION                               5879- 7487
-//   WEBSOCKET                                             7488- 7514
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  7515- 7626
-//   UNIFIED WS FRAME BUILDER                              7627- 7717
-//   WEIGHT FILTER HELPERS                                 7718- 7732
-//   POST-SEND STATE RESET (shared by all send paths)      7733- 7753
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  7754- 8010
-//   WEB SERVER                                            8011- 9288
-//   CLOUD COMMUNICATION                                   9289- 9471
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  9472- 9899
-//   mDNS                                                  9900- 9937
-//   SCALE                                                 9938-10104
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  10105-10222
-//   RFID                                                 10223-11365
-//   OTA — Over-the-air firmware + filesystem update    11366-12022
-//   LVGL bridge + main weigh screen                      12023-12666
-//   SETUP & LOOP                                         12667-13684
+//   HARDWARE CONFIGURATION                                 200-  355
+//   OTA CONFIGURATION                                      356-  378
+//   FORWARD DECLARATIONS                                   379-  524
+//   WEIGHT ROUNDING                                        525-  544
+//   GLOBAL OBJECTS                                         545-  880
+//   CONFIGURATION VARIABLES                                881- 1297
+//   OLED DISPLAY                                          1298- 2048
+//   CLOUD PARSING                                         2049- 2063
+//   WIFI SETUP                                            2064- 5662
+//   LITTLEFS                                              5663- 5962
+//   FIREBASE AUTHENTICATION                               5963- 7571
+//   WEBSOCKET                                             7572- 7598
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  7599- 7710
+//   UNIFIED WS FRAME BUILDER                              7711- 7801
+//   WEIGHT FILTER HELPERS                                 7802- 7816
+//   POST-SEND STATE RESET (shared by all send paths)      7817- 7837
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  7838- 8094
+//   WEB SERVER                                            8095- 9380
+//   CLOUD COMMUNICATION                                   9381- 9563
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  9564- 9991
+//   mDNS                                                  9992-10029
+//   SCALE                                                10030-10196
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  10197-10314
+//   RFID                                                 10315-11457
+//   OTA — Over-the-air firmware + filesystem update    11458-12114
+//   LVGL bridge + main weigh screen                      12115-12764
+//   Remote live view: the screen out, taps back in       12765-13564
+//   SETUP & LOOP                                         13565-14586
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -56,6 +57,7 @@ enum OledState : uint8_t {
 #include <Arduino_GFX_Library.h>
 #include <lvgl.h>
 #include <WiFi.h>
+#include <lwip/sockets.h>         // live view talks BSD sockets, not AsyncTCP — see §LIVE
 #include <WebServer.h>
 #include <WiFiClientSecure.h>
 #include <AsyncTCP.h>
@@ -103,6 +105,7 @@ struct MetadataCache { String mfr; String mat; String col; uint32_t productId; }
 #include "logo_tigertag_splash.h" // 480x320 RGB565 TigerTag logo for boot splash
 #include "icon_bolt.h"            // 8x14 RGB565 charging-bolt icon for the battery status icon
 #include "i18n.h"                 // translation table — edit i18n.h to add/change strings
+#include "live_page.h"            // the live view's browser page — see §LIVE
 
 // Declared immediately after the includes on purpose: the .ino preprocessor
 // inserts every generated function prototype right here, so a type used in a
@@ -120,6 +123,64 @@ struct MetadataCache { String mfr; String mat; String col; uint32_t productId; }
 // reading it. What it stops is casual access by someone who merely knows the IP.
 static String gLanAccessCode;          // 6 chars, mixed case + digits
 static bool   gLanLiveView = true;     // on by default, so Studio can just work
+
+// Live view, the two pieces that have to live this early in the file.
+//
+// Everything else about the feature is in §LIVE, near the bottom. These two are
+// here because the code that feeds them sits far above it: lvglFlushCb() bumps
+// the frame counter, and tsRead() — line ~2060, thousands of lines before §LIVE
+// — reads the injected tap. Both are plain volatiles rather than a call into
+// §LIVE so neither hot path gains a function call or a forward declaration.
+//
+// gLiveFrameSeq counts *completed* LVGL refreshes, not flushes. LVGL repaints a
+// screen in several flush_cb calls and only the last one is marked as such; the
+// counter moves on that one alone, so a reader that waits for it to change can
+// never sample a half-drawn screen. That is the whole trick behind "a page
+// change arrives as one image, not as bands filling in".
+static volatile uint32_t gLiveFrameSeq = 0;
+
+// The geometry and the viewer record live up here, not with the rest of §LIVE,
+// for the reason spelled out just above `struct PairHttp` below: the .ino
+// preprocessor hoists every generated prototype to this point, so a type named
+// in one of those signatures has to already exist. LIVE_PORT is here for a
+// second reason — setupWebServer(), thousands of lines above §LIVE, builds the
+// /live redirect out of it.
+#define LIVE_PORT         81
+#define LIVE_W            480
+#define LIVE_H            320
+#define LIVE_BAND_COLS    16
+#define LIVE_BANDS        (LIVE_W / LIVE_BAND_COLS)        // 30
+#define LIVE_BAND_PIX     (LIVE_BAND_COLS * LIVE_H)        // 5120
+#define LIVE_BAND_BYTES   (LIVE_BAND_PIX * 2)              // 10240
+// Worst case is a band with no repeats at all: 40 literal chunks of 128 pixels,
+// each costing one token byte plus 256 payload bytes.
+#define LIVE_ENC_CAP      (LIVE_BAND_BYTES + (LIVE_BAND_PIX / 128) + 64)
+#define LIVE_MAX_VIEWERS  3
+#define LIVE_OUT_CAP      4096
+
+struct LiveViewer {
+    int      fd;
+    bool     primed;                       // has it been sent a full screen yet
+    uint32_t band[LIVE_BANDS];             // what it is known to be showing
+    uint8_t  out[LIVE_OUT_CAP];
+    size_t   outLen;
+    uint32_t lastTxMs;
+};
+
+// Injected tap, driven by tsRead(). LVGL emits a click on the *release* edge,
+// so a tap has to be a press held across a couple of samples and then let go.
+//
+// There is deliberately no released-gap phase before the press: whenever no
+// finger is on the panel, tsRead() has already been returning false, so LVGL is
+// in the released state and the press is a clean edge on its own. An explicit
+// gap only added 25-55 ms to every click for a transition that had already
+// happened. Two taps in a row are kept apart by the arming check instead.
+enum LiveTapPhase : uint8_t { LIVE_TAP_IDLE = 0, LIVE_TAP_PRESS };
+static volatile uint8_t  gLiveTapPhase = LIVE_TAP_IDLE;
+static volatile uint32_t gLiveTapAtMs  = 0;
+static volatile uint16_t gLiveTapReads = 0;
+static volatile int16_t  gLiveTapX     = 0;
+static volatile int16_t  gLiveTapY     = 0;
 
 
 struct PairHttp {
@@ -2058,6 +2119,29 @@ static void scanI2C(TwoWire &bus, const char *busName, int sda, int scl) {
 static bool _touchI2CReady = false;
 
 static bool tsRead(int16_t &tx, int16_t &ty) {
+    // A remote tap enters here rather than at the LVGL input driver, because
+    // this is the one place *both* consumers meet: LVGL's indev callback calls
+    // tsRead(), and so do the screens that still poll the panel directly
+    // (tsWaitTap, the post-transition drain loops). Injecting one level up
+    // would have left the raw-touch screens unreachable from the browser.
+    //
+    // Once the press is over this falls through to the panel, which reports no
+    // finger — that is the release edge LVGL turns into a click.
+    if (gLiveTapPhase == LIVE_TAP_PRESS) {
+        gLiveTapReads++;
+        // Held until it has been sampled twice *and* 30 ms have passed. The
+        // read count is what makes this independent of how often the caller
+        // polls: LV_INDEV_DEF_READ_PERIOD is 30 ms, the post-transition drain
+        // loops poll every 20 ms, tsPollLoop every 50 ms. Two samples is also
+        // what tsWaitTap() requires before it calls a press real.
+        if (gLiveTapReads <= 2 || millis() - gLiveTapAtMs < 30) {
+            tx = gLiveTapX;
+            ty = gLiveTapY;
+            return true;
+        }
+        gLiveTapPhase = LIVE_TAP_IDLE;
+    }
+
     if (!_touchI2CReady) return false;
 
     // Step 1: write 11-byte command required by AXS5106L
@@ -8872,7 +8956,6 @@ void setupWebServer() {
         }
     );
 
-    // A tap, in the same coordinate space the panel reports.
     server.on("/api/firebase/status", HTTP_GET, [](AsyncWebServerRequest *request){
         bool cfg  = isFirebaseConfigured();
         bool auth = firebaseAuth;
@@ -9253,6 +9336,15 @@ void setupWebServer() {
             request->send(200, "application/json", "{\"status\":\"ok\"}");
         }
     );
+
+    // The live view runs its own socket server on port 81 (§LIVE explains why
+    // it cannot share this one). This redirect exists so the address printed on
+    // Settings -> LAN is enough to reach it: http://<scale-ip>/live.
+    server.on("/live", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (!gLanLiveView) { request->send(404, "text/plain", "live view is off"); return; }
+        String to = "http://" + WiFi.localIP().toString() + ":" + String(LIVE_PORT) + "/";
+        request->redirect(to);
+    });
 
     server.onNotFound([](AsyncWebServerRequest *request){
         const char* m = "OTHER";
@@ -12054,7 +12146,13 @@ static void lvglFlushCb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *c
     int32_t w = area->x2 - area->x1 + 1;
     int32_t h = area->y2 - area->y1 + 1;
     gfx->draw16bitRGBBitmap(area->x1, area->y1, (uint16_t *)color_p, w, h);
-    if (lv_disp_flush_is_last(drv)) gfx->flush();
+    if (lv_disp_flush_is_last(drv)) {
+        gfx->flush();
+        // The canvas is now a whole, settled screen. §LIVE watches this counter
+        // and captures only when it moves, which is what keeps a remote viewer
+        // from ever seeing a screen mid-repaint.
+        gLiveFrameSeq++;
+    }
     lv_disp_flush_ready(drv);
 }
 
@@ -12664,6 +12762,806 @@ static void lvglUpdateMainScreen(float weight, const String& uid, OledState stat
 }
 
 // ============================================================================
+// §LIVE — Remote live view: the screen out, taps back in
+// ============================================================================
+// A bench tool. Point a browser at http://<scale-ip>/live, type the 6-character
+// code shown on Settings -> LAN, and you get the panel as it is right now, with
+// clicks going the other way. Tiger Studio embeds the same two endpoints.
+//
+// Unnumbered on purpose, like §AUDIO and §LVGL: it arrived after the numbered
+// scheme was set and a name carries more than a squeezed-in number would.
+//
+// ---------------------------------------------------------------------------
+// The one fact the whole design rests on
+// ---------------------------------------------------------------------------
+// `gfx` is an Arduino_Canvas, so a complete 480x320 RGB565 framebuffer already
+// exists (§5) and getFramebuffer() hands it over. The screen is therefore
+// *readable in full at any instant* — we never have to reconstruct it from the
+// rectangles LVGL repaints. Every frame emitted here is a whole, true screen,
+// which is what makes a page change arrive as one image and a viewer that joins
+// late get something correct rather than something patched together.
+//
+// The rotation-3 canvas stores a landscape *column* contiguously: landscape
+// (x,y) lives at fb[(479 - x) * 320 + y]. So a band of 16 adjacent columns is
+// one unbroken 10 240-byte block, which is why the band is the unit here.
+//
+// ---------------------------------------------------------------------------
+// Why raw sockets and not the server already running on port 80
+// ---------------------------------------------------------------------------
+// ESPAsyncWebServer copies every message into its own queue, that queue lives
+// in internal RAM, and its cap is counted in messages rather than bytes — so a
+// viewer that stops draining turns into an internal-heap leak that kills the
+// device somewhere else entirely. AsyncTCP is also not callable from an
+// arbitrary task; driving it from a dedicated one restarted the board.
+//
+// lwIP's BSD sockets have neither problem: they are thread-safe, and send()
+// blocking in *our* task with our own fixed buffer is the backpressure. A slow
+// viewer slows this task down; it cannot make the firmware allocate.
+//
+// ---------------------------------------------------------------------------
+// Wire format (little-endian). Message = [u8 kind][payload]
+// ---------------------------------------------------------------------------
+//   1 HELLO       : u16 width, u16 height, u16 bandCols
+//   2 FRAME_BEGIN : no payload
+//   5 BAND        : u8 index, u16 rleLen, u8 rle[rleLen]
+//   4 FRAME_END   : no payload
+//   3 PING        : no payload
+//
+// A frame is delimited by its end, not counted at its start. That is what lets
+// the scale decide band by band while it streams, holding only one band in RAM
+// and reading the canvas once — and it means there is no declared count that
+// could disagree with what actually gets sent.
+//
+// The browser decodes bands into an off-screen ImageData as they arrive and
+// calls putImageData() once, on FRAME_END. Nothing partial ever reaches the
+// visible canvas, so "no progressive fill" is structural here, not a tuning.
+//
+// RLE token, over RGB565 pixels:
+//   0x00..0x7F  literal run of (t+1) pixels, then 2*(t+1) bytes
+//   0x80..0xFE  repeat run of (t-0x80+2) pixels, then one 2-byte colour
+//   0xFF        long repeat: u16 count, then one 2-byte colour
+// ============================================================================
+
+// The geometry constants and `struct LiveViewer` are defined near the top of
+// the file — see the note there for why they cannot live down here.
+//
+// Free-internal-RAM thresholds. mDNS aborting inside the lwIP thread — with a
+// backtrace naming neither the file nor the feature that had starved it — is
+// what these are for.
+//
+// Two levels, not one, and the numbers come from the device rather than from
+// taste. This firmware's own low-water mark is about 25 KB: a Firebase token
+// refresh alone takes internal free heap from 110 KB down to the low 40s for a
+// second or so. A single threshold anywhere near that made the feature flap off
+// and on through every refresh, dropping viewers each time for a dip that was
+// never dangerous.
+//
+// So: below FLOOR it stops capturing and refuses new viewers but leaves the
+// ones it has connected — the remote screen freezes for a moment and then
+// resumes. Only below HARD, where something else really is about to fail, does
+// it hang up and close the listener.
+#define LIVE_HEAP_HARD    20000
+#define LIVE_HEAP_FLOOR   30000
+#define LIVE_HEAP_RESUME  40000
+// After hanging up, wait for the heap to stay healthy for this long before
+// listening again. Without it the feature reconnects the instant it recovers,
+// takes its memory back, crosses the floor again and hangs up — measured as a
+// steady oscillation rather than as a recovery.
+#define LIVE_HEAP_SETTLE_MS 5000
+
+// Outgoing byte budget, refilled continuously and allowed to bank about two
+// full screens. A page change spends the bank and goes out at once; a caller
+// changing screens twice a second cannot spend more than the refill rate.
+//
+// This is a memory guard as much as a bandwidth one. The bytes themselves are
+// nothing to the WiFi link, but every one of them passes through an lwIP pbuf,
+// and pbufs come from the same internal heap the rest of the firmware needs.
+// Hammered without a cap, two viewers took free internal RAM down to under a
+// kilobyte — the scale was moments from dying of a bench tool.
+#define LIVE_RATE_BPS     250000
+#define LIVE_BUDGET_CAP   65536
+#define LIVE_BUDGET_MIN   8192     // below this, wait rather than start a pass
+#define LIVE_SWEEP_MS     500      // safety re-scan when LVGL reports nothing
+#define LIVE_PING_MS      15000
+#define LIVE_REQ_MS       400      // how long a fresh connection gets to speak
+
+#define LIVE_MSG_HELLO        1
+#define LIVE_MSG_FRAME_BEGIN  2
+#define LIVE_MSG_PING         3
+#define LIVE_MSG_FRAME_END    4
+#define LIVE_MSG_BAND         5
+
+// Keep-alive connections that are not viewers: the page fetch and, above all,
+// the one the browser reuses for every tap.
+#define LIVE_MAX_CTRL     4
+#define LIVE_CTRL_IDLE_MS 45000
+
+static int         gLiveCtrl[LIVE_MAX_CTRL];
+static uint32_t    gLiveCtrlAtMs[LIVE_MAX_CTRL];
+static bool        gLiveCtrlInit = false;
+
+static int         gLiveListen   = -1;
+static LiveViewer *gLiveViewers[LIVE_MAX_VIEWERS] = { nullptr };
+static uint8_t    *gLiveScratch  = nullptr;   // one band, copied out of the canvas
+static uint8_t    *gLiveEnc      = nullptr;   // that band, encoded
+static bool        gLiveTaskUp   = false;
+static bool        gLiveStarved  = false;
+static uint32_t    gLiveFramesTx = 0;
+static uint32_t    gLiveBytesTx  = 0;
+
+static bool liveEnsureBuffers();
+static void liveFreeBuffers();
+static int  liveViewerCount();
+
+static uint16_t *liveFramebuffer() {
+#if RFID_DIAG_DISABLE_DISPLAY_STACK
+    return nullptr;
+#else
+    return (gfx && gDisplayReady) ? gfx->getFramebuffer() : nullptr;
+#endif
+}
+
+// First pixel of a band, as an index into the framebuffer. Band b covers
+// landscape columns [b*16, b*16+15], which occupy native rows 464-16b .. 479-16b.
+static inline size_t liveBandOffset(int b) {
+    return (size_t)(LIVE_W - LIVE_BAND_COLS - b * LIVE_BAND_COLS) * LIVE_H;
+}
+
+static inline uint32_t liveHash(const void *p, size_t bytes) {
+    const uint32_t *w = (const uint32_t *)p;
+    uint32_t h = 2166136261u;
+    for (size_t i = 0, n = bytes / 4; i < n; i++) { h ^= w[i]; h *= 16777619u; }
+    return h;
+}
+
+static size_t liveRle(const uint16_t *src, size_t n, uint8_t *dst, size_t cap) {
+    size_t o = 0, i = 0;
+    while (i < n) {
+        size_t run = 1;
+        while (i + run < n && src[i + run] == src[i]) run++;
+
+        if (run >= 3) {                       // a run of 2 is cheaper as literals
+            if (o + 5 > cap) return 0;
+            if (run > 65535) run = 65535;
+            if (run <= 127) {
+                dst[o++] = (uint8_t)(0x80 + run - 2);
+            } else {
+                dst[o++] = 0xFF;
+                dst[o++] = (uint8_t)(run & 0xFF);
+                dst[o++] = (uint8_t)(run >> 8);
+            }
+            dst[o++] = (uint8_t)(src[i] & 0xFF);
+            dst[o++] = (uint8_t)(src[i] >> 8);
+            i += run;
+            continue;
+        }
+
+        size_t start = i, lit = 0;
+        while (i < n && lit < 128) {
+            size_t r = 1;
+            while (i + r < n && src[i + r] == src[i]) r++;
+            if (r >= 3) break;                // let the run branch above take it
+            size_t take = (lit + r > 128) ? (128 - lit) : r;
+            i += take; lit += take;
+        }
+        if (o + 1 + lit * 2 > cap) return 0;
+        dst[o++] = (uint8_t)(lit - 1);
+        memcpy(dst + o, src + start, lit * 2);
+        o += lit * 2;
+    }
+    return o;
+}
+
+// --- socket plumbing -------------------------------------------------------
+
+static bool liveSend(int fd, const void *p, size_t n) {
+    const uint8_t *b = (const uint8_t *)p;
+    while (n) {
+        int w = send(fd, b, n, 0);
+        if (w <= 0) return false;
+        b += w; n -= (size_t)w;
+    }
+    return true;
+}
+
+// One HTTP chunk. Chunked rather than read-until-close because every browser
+// streams it without buffering, and the eight bytes of framing per frame are
+// not worth an interoperability question.
+static bool liveChunk(int fd, const void *p, size_t n) {
+    if (!n) return true;
+    char hdr[16];
+    int hl = snprintf(hdr, sizeof(hdr), "%X\r\n", (unsigned)n);
+    return liveSend(fd, hdr, (size_t)hl) && liveSend(fd, p, n) && liveSend(fd, "\r\n", 2);
+}
+
+static uint32_t gLiveSendUs = 0;   // time spent blocked in send(), per pass
+static int32_t  gLiveBudget = LIVE_BUDGET_CAP;
+
+static bool liveFlushOut(LiveViewer *v) {
+    if (!v->outLen) return true;
+    uint32_t s0 = micros();
+    bool ok = liveChunk(v->fd, v->out, v->outLen);
+    gLiveSendUs += micros() - s0;
+    gLiveBytesTx += v->outLen;
+    gLiveBudget  -= (int32_t)v->outLen;
+    v->outLen = 0;
+    v->lastTxMs = millis();
+    return ok;
+}
+
+static bool liveOut(LiveViewer *v, const void *p, size_t n) {
+    const uint8_t *b = (const uint8_t *)p;
+    while (n) {
+        size_t room = LIVE_OUT_CAP - v->outLen;
+        if (!room) { if (!liveFlushOut(v)) return false; room = LIVE_OUT_CAP; }
+        size_t take = n < room ? n : room;
+        memcpy(v->out + v->outLen, b, take);
+        v->outLen += take; b += take; n -= take;
+    }
+    return true;
+}
+
+static int liveViewerCount() {
+    int n = 0;
+    for (int i = 0; i < LIVE_MAX_VIEWERS; i++) if (gLiveViewers[i]) n++;
+    return n;
+}
+
+static void liveDropViewer(int slot) {
+    LiveViewer *v = gLiveViewers[slot];
+    if (!v) return;
+    close(v->fd);
+    free(v);
+    gLiveViewers[slot] = nullptr;
+    Serial.printf("[LIVE] viewer %d gone\n", slot);
+    // Nobody watching, nothing to work with. The 20 KB of internal RAM this
+    // hands back matters: it is the difference between a listening port costing
+    // nothing and costing more than the firmware can spare under load.
+    if (!liveViewerCount()) liveFreeBuffers();
+}
+
+static void liveDropAll() {
+    for (int i = 0; i < LIVE_MAX_VIEWERS; i++) liveDropViewer(i);
+}
+
+static void liveCtrlInit() {
+    for (int i = 0; i < LIVE_MAX_CTRL; i++) gLiveCtrl[i] = -1;
+    gLiveCtrlInit = true;
+}
+
+static void liveCtrlClose(int i) {
+    if (gLiveCtrl[i] >= 0) { close(gLiveCtrl[i]); gLiveCtrl[i] = -1; }
+}
+
+static void liveCtrlCloseAll() {
+    for (int i = 0; i < LIVE_MAX_CTRL; i++) liveCtrlClose(i);
+}
+
+// Park a keep-alive socket. If every slot is taken the oldest goes, which is
+// the right one to lose: a browser simply opens another when it needs one.
+static void liveCtrlKeep(int fd) {
+    if (!gLiveCtrlInit) liveCtrlInit();
+    int slot = -1;
+    for (int i = 0; i < LIVE_MAX_CTRL; i++) if (gLiveCtrl[i] < 0) { slot = i; break; }
+    if (slot < 0) {
+        slot = 0;
+        for (int i = 1; i < LIVE_MAX_CTRL; i++)
+            if (gLiveCtrlAtMs[i] < gLiveCtrlAtMs[slot]) slot = i;
+        liveCtrlClose(slot);
+    }
+    gLiveCtrl[slot]     = fd;
+    gLiveCtrlAtMs[slot] = millis();
+}
+
+// --- the page --------------------------------------------------------------
+//
+// Self-contained and served from flash, so it works on a scale whose LittleFS
+// was never uploaded. ASCII only, no emoji, per the repository rule.
+// The page itself is in live_page.h. It has to be: the .ino prototype
+// generator scans raw string literals too, and turned every `function` in the
+// JavaScript below into a bogus C++ prototype at the top of the file.
+
+// All keep-alive: see the note on liveHandleRequest for why closing these was
+// what took the port down after a minute of clicking.
+static const char LIVE_404[] =
+    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
+static const char LIVE_403[] =
+    "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
+static const char LIVE_204[] =
+    "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
+
+// --- request handling ------------------------------------------------------
+
+static bool liveQueryValue(const char *q, const char *key, char *out, size_t cap) {
+    size_t klen = strlen(key);
+    for (const char *p = q; p && *p; ) {
+        if (!strncmp(p, key, klen) && p[klen] == '=') {
+            p += klen + 1;
+            size_t i = 0;
+            while (*p && *p != '&' && i + 1 < cap) out[i++] = *p++;
+            out[i] = 0;
+            return true;
+        }
+        p = strchr(p, '&');
+        if (p) p++;
+    }
+    return false;
+}
+
+static bool liveCodeOk(const char *q) {
+    if (gLanAccessCode.length() != 6) return false;
+    char c[16] = {0};
+    if (!liveQueryValue(q, "c", c, sizeof(c))) return false;
+    // Length-independent compare. The code is not a secret worth much — it
+    // travels in clear, and so do the pixels it guards — but a timing oracle on
+    // a six-character code is free to avoid.
+    if (strlen(c) != 6) return false;
+    uint8_t diff = 0;
+    for (int i = 0; i < 6; i++) diff |= (uint8_t)(c[i] ^ gLanAccessCode[i]);
+    return diff == 0;
+}
+
+static bool liveServePage(int fd) {
+    size_t n = strlen_P(LIVE_PAGE);
+    char hdr[160];
+    int hl = snprintf(hdr, sizeof(hdr),
+                      "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
+                      "Content-Length: %u\r\nCache-Control: no-store\r\n"
+                      "Connection: keep-alive\r\n\r\n", (unsigned)n);
+    if (!liveSend(fd, hdr, (size_t)hl)) return false;
+    // Straight out of flash in slices, so the page never occupies RAM twice.
+    char buf[512];
+    for (size_t off = 0; off < n; off += sizeof(buf)) {
+        size_t take = n - off < sizeof(buf) ? n - off : sizeof(buf);
+        memcpy_P(buf, LIVE_PAGE + off, take);
+        if (!liveSend(fd, buf, take)) return false;
+    }
+    return true;
+}
+
+// Returns true if the socket was taken over as a viewer or kept for a retry.
+static bool liveAcceptViewer(int fd) {
+    int slot = -1;
+    for (int i = 0; i < LIVE_MAX_VIEWERS; i++) if (!gLiveViewers[i]) { slot = i; break; }
+    if (slot < 0) {
+        static const char BUSY[] = "HTTP/1.1 503 Service Unavailable\r\n"
+                                   "Content-Length: 0\r\nConnection: keep-alive\r\n\r\n";
+        liveSend(fd, BUSY, sizeof(BUSY) - 1);
+        return true;
+    }
+    // PSRAM by preference. The record is dominated by its 4 KB staging buffer,
+    // and three of those in internal RAM is 13 KB taken from the heap this
+    // feature is supposed to be protecting.
+    if (!liveEnsureBuffers()) {
+        static const char BUSY[] = "HTTP/1.1 503 Service Unavailable\r\n"
+                                   "Content-Length: 0\r\nConnection: keep-alive\r\n\r\n";
+        liveSend(fd, BUSY, sizeof(BUSY) - 1);
+        return true;
+    }
+    LiveViewer *v = (LiveViewer *)heap_caps_calloc(1, sizeof(LiveViewer), MALLOC_CAP_SPIRAM);
+    if (!v) v = (LiveViewer *)calloc(1, sizeof(LiveViewer));
+    if (!v) { close(fd); return false; }
+
+    // A viewer that stops draining must cost time, never memory: send() blocks
+    // in this task against the socket's own buffer, and when that times out the
+    // viewer is dropped. Nothing is ever queued on its behalf. This is the whole
+    // reason the feature does not use the async server on port 80.
+    struct timeval snd = { 2, 0 };
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &snd, sizeof(snd));
+
+    static const char OK[] =
+        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
+        "Transfer-Encoding: chunked\r\nCache-Control: no-store\r\n"
+        "X-Content-Type-Options: nosniff\r\n\r\n";
+    if (!liveSend(fd, OK, sizeof(OK) - 1)) { free(v); close(fd); return false; }
+
+    v->fd = fd;
+    v->primed = false;          // so the first pass sends it all 30 bands
+    v->outLen = 0;
+    v->lastTxMs = millis();
+
+    uint8_t hello[7] = { LIVE_MSG_HELLO, LIVE_W & 0xFF, LIVE_W >> 8,
+                         LIVE_H & 0xFF, LIVE_H >> 8,
+                         LIVE_BAND_COLS & 0xFF, LIVE_BAND_COLS >> 8 };
+    if (!liveOut(v, hello, sizeof(hello)) || !liveFlushOut(v)) {
+        free(v); close(fd); return false;
+    }
+    gLiveViewers[slot] = v;
+    Serial.printf("[LIVE] viewer %d in\n", slot);
+    return true;
+}
+
+// Serve one request. Returns true if the socket is to be kept — either it
+// became a viewer, or it is a keep-alive control connection now in the pool.
+//
+// Keep-alive is not an optimisation here, it is the fix for a real failure.
+// Answering each tap with `Connection: close` meant one TCP connection per tap,
+// and since the scale closes first, each one sat in TIME_WAIT for two minutes.
+// lwIP is built with ten sockets. A minute of ordinary clicking exhausted them,
+// the listen backlog filled, and the port started refusing connections outright
+// — the feature worked beautifully and then simply stopped, recovering a minute
+// later once the TIME_WAITs aged out. One pooled connection carries every tap.
+static bool liveHandleRequest(int fd) {
+    char req[512];
+    int n = recv(fd, req, sizeof(req) - 1, 0);
+    if (n <= 0) { close(fd); return false; }
+    req[n] = 0;
+
+    char *sp = strchr(req, ' ');
+    if (!sp) { close(fd); return false; }
+    char *path = sp + 1;
+    char *end  = strchr(path, ' ');
+    if (!end) { close(fd); return false; }
+    *end = 0;
+    char *query = strchr(path, '?');
+    if (query) *query++ = 0; else query = (char *)"";
+
+    if (!strcmp(path, "/")) {
+        bool ok = liveServePage(fd);
+        if (!ok) { close(fd); return false; }
+        return true;
+    }
+    if (!strcmp(path, "/stream")) {
+        if (!liveCodeOk(query)) { liveSend(fd, LIVE_403, strlen(LIVE_403)); return true; }
+        return liveAcceptViewer(fd);
+    }
+    if (!strcmp(path, "/tap")) {
+        char xs[8] = {0}, ys[8] = {0};
+        if (!liveCodeOk(query)) { liveSend(fd, LIVE_403, strlen(LIVE_403)); return true; }
+        if (liveQueryValue(query, "x", xs, sizeof(xs)) &&
+            liveQueryValue(query, "y", ys, sizeof(ys))) {
+            int x = atoi(xs), y = atoi(ys);
+            // The phase check keeps one tap from cutting into another, and the
+            // age check keeps a tap that was armed but never sampled — a screen
+            // builder can block tsRead() for a while — from wedging the machine
+            // and silently swallowing every tap after it.
+            bool free_ = (gLiveTapPhase == LIVE_TAP_IDLE) ||
+                         (millis() - gLiveTapAtMs > 400);
+            if (x >= 0 && x < LIVE_W && y >= 0 && y < LIVE_H && free_) {
+                gLiveTapX     = (int16_t)x;
+                gLiveTapY     = (int16_t)y;
+                gLiveTapReads = 0;
+                gLiveTapAtMs  = millis();
+                gLiveTapPhase = LIVE_TAP_PRESS;  // set last: it arms the machine
+            }
+        }
+        liveSend(fd, LIVE_204, strlen(LIVE_204));
+        return true;
+    }
+    liveSend(fd, LIVE_404, strlen(LIVE_404));
+    return true;
+}
+
+// --- capture ---------------------------------------------------------------
+
+// One pass over the screen. Returns true if anything was sent.
+//
+// Two hashes per band, on purpose. The first is taken straight off the canvas
+// and is only a question: might this band have changed for anyone? The second
+// is taken from the copy that is actually encoded, and that is the one recorded
+// against the viewer. Hashing the canvas and encoding the canvas as two
+// separate reads would let a repaint slip between them and leave a viewer
+// permanently holding a band the scale believes it already has.
+static bool liveCapture() {
+    uint32_t t0 = millis();
+    gLiveSendUs = 0;
+    uint16_t *fb = liveFramebuffer();
+    if (!fb) return false;
+    // Nobody watching means no work and, since the working buffers are only
+    // held while someone is, no buffers to do it with either. Both halves of
+    // that sentence have to be checked here.
+    if (!liveViewerCount() || !gLiveScratch || !gLiveEnc) return false;
+
+    // One pass, one read of each band off the canvas.
+    //
+    // The earlier version hashed every band straight off the canvas first, only
+    // to work out how many bands the frame would contain, and then read them all
+    // again to encode them. That count existed solely because the frame header
+    // declared it. Ending the frame with a marker instead of counting it up
+    // front removed the whole first pass — and with it the hazard that the
+    // declared count and the bands actually sent could disagree and leave a
+    // browser waiting forever for a band that was never coming.
+    bool started[LIVE_MAX_VIEWERS] = { false };
+    int  nb = 0;
+
+    for (int b = 0; b < LIVE_BANDS; b++) {
+        // Copy first, then hash and encode the copy — never the canvas. Reading
+        // the canvas twice would let a repaint slip in between and leave a
+        // viewer holding, forever, a band the scale believes it already has.
+        memcpy(gLiveScratch, fb + liveBandOffset(b), LIVE_BAND_BYTES);
+        uint32_t h = liveHash(gLiveScratch, LIVE_BAND_BYTES);
+
+        uint32_t plan = 0;
+        for (int i = 0; i < LIVE_MAX_VIEWERS; i++) {
+            LiveViewer *v = gLiveViewers[i];
+            if (v && (!v->primed || v->band[b] != h)) plan |= (1u << i);
+        }
+        if (!plan) continue;
+
+        size_t len = liveRle((const uint16_t *)gLiveScratch, LIVE_BAND_PIX,
+                             gLiveEnc, LIVE_ENC_CAP);
+        if (!len) {
+            // LIVE_ENC_CAP covers the worst a band can produce, so this is
+            // unreachable. If it ever is reached, hang up rather than send a
+            // frame the browser cannot make sense of.
+            Serial.println("[LIVE] encoder overflow, dropping viewers");
+            liveDropAll();
+            return false;
+        }
+        nb++;
+
+        for (int i = 0; i < LIVE_MAX_VIEWERS; i++) {
+            LiveViewer *v = gLiveViewers[i];
+            if (!v || !(plan & (1u << i))) continue;
+
+            bool ok = true;
+            if (!started[i]) {
+                uint8_t begin = LIVE_MSG_FRAME_BEGIN;
+                ok = liveOut(v, &begin, 1);
+                started[i] = true;
+            }
+            uint8_t bh[4] = { LIVE_MSG_BAND, (uint8_t)b,
+                              (uint8_t)(len & 0xFF), (uint8_t)(len >> 8) };
+            ok = ok && liveOut(v, bh, 4) && liveOut(v, gLiveEnc, len);
+            if (!ok) { liveDropViewer(i); continue; }
+            v->band[b] = h;
+        }
+    }
+
+    bool sent = false;
+    for (int i = 0; i < LIVE_MAX_VIEWERS; i++) {
+        LiveViewer *v = gLiveViewers[i];
+        if (!v || !started[i]) continue;
+        uint8_t endMsg = LIVE_MSG_FRAME_END;      // the browser commits on this
+        if (!liveOut(v, &endMsg, 1) || !liveFlushOut(v)) { liveDropViewer(i); continue; }
+        v->primed = true;
+        sent = true;
+        gLiveFramesTx++;
+    }
+
+    // Whole-screen passes are the ones the 300 ms budget is about, so they are
+    // the ones worth a line. Rate-limited: a page change is rare, but a busy
+    // screen would otherwise flood the log and slow down what it is measuring.
+    if (sent && nb >= 15) {
+        static uint32_t lastLog = 0;
+        if (millis() - lastLog > 1000) {
+            lastLog = millis();
+            uint32_t total = millis() - t0, send = gLiveSendUs / 1000;
+            Serial.printf("[LIVE] %d bands in %lu ms (encode %lu, send %lu)\n",
+                          nb, (unsigned long)total,
+                          (unsigned long)(total - send), (unsigned long)send);
+        }
+    }
+    return sent;
+}
+
+// --- the task --------------------------------------------------------------
+
+// The scratch band goes in internal DRAM; the encoded band does not.
+//
+// Only one of the two is read hot. The scratch is written once from the canvas
+// and then read twice — hashed, then encoded — so putting it in DRAM turns two
+// of the three passes into bus-speed accesses. The encoded band is written once
+// and read once, straight into a socket buffer, and gains almost nothing from
+// the same treatment.
+//
+// That distinction is worth being exact about, because holding both in DRAM
+// cost 20 KB and produced a feedback loop rather than speed: taking the memory
+// pushed free internal heap under the floor, which hung the viewers up, which
+// freed the memory, which let a viewer reconnect and take it again. The scale
+// spent its time oscillating. Ten kilobytes it is.
+//
+// Both are still freed as soon as the last viewer leaves, so a listening port
+// with nobody watching costs nothing at all.
+static bool liveEnsureBuffers() {
+    if (gLiveScratch && gLiveEnc) return true;
+    if (!gLiveScratch)
+        gLiveScratch = (uint8_t *)heap_caps_malloc(LIVE_BAND_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!gLiveEnc) {
+        gLiveEnc = (uint8_t *)heap_caps_malloc(LIVE_ENC_CAP, MALLOC_CAP_SPIRAM);
+        if (!gLiveEnc) gLiveEnc = (uint8_t *)malloc(LIVE_ENC_CAP);
+    }
+    if (gLiveScratch && gLiveEnc) return true;
+    Serial.println("[LIVE] buffer alloc failed, staying off");
+    liveFreeBuffers();
+    return false;
+}
+
+static void liveFreeBuffers() {
+    if (gLiveScratch) { free(gLiveScratch); gLiveScratch = nullptr; }
+    if (gLiveEnc)     { free(gLiveEnc);     gLiveEnc     = nullptr; }
+}
+
+static void liveStopListening() {
+    if (gLiveListen >= 0) { close(gLiveListen); gLiveListen = -1; }
+    liveDropAll();
+    liveCtrlCloseAll();
+    liveFreeBuffers();
+}
+
+static bool liveStartListening() {
+    gLiveListen = socket(AF_INET, SOCK_STREAM, 0);
+    if (gLiveListen < 0) return false;
+    int one = 1;
+    setsockopt(gLiveListen, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    struct sockaddr_in a = {};
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_ANY);
+    a.sin_port = htons(LIVE_PORT);
+    if (bind(gLiveListen, (struct sockaddr *)&a, sizeof(a)) < 0 ||
+        listen(gLiveListen, 2) < 0) {
+        close(gLiveListen); gLiveListen = -1;
+        return false;
+    }
+    Serial.printf("[LIVE] listening on :%d\n", LIVE_PORT);
+    return true;
+}
+
+static void liveTask(void *) {
+    uint32_t seen = 0, lastSweep = 0, lastPing = 0;
+    for (;;) {
+        bool want = gLanLiveView && wifiConnected && gDisplayReady;
+
+        // Yield rather than starve the rest of the firmware. The scale is a
+        // scale first; this is a bench tool. See the threshold comments above
+        // for why pausing and hanging up are two different answers.
+        static uint32_t healthySinceMs = 0;
+        size_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        if (freeInt < LIVE_HEAP_RESUME) healthySinceMs = millis();
+
+        if (freeInt < LIVE_HEAP_HARD) {
+            if (gLiveListen >= 0)
+                Serial.printf("[LIVE] internal heap %u, hanging up\n", (unsigned)freeInt);
+            gLiveStarved = true;
+            want = false;                       // falls into the shutdown below
+        } else if (!gLiveStarved && freeInt < LIVE_HEAP_FLOOR) {
+            gLiveStarved = true;
+            Serial.printf("[LIVE] internal heap %u, pausing capture\n", (unsigned)freeInt);
+        } else if (gLiveStarved && freeInt > LIVE_HEAP_RESUME) {
+            gLiveStarved = false;
+            Serial.println("[LIVE] heap recovered");
+        }
+
+        if (!want) {
+            if (gLiveListen >= 0) { Serial.println("[LIVE] off"); liveStopListening(); }
+            vTaskDelay(pdMS_TO_TICKS(250));
+            continue;
+        }
+        if (gLiveListen < 0) {
+            // Do not come back the instant the heap crosses the line — see
+            // LIVE_HEAP_SETTLE_MS for what that produced.
+            if (millis() - healthySinceMs < LIVE_HEAP_SETTLE_MS) {
+                vTaskDelay(pdMS_TO_TICKS(250));
+                continue;
+            }
+            if (!liveStartListening()) {
+                vTaskDelay(pdMS_TO_TICKS(2000));
+                continue;
+            }
+        }
+
+        if (!gLiveCtrlInit) liveCtrlInit();
+
+        fd_set rd;
+        FD_ZERO(&rd);
+        FD_SET(gLiveListen, &rd);
+        int mx = gLiveListen;
+        for (int i = 0; i < LIVE_MAX_VIEWERS; i++) {
+            LiveViewer *v = gLiveViewers[i];
+            if (!v) continue;
+            FD_SET(v->fd, &rd);
+            if (v->fd > mx) mx = v->fd;
+        }
+        for (int i = 0; i < LIVE_MAX_CTRL; i++) {
+            if (gLiveCtrl[i] < 0) continue;
+            FD_SET(gLiveCtrl[i], &rd);
+            if (gLiveCtrl[i] > mx) mx = gLiveCtrl[i];
+        }
+        // 5 ms, with a 2 ms yield at the bottom of the loop: the poll interval
+        // lands straight on the click-to-repaint budget, so it is kept short
+        // and paid for with a couple of extra wakeups per second.
+        struct timeval tv = { 0, 5000 };
+        if (select(mx + 1, &rd, nullptr, nullptr, &tv) > 0) {
+            if (FD_ISSET(gLiveListen, &rd)) {
+                int fd = accept(gLiveListen, nullptr, nullptr);
+                // While paused the connection is still accepted and answered,
+                // just not taken on: leaving it in the backlog would keep the
+                // socket readable and spin this loop at full tilt.
+                if (fd >= 0) {
+                    struct timeval rt = { 0, LIVE_REQ_MS * 1000 };
+                    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rt, sizeof(rt));
+                    int one = 1;
+                    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+                    if (gLiveStarved) {
+                        static const char BUSY[] = "HTTP/1.1 503 Service Unavailable\r\n"
+                                                   "Content-Length: 0\r\nConnection: close\r\n\r\n";
+                        liveSend(fd, BUSY, sizeof(BUSY) - 1);
+                        close(fd);
+                    } else if (liveHandleRequest(fd)) {
+                        // Viewers store their own fd; anything else that
+                        // survived is a keep-alive control connection.
+                        bool isViewer = false;
+                        for (int i = 0; i < LIVE_MAX_VIEWERS; i++)
+                            if (gLiveViewers[i] && gLiveViewers[i]->fd == fd) isViewer = true;
+                        if (!isViewer) liveCtrlKeep(fd);
+                    }
+                }
+            }
+            // A streaming viewer never speaks again; readable means it hung up.
+            for (int i = 0; i < LIVE_MAX_VIEWERS; i++) {
+                LiveViewer *v = gLiveViewers[i];
+                if (v && FD_ISSET(v->fd, &rd)) {
+                    char sink[64];
+                    if (recv(v->fd, sink, sizeof(sink), 0) <= 0) liveDropViewer(i);
+                }
+            }
+            // The next tap, on the connection the browser is already holding.
+            for (int i = 0; i < LIVE_MAX_CTRL; i++) {
+                if (gLiveCtrl[i] < 0 || !FD_ISSET(gLiveCtrl[i], &rd)) continue;
+                int fd = gLiveCtrl[i];
+                gLiveCtrl[i] = -1;                 // liveHandleRequest owns it now
+                if (liveHandleRequest(fd)) {
+                    bool isViewer = false;
+                    for (int j = 0; j < LIVE_MAX_VIEWERS; j++)
+                        if (gLiveViewers[j] && gLiveViewers[j]->fd == fd) isViewer = true;
+                    if (!isViewer) liveCtrlKeep(fd);
+                }
+            }
+        }
+        for (int i = 0; i < LIVE_MAX_CTRL; i++)
+            if (gLiveCtrl[i] >= 0 && millis() - gLiveCtrlAtMs[i] > LIVE_CTRL_IDLE_MS)
+                liveCtrlClose(i);
+
+        uint32_t now = millis();
+
+        // Refill the byte budget for the time that has passed since last time.
+        static uint32_t lastFill = 0;
+        if (!lastFill) lastFill = now;
+        if (now != lastFill) {
+            gLiveBudget += (int32_t)((uint64_t)LIVE_RATE_BPS * (now - lastFill) / 1000);
+            if (gLiveBudget > LIVE_BUDGET_CAP) gLiveBudget = LIVE_BUDGET_CAP;
+            lastFill = now;
+        }
+
+        uint32_t seq = gLiveFrameSeq;
+        // Capture when LVGL has just finished a screen, or on the slow sweep
+        // that exists to catch the paths that bypass LVGL entirely — the boot
+        // splash and the screensaver draw straight onto the canvas.
+        bool due = !gLiveStarved && gLiveBudget >= LIVE_BUDGET_MIN &&
+                   ((seq != seen) || (now - lastSweep >= LIVE_SWEEP_MS));
+        if (due) {
+            seen = seq;
+            lastSweep = now;
+            if (liveCapture()) lastPing = now;
+        }
+        // When the budget is what held a pass back, `seen` is deliberately left
+        // alone: the change is still pending and the next affordable pass picks
+        // it up. Throttling delays a frame, it never drops one.
+        if (now - lastPing >= LIVE_PING_MS) {
+            lastPing = now;
+            uint8_t ping = LIVE_MSG_PING;
+            for (int i = 0; i < LIVE_MAX_VIEWERS; i++) {
+                LiveViewer *v = gLiveViewers[i];
+                if (v && (!liveOut(v, &ping, 1) || !liveFlushOut(v))) liveDropViewer(i);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+}
+
+static void liveStart() {
+    if (gLiveTaskUp) return;
+    // Core 0, priority 1 — alongside cloudWorker and twinWorker, away from the
+    // main loop's LVGL work on core 1.
+    if (xTaskCreatePinnedToCore(liveTask, "liveView", 8192, nullptr, 1, nullptr, 0) != pdPASS) {
+        Serial.println("[LIVE] task create failed");
+        return;
+    }
+    gLiveTaskUp = true;
+    Serial.println("[LIVE] task up");
+}
+
+// ============================================================================
 // §26 — SETUP & LOOP
 // ============================================================================
 
@@ -12878,6 +13776,10 @@ void loop() {
                                 12288, nullptr, 1, nullptr, 0);
         gBackgroundTasksStarted = true;
         Serial.println("[BOOT] background tasks started");
+        // Started once and left running; it idles on a 250 ms delay whenever
+        // the Settings -> LAN switch is off, so there is nothing to restart
+        // when that switch is flipped back on. See §LIVE.
+        liveStart();
     }
 
     // Detect WiFi network change - clear credentials if WiFi SSID changed

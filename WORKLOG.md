@@ -6,4 +6,4 @@ this file to the header above.
 
 ---
 
-_Checkpoint: account pairing by phone, on-device sign-in form, and a LAN page._
+_Checkpoint: remote live view — the screen out over port 81, taps back in._

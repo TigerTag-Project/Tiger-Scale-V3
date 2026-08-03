@@ -6,4 +6,4 @@ this file to the header above.
 
 ---
 
-_Checkpoint: live view measured in a browser, guards sized against the numbers._
+_Checkpoint: the settle window is earned during the scan, not re-paid after it._

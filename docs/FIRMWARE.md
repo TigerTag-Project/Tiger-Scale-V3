@@ -40,6 +40,18 @@ WF_IDLE → WF_SCANNING → WF_STABLE_WAIT → WF_SENDING → WF_DONE → WF_IDL
 - **`WF_STABLE_WAIT`** requires the reading to stay within `±STABLE_EPSILON_G` for
   `STABLE_WINDOW_MS`, with a 15 s ceiling after which the best candidate is sent
   anyway rather than hanging forever.
+- **The settle window is tracked from `WF_SCANNING`, not from `WF_STABLE_WAIT`.**
+  `updateStableWindow()` runs in both phases. The load cell reads throughout the
+  scan, so a spool that settled while the readers were working has already
+  earned the window by the time the workflow asks for it: measured, a scan that
+  ran to its 8 s timeout now leaves `WF_STABLE_WAIT` after **14 ms** instead of a
+  fresh 1.2 s. A scan that exits early — both tags read in under a second — still
+  waits the full window, because the weight genuinely has not settled yet. The
+  change removes a double count; it does not shorten the measurement.
+  That function also refuses to call the weight steady until the slope ring
+  buffer has filled: `wfCurrentSlope` is 0.0 until then, and 0.0 otherwise means
+  "perfectly steady", which would read as stable at exactly the moment a spool
+  is being placed.
 - **Net weight** is gross minus the spool's container weight, fetched from the
   user's inventory. If that fetch fails the send still proceeds with net = 0
   rather than being blocked.

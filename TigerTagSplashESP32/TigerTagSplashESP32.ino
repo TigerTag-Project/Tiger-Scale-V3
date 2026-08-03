@@ -34,15 +34,15 @@
 //   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  7852- 8108
 //   WEB SERVER                                            8109- 9394
 //   CLOUD COMMUNICATION                                   9395- 9577
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  9578-10005
-//   mDNS                                                 10006-10043
-//   SCALE                                                10044-10210
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  10211-10328
-//   RFID                                                 10329-11471
-//   OTA — Over-the-air firmware + filesystem update    11472-12128
-//   LVGL bridge + main weigh screen                      12129-12778
-//   Remote live view: the screen out, taps back in       12779-13606
-//   SETUP & LOOP                                         13607-14634
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  9578-10038
+//   mDNS                                                 10039-10076
+//   SCALE                                                10077-10243
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  10244-10361
+//   RFID                                                 10362-11504
+//   OTA — Over-the-air firmware + filesystem update    11505-12161
+//   LVGL bridge + main weigh screen                      12162-12811
+//   Remote live view: the screen out, taps back in       12812-13639
+//   SETUP & LOOP                                         13640-14667
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -9602,6 +9602,32 @@ static void resetSlopeBuffer() {
     slopeBufIdx = 0; slopeBufFull = false; wfCurrentSlope = 0.0f;
 }
 
+// Advance the settle window, and say whether the weight is steady right now.
+//
+// Called from SCANNING as well as STABLE_WAIT, and that is the whole point: the
+// load cell reads throughout the scan, so by the time scanning ends the weight
+// has almost always been steady for seconds. Arming the window only on entry to
+// STABLE_WAIT discarded all of that and charged every weighing a fresh
+// STABLE_WINDOW_MS it had already earned.
+//
+// The slopeBufFull test is not incidental. wfCurrentSlope is 0.0 until the ring
+// buffer has filled, which takes SLOPE_BUF_SIZE × SLOPE_SAMPLE_MS — 2.4 s — and
+// 0.0 otherwise means "perfectly steady". Without this test an unfilled buffer
+// reads as stable at exactly the moment a spool is being placed. That never
+// showed before because STABLE_WAIT began a full scan window later, by which
+// time the buffer was long full; starting the tracking at session start brings
+// it right into the danger zone.
+static bool updateStableWindow(float w, uint32_t now) {
+    bool weightStable = slopeBufFull && (fabsf(wfCurrentSlope) < SLOPE_STABLE_G_PER_S);
+    // Not steady, no candidate yet, or drifted off the one we had: re-anchor.
+    if (!weightStable || isnan(stableCandidate) ||
+        fabs(w - stableCandidate) > STABLE_EPSILON_G) {
+        stableCandidate = w;
+        stableSinceMs   = now;
+    }
+    return weightStable;
+}
+
 void handleWeighWorkflow(float w) {
     const uint32_t now = millis();
 
@@ -9790,6 +9816,12 @@ void handleWeighWorkflow(float w) {
 
     // -- SCANNING -------------------------------------------------------------
     if (wfPhase == WF_SCANNING) {
+        // Settle tracking runs here too, so the window is already earned by the
+        // time STABLE_WAIT asks for it. Nothing else reads stableCandidate or
+        // stableSinceMs outside STABLE_WAIT, so keeping them live during the
+        // scan changes no other decision.
+        updateStableWindow(w, now);
+
         uint32_t scanDuration = (servoEnabled && hwMotorConnected)
                                ? SPOOL_SCAN_DURATION_MS : NO_MOTOR_UID_WAIT_MS;
 
@@ -9834,7 +9866,9 @@ void handleWeighWorkflow(float w) {
                 pushSessionEvent("scan_timeout", "no uid", w);
             } else {
                 wfPhase = WF_STABLE_WAIT;
-                stableCandidate    = NAN; stableSinceMs = 0;
+                // The settle window is deliberately NOT reset here. It has been
+                // running since the scan began; throwing it away was the 1.2 s
+                // every weighing used to pay twice.
                 wfStableWaitStartMs = now;
                 sendPhase     = "stabilizing";
                 sendCountdown = (int)((STABLE_WINDOW_MS + 999) / 1000);
@@ -9848,14 +9882,9 @@ void handleWeighWorkflow(float w) {
 
     // -- STABLE_WAIT -----------------------------------------------------------
     if (wfPhase == WF_STABLE_WAIT) {
-        // Poids instable ou en montée : réinitialiser le chrono de stabilité
-        bool weightStable = (fabsf(wfCurrentSlope) < SLOPE_STABLE_G_PER_S);
-
-        if (!weightStable || isnan(stableCandidate)) {
-            stableCandidate = w; stableSinceMs = now;
-        } else if (fabs(w - stableCandidate) > STABLE_EPSILON_G) {
-            stableCandidate = w; stableSinceMs = now;
-        }
+        // Poids instable ou en montée : le chrono de stabilité se réinitialise.
+        // Même calcul qu'en SCANNING, simplement poursuivi.
+        bool weightStable = updateStableWindow(w, now);
 
         int secsLeft = (int)((int32_t)(STABLE_WINDOW_MS - (now - stableSinceMs) + 999) / 1000);
         if (secsLeft < 0) secsLeft = 0;
@@ -9878,8 +9907,12 @@ void handleWeighWorkflow(float w) {
 
         if (weightStable && (now - stableSinceMs >= STABLE_WINDOW_MS)) {
             wfPhase = WF_SENDING;
+            // waited= is how long STABLE_WAIT actually cost. It should now be
+            // near zero on a spool that settled during the scan, which is the
+            // whole point of tracking the window from SCANNING onwards.
             netLog("WF STABLE_WAIT?SENDING stable=" + String(stableCandidate,1)
-                   + "g slope=" + String(wfCurrentSlope,1));
+                   + "g slope=" + String(wfCurrentSlope,1)
+                   + " waited=" + String(now - wfStableWaitStartMs) + "ms");
             pushSessionEvent("stable_lock", "stable weight locked", stableCandidate);
         }
         return;

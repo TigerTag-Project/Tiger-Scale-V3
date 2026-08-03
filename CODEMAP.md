@@ -105,31 +105,31 @@ Two gaps and two oddities in that numbering, all deliberate:
 | `parseCloudSpoolMeta` | 9454 | §20 |
 | `pushWeightToCloud` | 9504 | §20 |
 | `fetchMetaFromApiByUid` | 9542 | §20 |
-| `handleWeighWorkflow` | 9605 | §21 |
-| `startMDNS` | 10009 | §22 |
-| `setupScale` | 10047 | §23 |
-| `isRapidChange` | 10078 | §23 |
-| `readWeight` | 10114 | §23 |
-| `playSoundTheme` | 10290 | §AUDIO |
-| `rfidSelectReader` | 10362 | §24 |
-| `normalizeRfidHwConfig` | 10416 | §24 |
-| `setupRFID` | 10426 | §24 |
-| `setupServo` | 10633 | §24 |
-| `processAutoTare` | 10647 | §24 |
-| `downloadUserAvatar` | 10925 | §24 |
-| `fetchMetaFromFirestore` | 11173 | §24 |
-| `readTigerTagMetadata` | 11267 | §24 |
-| `pollRFIDReader` | 11351 | §24 |
-| `recoverRFIDReaderIfNeeded` | 11430 | §24 |
-| `isDuplicateRecentUid` | 11450 | §24 |
-| `isUidLatched` | 11454 | §24 |
-| `finishRfidSession` | 11466 | §24 |
-| `otaApply` | 11659 | §25 |
-| `otaFetchLatest` | 11801 | §25 |
-| `lvglBuildMainScreen` | 12316 | §LVGL |
-| `lvglUpdateMainScreen` | 12623 | §LVGL |
-| `setup` | 13610 | §26 |
-| `loop` | 13768 | §26 |
+| `handleWeighWorkflow` | 9631 | §21 |
+| `startMDNS` | 10042 | §22 |
+| `setupScale` | 10080 | §23 |
+| `isRapidChange` | 10111 | §23 |
+| `readWeight` | 10147 | §23 |
+| `playSoundTheme` | 10323 | §AUDIO |
+| `rfidSelectReader` | 10395 | §24 |
+| `normalizeRfidHwConfig` | 10449 | §24 |
+| `setupRFID` | 10459 | §24 |
+| `setupServo` | 10666 | §24 |
+| `processAutoTare` | 10680 | §24 |
+| `downloadUserAvatar` | 10958 | §24 |
+| `fetchMetaFromFirestore` | 11206 | §24 |
+| `readTigerTagMetadata` | 11300 | §24 |
+| `pollRFIDReader` | 11384 | §24 |
+| `recoverRFIDReaderIfNeeded` | 11463 | §24 |
+| `isDuplicateRecentUid` | 11483 | §24 |
+| `isUidLatched` | 11487 | §24 |
+| `finishRfidSession` | 11499 | §24 |
+| `otaApply` | 11692 | §25 |
+| `otaFetchLatest` | 11834 | §25 |
+| `lvglBuildMainScreen` | 12349 | §LVGL |
+| `lvglUpdateMainScreen` | 12656 | §LVGL |
+| `setup` | 13643 | §26 |
+| `loop` | 13801 | §26 |
 
 ## Landmines — read the note before editing these
 
@@ -150,6 +150,7 @@ a debugging session at least once.
 | `otaApply` | `firmware_url` must point at the plain `firmware.bin`. `Update.begin()`/`write()` only replace the app partition, so handing it a `firmware.factory.bin` corrupts the bootloader and partition table. |
 | `applyPN532RfTuning` | Sets TX drive and RX sensitivity together via `RFConfiguration` CfgItem 0x0A, through the library's public `sendCommandCheckAck()` — no library patch needed. The 5-level table exists because the two antennas sit ~75 mm apart facing each other and cross-talk; the levels span only the low-power end, which is the range that matters for that. Default level 3. |
 | `tsKeyboard` | The shift-key highlight uses an `LV_EVENT_DRAW_PART_BEGIN` callback on a specific button index, **not** `LV_STATE_CHECKED`. `LV_KEYBOARD_CTRL_BTN_FLAGS` bakes `LV_BTNMATRIX_CTRL_CHECKED` into every control key, so styling via that state lights up shift, 1# and backspace all at once, and lights them from creation regardless of actual state. |
+| `updateStableWindow` | Runs in **both** `WF_SCANNING` and `WF_STABLE_WAIT`, and the settle window is deliberately not reset on the transition between them — that reset was making every weighing pay a fresh `STABLE_WINDOW_MS` it had already earned during the scan. It also requires `slopeBufFull` before calling the weight steady: `wfCurrentSlope` is 0.0 until the ring buffer fills (6 x 400 ms), and 0.0 otherwise means "perfectly steady", so without that test an unfilled buffer reads as stable at exactly the moment a spool is being placed. |
 | `liveCapture` | Reads the canvas **once** per band, into a scratch buffer, then hashes and encodes that copy. Hashing the canvas and encoding the canvas as two separate reads lets a repaint slip in between, and the viewer is then recorded as holding a band it never received — a permanent artifact that only a reconnect clears. It must also return early when there are no viewers: the working buffers are only allocated while someone is watching, and running it without them wrote to a null pointer and panicked core 0. |
 | `liveHandleRequest` | Every response is **keep-alive**, deliberately. Closing them meant one TCP connection per tap; the scale closes first, so each sat in `TIME_WAIT` for two minutes against lwIP's ten sockets. A minute of ordinary clicking exhausted them and the port refused connections outright — the feature worked, stopped dead, then recovered a minute later on its own. Do not "tidy" these back to `Connection: close`. |
 | `liveEnsureBuffers` | Only the scratch band belongs in internal DRAM; the encoded band does not. Putting both there cost 20 KB and produced an oscillation rather than speed — taking the memory crossed the free-heap floor, which hung the viewers up, which freed the memory, which let them reconnect and take it again. |

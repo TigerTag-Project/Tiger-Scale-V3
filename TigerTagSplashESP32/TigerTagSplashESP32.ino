@@ -15,33 +15,33 @@
 //
 //   TABLE OF CONTENTS                                     line range
 //   ---------------------------------------------------- -----------
-//   HARDWARE CONFIGURATION                                 115-  270
-//   OTA CONFIGURATION                                      271-  293
-//   FORWARD DECLARATIONS                                   294-  434
-//   WEIGHT ROUNDING                                        435-  454
-//   GLOBAL OBJECTS                                         455-  790
-//   CONFIGURATION VARIABLES                                791- 1207
-//   OLED DISPLAY                                          1208- 1958
-//   CLOUD PARSING                                         1959- 1973
-//   WIFI SETUP                                            1974- 4920
-//   LITTLEFS                                              4921- 5220
-//   FIREBASE AUTHENTICATION                               5221- 6829
-//   WEBSOCKET                                             6830- 6856
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  6857- 6968
-//   UNIFIED WS FRAME BUILDER                              6969- 7059
-//   WEIGHT FILTER HELPERS                                 7060- 7074
-//   POST-SEND STATE RESET (shared by all send paths)      7075- 7095
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  7096- 7352
-//   WEB SERVER                                            7353- 8629
-//   CLOUD COMMUNICATION                                   8630- 8812
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  8813- 9240
-//   mDNS                                                  9241- 9278
-//   SCALE                                                 9279- 9445
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)   9446- 9563
-//   RFID                                                  9564-10706
-//   OTA — Over-the-air firmware + filesystem update    10707-11363
-//   LVGL bridge + main weigh screen                      11364-11994
-//   SETUP & LOOP                                         11995-13012
+//   HARDWARE CONFIGURATION                                 139-  294
+//   OTA CONFIGURATION                                      295-  317
+//   FORWARD DECLARATIONS                                   318-  463
+//   WEIGHT ROUNDING                                        464-  483
+//   GLOBAL OBJECTS                                         484-  819
+//   CONFIGURATION VARIABLES                                820- 1236
+//   OLED DISPLAY                                          1237- 1987
+//   CLOUD PARSING                                         1988- 2002
+//   WIFI SETUP                                            2003- 5578
+//   LITTLEFS                                              5579- 5878
+//   FIREBASE AUTHENTICATION                               5879- 7487
+//   WEBSOCKET                                             7488- 7514
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  7515- 7626
+//   UNIFIED WS FRAME BUILDER                              7627- 7717
+//   WEIGHT FILTER HELPERS                                 7718- 7732
+//   POST-SEND STATE RESET (shared by all send paths)      7733- 7753
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  7754- 8010
+//   WEB SERVER                                            8011- 9288
+//   CLOUD COMMUNICATION                                   9289- 9471
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  9472- 9899
+//   mDNS                                                  9900- 9937
+//   SCALE                                                 9938-10104
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  10105-10222
+//   RFID                                                 10223-11365
+//   OTA — Over-the-air firmware + filesystem update    11366-12022
+//   LVGL bridge + main weigh screen                      12023-12666
+//   SETUP & LOOP                                         12667-13684
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -103,6 +103,30 @@ struct MetadataCache { String mfr; String mat; String col; uint32_t productId; }
 #include "logo_tigertag_splash.h" // 480x320 RGB565 TigerTag logo for boot splash
 #include "icon_bolt.h"            // 8x14 RGB565 charging-bolt icon for the battery status icon
 #include "i18n.h"                 // translation table — edit i18n.h to add/change strings
+
+// Declared immediately after the includes on purpose: the .ino preprocessor
+// inserts every generated function prototype right here, so a type used in a
+// signature must already exist or that prototype will not compile.
+// Remote screen: state, generated once and kept.
+//
+// The code is not regenerated on every boot on purpose. The scale restarts on
+// every over-the-air update, and a code that changed each time would send its
+// owner back to the bench after each one — which is how a security feature ends
+// up switched off. It can be regenerated on demand instead, which is the same
+// gesture as changing a password.
+//
+// It travels with every request in clear text, and that is a deliberate limit:
+// so do the pixels it protects, so an eavesdropper on the LAN gains nothing from
+// reading it. What it stops is casual access by someone who merely knows the IP.
+static String gLanAccessCode;          // 6 chars, mixed case + digits
+static bool   gLanLiveView = true;     // on by default, so Studio can just work
+
+
+struct PairHttp {
+    String url, body, resp;
+    volatile int  code;
+    volatile bool done;
+};
 
 #define DARK_BG 0x0000
 
@@ -359,6 +383,11 @@ static void drawLanguageIcon(int16_t cx, int16_t cy, uint16_t color, uint16_t bg
 static void runFirebaseAccountMenu();
 static void runHardwareTest();
 static void runOtaMenu();
+static bool runAccountPairing(bool* wantsEmail);
+static bool runSignInForm();
+static void runLanSettings();
+static bool otaFetchLatestPumping();
+static bool firebaseSignInWithCustomToken(const String& customToken);
 static void runSettingsMenu();
 static void drawChipIcon(int16_t cx, int16_t cy, uint16_t color);
 static void drawWifiIcon(int16_t ix, int16_t iy, uint16_t color);
@@ -4278,6 +4307,621 @@ static bool lvglAskYesNo(const char *body, const char *sub) {
     return sAnswer == 1;
 }
 
+static String lanMakeCode() {
+    static const char AL[] = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    String out;
+    for (int i = 0; i < 6; i++) out += AL[esp_random() % (sizeof(AL) - 1)];
+    return out;
+}
+
+static void lanEnsureCode() {
+    prefs.begin("config", false);
+    gLanAccessCode = prefs.getString("lanCode", "");
+    gLanLiveView   = prefs.getBool("lanLive", true);
+    if (gLanAccessCode.length() != 6) {
+        gLanAccessCode = lanMakeCode();
+        prefs.putString("lanCode", gLanAccessCode);
+    }
+    prefs.end();
+}
+
+// LAN settings: the address, the access code, and the switch.
+//
+// Modelled on the equivalent page every networked printer ships, because that is
+// the shape people already recognise. The "LAN only" toggle those pages carry has
+// no meaning here — this scale has no cloud mode to turn off — so it is absent
+// rather than present and inert.
+static void runLanSettings() {
+    enum { L_NONE = 0, L_BACK, L_REGEN, L_TOGGLE };
+    static int sAct;
+    sAct = L_NONE;
+    auto cb = [](lv_event_t *e) {
+        sAct = (int)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_target(e));
+    };
+
+    lv_obj_t *scr = lv_obj_create(nullptr);
+    lv_obj_set_style_bg_color(scr, LVCOL_BG, 0);
+    lv_obj_set_style_border_width(scr, 0, 0);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = lv_label_create(scr);
+    lv_label_set_text(title, t(I18N_LAN_TITLE));
+    lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+
+    lv_obj_t *back = lv_btn_create(scr);
+    lv_obj_set_size(back, 44, 38); lv_obj_set_pos(back, 0, 0);
+    lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(back, 0, 0);
+    lv_obj_set_style_shadow_width(back, 0, 0);
+    lv_obj_set_user_data(back, (void *)(intptr_t)L_BACK);
+    lv_obj_add_event_cb(back, cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *backIcon = lv_label_create(back);
+    lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
+    lv_obj_set_style_text_color(backIcon, LVCOL_MUTED, 0);
+    lv_obj_center(backIcon);
+
+    // One row: a label on the left, a value on the right.
+    auto row = [&](int y, const char *label) {
+        lv_obj_t *r = lv_obj_create(scr);
+        lv_obj_set_size(r, 420, 52);
+        lv_obj_align(r, LV_ALIGN_TOP_MID, 0, y);
+        lv_obj_set_style_bg_color(r, LVCOL_CARD, 0);
+        lv_obj_set_style_border_color(r, LVCOL_BORDER, 0);
+        lv_obj_set_style_border_width(r, 1, 0);
+        lv_obj_set_style_radius(r, 10, 0);
+        lv_obj_set_style_shadow_width(r, 0, 0);
+        lv_obj_clear_flag(r, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *l = lv_label_create(r);
+        lv_label_set_text(l, label);
+        lv_obj_set_style_text_color(l, LVCOL_MUTED, 0);
+        lv_obj_align(l, LV_ALIGN_LEFT_MID, 14, 0);
+        return r;
+    };
+
+    lv_obj_t *ipRow = row(52, "IP");
+    lv_obj_t *ipVal = lv_label_create(ipRow);
+    lv_label_set_text(ipVal, wifiConnected ? WiFi.localIP().toString().c_str() : t(I18N_NO_WIFI));
+    lv_obj_set_style_text_color(ipVal, LVCOL_TEXT, 0);
+    lv_obj_align(ipVal, LV_ALIGN_RIGHT_MID, -14, 0);
+
+    lv_obj_t *codeRow = row(112, t(I18N_LAN_CODE));
+    lv_obj_t *codeVal = lv_label_create(codeRow);
+    lv_obj_set_style_text_color(codeVal, LVCOL_TEXT, 0);
+    lv_obj_set_style_text_font(codeVal, &lv_font_montserrat_20, 0);
+    lv_obj_align(codeVal, LV_ALIGN_RIGHT_MID, -52, 0);
+
+    lv_obj_t *regen = lv_btn_create(codeRow);
+    lv_obj_set_size(regen, 38, 38);
+    lv_obj_align(regen, LV_ALIGN_RIGHT_MID, -6, 0);
+    lv_obj_set_style_bg_opa(regen, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(regen, 0, 0);
+    lv_obj_set_style_shadow_width(regen, 0, 0);
+    lv_obj_set_user_data(regen, (void *)(intptr_t)L_REGEN);
+    lv_obj_add_event_cb(regen, cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *regenIcon = lv_label_create(regen);
+    lv_label_set_text(regenIcon, LV_SYMBOL_REFRESH);
+    lv_obj_set_style_text_color(regenIcon, LVCOL_ACCENT, 0);
+    lv_obj_center(regenIcon);
+
+    lv_obj_t *liveRow = row(172, t(I18N_LAN_LIVE));
+    lv_obj_t *sw = lv_switch_create(liveRow);
+    lv_obj_set_size(sw, 56, 30);
+    lv_obj_align(sw, LV_ALIGN_RIGHT_MID, -14, 0);
+    lv_obj_set_style_bg_color(sw, LVCOL_GREEN, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_user_data(sw, (void *)(intptr_t)L_TOGGLE);
+    lv_obj_add_event_cb(sw, cb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    lv_obj_t *note = lv_label_create(scr);
+    lv_obj_set_style_text_color(note, LVCOL_FAINT, 0);
+    lv_obj_set_style_text_font(note, &lv_font_montserrat_14, 0);
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(note, 420);
+    lv_obj_set_style_text_align(note, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(note, LV_ALIGN_TOP_MID, 0, 240);
+
+    auto paint = [&]() {
+        lv_label_set_text(codeVal, gLanAccessCode.c_str());
+        if (gLanLiveView) lv_obj_add_state(sw, LV_STATE_CHECKED);
+        else              lv_obj_clear_state(sw, LV_STATE_CHECKED);
+        lv_label_set_text(note, gLanLiveView ? "" : t(I18N_LAN_LIVE_OFF));
+    };
+    paint();
+
+    lv_obj_t *prev = lv_scr_act();
+    lv_scr_load(scr);
+    for (;;) {
+        sAct = L_NONE;
+        while (sAct == L_NONE) { lv_timer_handler(); delay(5); }
+        if (sAct == L_BACK) break;
+        if (sAct == L_REGEN) {
+            // Same gesture as changing a password: everything holding the old
+            // one stops working, on purpose.
+            gLanAccessCode = lanMakeCode();
+            prefs.begin("config", false); prefs.putString("lanCode", gLanAccessCode); prefs.end();
+        } else if (sAct == L_TOGGLE) {
+            gLanLiveView = lv_obj_has_state(sw, LV_STATE_CHECKED);
+            prefs.begin("config", false); prefs.putBool("lanLive", gLanLiveView); prefs.end();
+        }
+        paint();
+    }
+
+    lv_scr_load(prev);
+    lv_obj_del(scr);
+    { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis()-t0 < 800) delay(20); }
+}
+
+// otaFetchLatest(), without freezing the screen that is waiting for it.
+//
+// The call opens a TLS connection and blocks for seconds. Run from a screen, it
+// stopped LVGL dead — the spinner froze, the back button ignored taps, and the
+// remote mirror went silent for three and a half seconds. Measured, repeatedly,
+// at exactly the moment the Update screen opens.
+//
+// Same shape as pairPost: the work goes to a task, the caller keeps drawing.
+struct OtaFetchJob { volatile bool done; volatile bool ok; };
+
+static void otaFetchTaskFn(void *arg) {
+    OtaFetchJob *j = (OtaFetchJob *)arg;
+    j->ok = otaFetchLatest();
+    j->done = true;
+    vTaskDelete(NULL);
+}
+
+static bool otaFetchLatestPumping() {
+    OtaFetchJob j; j.done = false; j.ok = false;
+    if (xTaskCreatePinnedToCore(otaFetchTaskFn, "otaFetch", 12288, &j, 1, nullptr, 1) != pdPASS) {
+        return otaFetchLatest();          // no room for a task: block rather than fail
+    }
+    while (!j.done) { lv_timer_handler(); delay(15); }
+    return j.ok;
+}
+
+// The sign-in screen: both fields visible at once, Google underneath.
+//
+// It replaces a chooser that asked "e-mail or Google?" first. That cost everyone
+// a tap to answer a question most of them did not have — the overwhelming case
+// is an e-mail and a password. Showing the fields directly means the common path
+// is the screen you land on, and the account that has no password still has a
+// button of its own rather than a dead end.
+//
+// The fields are buttons, not text inputs: LVGL has a keyboard widget but this
+// firmware already has tsKeyboard(), and two ways to type would be one too many.
+//
+// Returns true once signed in.
+static bool runSignInForm() {
+    enum { A_NONE = 0, A_BACK, A_EMAIL, A_PASS, A_SIGNIN, A_GOOGLE };
+    static int sAct;
+    sAct = A_NONE;
+    auto cb = [](lv_event_t *e) {
+        sAct = (int)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_target(e));
+    };
+
+    String email = firebaseEmail, pass;
+
+    lv_obj_t *scr = lv_obj_create(nullptr);
+    lv_obj_set_style_bg_color(scr, LVCOL_BG, 0);
+    lv_obj_set_style_border_width(scr, 0, 0);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = lv_label_create(scr);
+    lv_label_set_text(title, t(I18N_PAIR_TITLE));
+    lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+
+    lv_obj_t *back = lv_btn_create(scr);
+    lv_obj_set_size(back, 44, 38); lv_obj_set_pos(back, 0, 0);
+    lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(back, 0, 0);
+    lv_obj_set_style_shadow_width(back, 0, 0);
+    lv_obj_set_user_data(back, (void *)(intptr_t)A_BACK);
+    lv_obj_add_event_cb(back, cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *backIcon = lv_label_create(back);
+    lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
+    lv_obj_set_style_text_color(backIcon, LVCOL_MUTED, 0);
+    lv_obj_center(backIcon);
+
+    // Two fields, each a tappable card that opens the existing keyboard.
+    auto field = [&](int y, int action) {
+        lv_obj_t *f = lv_btn_create(scr);
+        lv_obj_set_size(f, 380, 50);
+        lv_obj_align(f, LV_ALIGN_TOP_MID, 0, y);
+        lv_obj_set_style_bg_color(f, LVCOL_CARD, 0);
+        lv_obj_set_style_border_color(f, LVCOL_BORDER, 0);
+        lv_obj_set_style_border_width(f, 1, 0);
+        lv_obj_set_style_radius(f, 10, 0);
+        lv_obj_set_style_shadow_width(f, 0, 0);
+        lv_obj_set_user_data(f, (void *)(intptr_t)action);
+        lv_obj_add_event_cb(f, cb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t *l = lv_label_create(f);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_16, 0);
+        lv_obj_align(l, LV_ALIGN_LEFT_MID, 14, 0);
+        return l;
+    };
+    lv_obj_t *emailLbl = field(46,  A_EMAIL);
+    lv_obj_t *passLbl  = field(104, A_PASS);
+
+    lv_obj_t *signBtn = lv_btn_create(scr);
+    lv_obj_set_size(signBtn, 380, 50);
+    lv_obj_align(signBtn, LV_ALIGN_TOP_MID, 0, 168);
+    lv_obj_set_style_bg_color(signBtn, LVCOL_CARD, 0);
+    lv_obj_set_style_border_color(signBtn, LVCOL_GREEN, 0);
+    lv_obj_set_style_border_width(signBtn, 1, 0);
+    lv_obj_set_style_radius(signBtn, 10, 0);
+    lv_obj_set_style_shadow_width(signBtn, 0, 0);
+    lv_obj_set_user_data(signBtn, (void *)(intptr_t)A_SIGNIN);
+    lv_obj_add_event_cb(signBtn, cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *signLbl = lv_label_create(signBtn);
+    lv_label_set_text(signLbl, t(I18N_FORM_SIGNIN));
+    lv_obj_set_style_text_color(signLbl, LVCOL_GREEN, 0);
+    lv_obj_center(signLbl);
+
+    lv_obj_t *gBtn = lv_btn_create(scr);
+    lv_obj_set_size(gBtn, 380, 46);
+    lv_obj_align(gBtn, LV_ALIGN_TOP_MID, 0, 232);
+    lv_obj_set_style_bg_opa(gBtn, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_color(gBtn, LVCOL_BORDER, 0);
+    lv_obj_set_style_border_width(gBtn, 1, 0);
+    lv_obj_set_style_radius(gBtn, 10, 0);
+    lv_obj_set_style_shadow_width(gBtn, 0, 0);
+    lv_obj_set_user_data(gBtn, (void *)(intptr_t)A_GOOGLE);
+    lv_obj_add_event_cb(gBtn, cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *gLbl = lv_label_create(gBtn);
+    lv_label_set_text(gLbl, "Google");
+    lv_obj_set_style_text_color(gLbl, LVCOL_MUTED, 0);
+    lv_obj_center(gLbl);
+
+    auto paint = [&]() {
+        lv_label_set_text(emailLbl, email.length() ? email.c_str() : t(I18N_FORM_EMAIL));
+        lv_obj_set_style_text_color(emailLbl, email.length() ? LVCOL_TEXT : LVCOL_MUTED, 0);
+        // Never echo a password, not even on a screen only its owner can see.
+        String dots; for (size_t i = 0; i < pass.length() && i < 20; i++) dots += "*";
+        lv_label_set_text(passLbl, pass.length() ? dots.c_str() : t(I18N_FORM_PASS));
+        lv_obj_set_style_text_color(passLbl, pass.length() ? LVCOL_TEXT : LVCOL_MUTED, 0);
+    };
+    paint();
+
+    lv_scr_load(scr);
+    for (;;) {
+        sAct = A_NONE;
+        while (sAct == A_NONE) { lv_timer_handler(); delay(5); }
+        int act = sAct;
+
+        if (act == A_BACK) {
+            lv_scr_load(lvScreen); lv_obj_del(scr);
+            { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis()-t0 < 800) delay(20); }
+            return false;
+        }
+        if (act == A_EMAIL || act == A_PASS) {
+            // tsKeyboard owns the screen while it runs, so put ours back after.
+            String v = tsKeyboard(t(act == A_EMAIL ? I18N_FORM_EMAIL : I18N_FORM_PASS));
+            if (!kbCancelled(v)) { if (act == A_EMAIL) email = v; else pass = v; }
+            lv_scr_load(scr);
+            paint();
+            continue;
+        }
+        if (act == A_GOOGLE) {
+            // runAccountPairing loads its own screen, and leaves lvScreen loaded
+            // when it returns — so this one is only safe to delete afterwards.
+            bool linked = runAccountPairing(nullptr);
+            lv_obj_del(scr);
+            return linked;
+        }
+        if (email.length() == 0 || pass.length() == 0) continue;   // nothing to send yet
+
+        firebaseEmail = email; firebasePassword = pass;
+        prefs.begin("config", false);
+        prefs.putString("fbEmail", firebaseEmail);
+        prefs.putString("fbPass",  firebasePassword);
+        prefs.end();
+
+        lv_obj_t *col; lv_obj_t *wait = lvglCenteredScreen(&col);
+        lvglAddSpinner(col);
+        lvglAddCenteredLabel(col, email, LVCOL_ACCENT, &lv_font_montserrat_14);
+        lv_scr_load(wait);
+        lv_obj_del(scr);          // now that it is no longer the active screen
+        { uint32_t t0 = millis(); while (millis() - t0 < 50) { lv_timer_handler(); delay(10); } }
+
+        bool ok = firebaseSignIn();
+
+        lv_obj_t *rcol; lv_obj_t *res = lvglCenteredScreen(&rcol);
+        lvglAddStatusBadge(rcol, ok);
+        if (ok) {
+            gTokenRenewPending   = true;
+            gFirestoreSyncNeeded = true;
+            lvglAddCenteredLabel(rcol, email, LVCOL_MUTED, &lv_font_montserrat_14);
+        } else {
+            lvglAddCenteredLabel(rcol, t(I18N_FB_FAIL_MSG), LVCOL_MUTED, &lv_font_montserrat_14);
+            // A password that does not work must not be replayed at every boot.
+            firebasePassword = "";
+            prefs.begin("config", false); prefs.remove("fbPass"); prefs.end();
+        }
+        lv_scr_load(res); lv_obj_del(wait);
+        { uint32_t t0 = millis(); while (millis() - t0 < (ok ? 1800u : 2400u)) { lv_timer_handler(); delay(30); } }
+        lv_scr_load(lvScreen); lv_obj_del(res);
+        { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis()-t0 < 800) delay(20); }
+        return ok;
+    }
+}
+
+
+// One HTTPS POST, run off the UI thread.
+//
+// An LVGL animation only advances while lv_timer_handler() runs, and HTTPClient
+// blocks for seconds. Calling it from the screen froze the spinner solid — the
+// one moment the interface most needs to look alive. Same reason otaJobTaskFn
+// exists: this firmware never does TLS on the task that draws.
+//
+// The struct lives on the caller's stack, so the caller MUST wait for `done`
+// before returning, or the task would write into a frame that no longer exists.
+// 12 KB of stack because mbedTLS needs the room.
+static void pairHttpTaskFn(void* arg) {
+    PairHttp* r = (PairHttp*)arg;
+    WiFiClientSecure client; client.setInsecure();
+    HTTPClient http; http.setTimeout(15000);
+    if (http.begin(client, r->url)) {
+        http.addHeader("Content-Type", "application/json");
+        r->code = http.POST(r->body);
+        if (r->code == 200) r->resp = http.getString();
+        http.end();
+    } else {
+        r->code = -1;
+    }
+    r->done = true;
+    vTaskDelete(NULL);
+}
+
+static bool pairPost(PairHttp& r) {
+    r.code = 0; r.done = false; r.resp = "";
+    if (xTaskCreatePinnedToCore(pairHttpTaskFn, "pairHttp", 12288, &r, 1, nullptr, 1) != pdPASS) {
+        return false;
+    }
+    // Keep drawing while it works: this is what makes the spinner spin.
+    while (!r.done) { lv_timer_handler(); delay(15); }
+    return r.code == 200;
+}
+
+// Link a TigerTag account from the scale alone, with no browser anywhere.
+//
+// The existing Google path (data/www + tigertag-cdn/scale-auth.html) hands its
+// tokens back through `window.opener`, so it only works when the scale's web
+// interface is already open in a browser. That is the dependency this removes:
+// here the scale asks the cloud for a code, draws it as a QR, and polls until
+// someone approves on their phone. Anyone whose account has no password — every
+// Google sign-up — had no way in from this screen before.
+//
+// Protocol and rationale: docs/ACCOUNT-PAIRING.md.
+static const char* PAIR_START = "https://us-central1-tigertag-connect.cloudfunctions.net/pairStart";
+static const char* PAIR_POLL  = "https://us-central1-tigertag-connect.cloudfunctions.net/pairPoll";
+
+// Exchange the cloud's custom token for a real Firebase session, then land in
+// exactly the state /api/firebase/token leaves behind — the same one the web
+// bridge produces, so everything downstream is already written for it.
+static bool firebaseSignInWithCustomToken(const String& customToken) {
+    WiFiClientSecure client; client.setInsecure();
+    HTTPClient http; http.setTimeout(15000);
+    String url = String("https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=")
+                 + String(TIGERTAG_FIREBASE_WEB_API_KEY);
+    if (!http.begin(client, url)) return false;
+    http.addHeader("Content-Type", "application/json");
+
+    DynamicJsonDocument body(1536);   // heap: a custom token is ~1 KB of JWT
+    body["token"] = customToken;
+    body["returnSecureToken"] = true;
+    String bodyStr; serializeJson(body, bodyStr);
+
+    int code = http.POST(bodyStr);
+    if (code != 200) {
+        Serial.printf("[PAIR] signInWithCustomToken HTTP %d\n", code);
+        http.end(); return false;
+    }
+    StaticJsonDocument<256> filter;
+    filter["idToken"] = true; filter["refreshToken"] = true; filter["localId"] = true;
+    DynamicJsonDocument doc(1024);
+    DeserializationError err = deserializeJson(doc, http.getString(),
+                                               DeserializationOption::Filter(filter));
+    http.end();
+    if (err) { Serial.printf("[PAIR] token parse %s\n", err.c_str()); return false; }
+
+    firebaseIdToken      = String(doc["idToken"]      | "");
+    firebaseRefreshToken = String(doc["refreshToken"] | "");
+    firebaseUid          = String(doc["localId"]      | "");
+    if (firebaseIdToken.isEmpty() || firebaseRefreshToken.isEmpty()) return false;
+
+    firebasePassword = "";      // there is none, and persisting one would be a lie
+    firebaseTokenMs  = millis();
+    firebaseAuth     = true;
+
+    prefs.begin("config", false);
+    prefs.remove("fbPass");
+    prefs.putString("fbRefresh", firebaseRefreshToken);
+    prefs.putString("fbUid",     firebaseUid);
+    prefs.end();
+    return true;
+}
+
+// Returns true once an account is linked.
+// `wantsEmail` comes back true when the user asked for the keyboard instead.
+static bool runAccountPairing(bool* wantsEmail) {
+    lv_obj_t *scr = lv_obj_create(nullptr);
+    lv_obj_set_style_bg_color(scr, LVCOL_BG, 0);
+    lv_obj_set_style_border_width(scr, 0, 0);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    static bool sBack, sEmail;
+    sBack = false; sEmail = false;
+    lv_obj_t *backBtn = lv_btn_create(scr);
+    lv_obj_set_size(backBtn, 44, 40);
+    lv_obj_set_pos(backBtn, 0, 0);
+    lv_obj_set_style_bg_opa(backBtn, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(backBtn, 0, 0);
+    lv_obj_set_style_shadow_width(backBtn, 0, 0);
+    lv_obj_add_event_cb(backBtn, [](lv_event_t*){ sBack = true; }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *backIcon = lv_label_create(backBtn);
+    lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
+    lv_obj_set_style_text_color(backIcon, LVCOL_MUTED, 0);
+    lv_obj_center(backIcon);
+
+    lv_obj_t *title = lv_label_create(scr);
+    lv_label_set_text(title, t(I18N_PAIR_TITLE));
+    lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+
+    lv_obj_t *status = lv_label_create(scr);
+    lv_obj_set_style_text_color(status, LVCOL_MUTED, 0);
+    lv_obj_align(status, LV_ALIGN_CENTER, 0, 0);
+    lv_label_set_text(status, "");
+    lv_obj_add_flag(status, LV_OBJ_FLAG_HIDDEN);
+
+    // Everything that does not depend on the network is built now, so the screen
+    // is whole the moment it appears. Only the square where the QR will land
+    // shows that it is waiting — an empty page with "..." in the middle looks
+    // like a device that has not understood the tap.
+    lv_obj_t *qrBox = lv_obj_create(scr);
+    lv_obj_remove_style_all(qrBox);
+    lv_obj_set_size(qrBox, 160, 160);
+    lv_obj_align(qrBox, LV_ALIGN_LEFT_MID, 21, 6);
+    lv_obj_set_style_bg_color(qrBox, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(qrBox, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(qrBox, 6, 0);
+    lv_obj_clear_flag(qrBox, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *qrSpin = lv_spinner_create(qrBox, 1000, 60);
+    lv_obj_set_size(qrSpin, 46, 46);
+    lv_obj_center(qrSpin);
+    lv_obj_set_style_arc_color(qrSpin, lv_color_hex(0xD8D8D8), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(qrSpin, LVCOL_ACCENT, LV_PART_INDICATOR);
+
+    lv_obj_t *scan = lv_label_create(scr);
+    lv_label_set_text(scan, t(I18N_PAIR_SCAN));
+    lv_obj_set_style_text_color(scan, LVCOL_TEXT, 0);
+    lv_label_set_long_mode(scan, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(scan, 220);
+    lv_obj_set_pos(scan, 232, 78);
+
+    lv_obj_t *codeLbl = lv_label_create(scr);
+    lv_label_set_text(codeLbl, "");
+    lv_obj_set_style_text_color(codeLbl, LVCOL_TEXT, 0);
+    lv_obj_set_style_text_font(codeLbl, &lv_font_montserrat_20, 0);
+    lv_obj_set_pos(codeLbl, 232, 126);
+
+    lv_obj_t *wait = lv_label_create(scr);
+    lv_label_set_text(wait, t(I18N_PAIR_WAITING));
+    lv_obj_set_style_text_color(wait, LVCOL_MUTED, 0);
+    lv_obj_set_style_text_font(wait, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(wait, 232, 168);
+
+    lv_scr_load(scr);
+    auto pump = [&](uint32_t ms) {
+        uint32_t t0 = millis();
+        while (millis() - t0 < ms) { lv_timer_handler(); delay(15); if (sBack || sEmail) return; }
+    };
+    auto finish = [&](bool linked) {
+        if (wantsEmail) *wantsEmail = sEmail;
+        lv_scr_load(lvScreen);
+        lv_obj_del(scr);
+        { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis()-t0 < 800) delay(20); }
+        return linked;
+    };
+    pump(1);
+
+    // --- ask for a code ------------------------------------------------------
+    String verifyUrl, shownCode, pollToken;
+    int intervalS = 5;
+    auto giveUp = [&]() {
+        lv_obj_add_flag(qrBox, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(scan,  LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(wait,  LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(status, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(status, t(I18N_PAIR_FAILED));
+        pump(2500);
+        return finish(false);
+    };
+    {
+        PairHttp r;
+        r.url = PAIR_START;
+        DynamicJsonDocument req(256);
+        req["device"] = gMdnsName;
+        req["model"]  = "TigerScale V3";
+        req["kind"]   = "scale";
+        req["fw"]     = TIGERSCALE_FW_VERSION;
+        serializeJson(req, r.body);
+
+        if (!pairPost(r)) { Serial.printf("[PAIR] pairStart HTTP %d\n", r.code); return giveUp(); }
+
+        DynamicJsonDocument doc(768);
+        if (deserializeJson(doc, r.resp)) return giveUp();
+        verifyUrl = String(doc["verify_url"] | "");
+        shownCode = String(doc["code"]       | "");
+        pollToken = String(doc["poll_token"] | "");
+        intervalS = doc["interval"] | 5;
+        if (verifyUrl.isEmpty() || pollToken.isEmpty()) return giveUp();
+    }
+
+    // --- fill in what the network just returned ------------------------------
+    // The URL already carries the code, so scanning is the whole interaction.
+    // The code is shown anyway: a QR behind plastic at an angle does not always
+    // scan, and without it those cases are a dead end.
+    lv_obj_del(qrSpin);
+    lv_label_set_text(codeLbl, shownCode.c_str());
+
+    lv_obj_t *qr = lv_qrcode_create(qrBox, 150, lv_color_black(), lv_color_white());
+    if (!qr || lv_qrcode_update(qr, verifyUrl.c_str(), verifyUrl.length()) != LV_RES_OK) {
+        // The code alone is still a usable route, so degrade to it rather than
+        // failing the whole screen — and never dereference a null widget.
+        if (qr) { lv_obj_del(qr); qr = nullptr; }
+        Serial.println("[PAIR] QR unavailable, showing the code only");
+    }
+    if (qr) lv_obj_center(qr);
+
+    pump(1);
+
+    // --- wait for the phone --------------------------------------------------
+    uint32_t deadline = millis() + 11UL * 60UL * 1000UL;   // the code's own TTL, plus slack
+    while (!sBack && !sEmail && millis() < deadline) {
+        pump((uint32_t)intervalS * 1000UL);
+        if (sBack || sEmail) break;
+
+        PairHttp r;
+        r.url = PAIR_POLL;
+        { DynamicJsonDocument req(192); req["poll_token"] = pollToken; serializeJson(req, r.body); }
+        if (!pairPost(r)) continue;
+
+        StaticJsonDocument<256> filter;
+        filter["status"] = true; filter["custom_token"] = true;
+        DynamicJsonDocument doc(2048);
+        if (deserializeJson(doc, r.resp, DeserializationOption::Filter(filter))) continue;
+
+        String st = String(doc["status"] | "");
+        if (st == "pending") continue;
+
+        if (st == "approved") {
+            String ct = String(doc["custom_token"] | "");
+            if (qr) lv_obj_add_flag(qr, LV_OBJ_FLAG_HIDDEN);
+            lv_label_set_text(wait, "");
+            lv_label_set_text(scan, "");
+            lv_label_set_text(codeLbl, "");
+            lv_obj_clear_flag(status, LV_OBJ_FLAG_HIDDEN);
+            bool ok = firebaseSignInWithCustomToken(ct);
+            lv_label_set_text(status, t(ok ? I18N_PAIR_DONE : I18N_PAIR_FAILED));
+            lv_obj_set_style_text_color(status, ok ? LVCOL_GREEN : LVCOL_RED, 0);
+            pump(2000);
+            return finish(ok);
+        }
+
+        if (qr) lv_obj_add_flag(qr, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(scan, ""); lv_label_set_text(codeLbl, ""); lv_label_set_text(wait, "");
+        lv_obj_clear_flag(status, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(status, t(st == "denied" ? I18N_PAIR_DENIED : I18N_PAIR_EXPIRED));
+        pump(2500);
+        return finish(false);
+    }
+    return finish(false);
+}
+
 static void runOtaMenu() {
     enum OtaAction { OA_NONE, OA_BACK, OA_INSTALL };
     static OtaAction sOtaAction;
@@ -4459,7 +5103,7 @@ static void runOtaMenu() {
         return;
     }
 
-    bool found = otaFetchLatest();
+    bool found = otaFetchLatestPumping();
 
     if (!found) {
         setStatus(t(I18N_OTA_ERROR), LVCOL_RED);
@@ -4591,7 +5235,7 @@ static void runOtaMenu() {
 // LVGL screen. Sub-screens (calibration wizard, hardware test, wifi setup,
 // etc.) are untouched raw-gfx and still called exactly as before.
 static void runSettingsMenu() {
-    enum SettingsAction { SA_NONE, SA_WIFI, SA_FIREBASE, SA_VOLUME, SA_CALIBRATE, SA_LANGUAGE, SA_HARDWARE, SA_UPDATE, SA_BACK };
+    enum SettingsAction { SA_NONE, SA_WIFI, SA_FIREBASE, SA_VOLUME, SA_CALIBRATE, SA_LANGUAGE, SA_HARDWARE, SA_LAN, SA_UPDATE, SA_BACK };
     static SettingsAction sAction;
     lv_obj_t *prevScr = nullptr;
 
@@ -4626,7 +5270,7 @@ static void runSettingsMenu() {
         const int X1 = X0 + CW + GAP, X2 = X1 + CW + GAP;
         const int Y0 = 44, Y1 = Y0 + CH + 8, Y2 = Y1 + CH + 10;
 
-        enum CardIcon { CI_GLYPH, CI_CLOUD, CI_TARGET, CI_GLOBE, CI_CHIP };
+        enum CardIcon { CI_GLYPH, CI_USER, CI_LAN, CI_TARGET, CI_GLOBE, CI_CHIP };
 
         // Small hand-drawn-primitive icon helpers — a plain lv_obj with a
         // border and no fill draws an outline shape; bg-filled ones with
@@ -4697,30 +5341,29 @@ static void runSettingsMenu() {
                 lv_obj_clear_flag(iconArea, LV_OBJ_FLAG_SCROLLABLE);
                 lv_obj_clear_flag(iconArea, LV_OBJ_FLAG_CLICKABLE);
 
-                if (iconKind == CI_CLOUD) {
-                    // Cloud icon: two overlapping domes + flat base, scaled
-                    // down to fit the 26x26 icon area (same shape as the
-                    // hand-drawn cloud icon used in the main screen's status
-                    // row, just smaller).
-                    lv_obj_t *dome1 = lv_obj_create(iconArea);
-                    lv_obj_set_size(dome1, 16, 16);
-                    lv_obj_set_style_radius(dome1, LV_RADIUS_CIRCLE, 0);
-                    lv_obj_set_style_border_width(dome1, 0, 0);
-                    lv_obj_set_style_bg_color(dome1, iconCol, 0);
-                    lv_obj_set_pos(dome1, 0, 2);
-                    lv_obj_clear_flag(dome1, LV_OBJ_FLAG_SCROLLABLE);
-                    lv_obj_clear_flag(dome1, LV_OBJ_FLAG_CLICKABLE);
-
-                    lv_obj_t *dome2 = lv_obj_create(iconArea);
-                    lv_obj_set_size(dome2, 11, 11);
-                    lv_obj_set_style_radius(dome2, LV_RADIUS_CIRCLE, 0);
-                    lv_obj_set_style_border_width(dome2, 0, 0);
-                    lv_obj_set_style_bg_color(dome2, iconCol, 0);
-                    lv_obj_set_pos(dome2, 14, 6);
-                    lv_obj_clear_flag(dome2, LV_OBJ_FLAG_SCROLLABLE);
-                    lv_obj_clear_flag(dome2, LV_OBJ_FLAG_CLICKABLE);
-
-                    bar(iconArea, 0, 10, 26, 7, 3, iconCol);
+                if (iconKind == CI_USER) {
+                    // Account: head over shoulders, same silhouette as the status
+                    // row, drawn larger. The shoulders disc overflows the 26x26
+                    // area on purpose — the clip is what turns a circle into a
+                    // pair of shoulders.
+                    auto disc = [&](int x, int y, int d) {
+                        lv_obj_t *o = lv_obj_create(iconArea);
+                        lv_obj_set_size(o, d, d);
+                        lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
+                        lv_obj_set_style_border_width(o, 0, 0);
+                        lv_obj_set_style_bg_color(o, iconCol, 0);
+                        lv_obj_set_pos(o, x, y);
+                        lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+                        lv_obj_clear_flag(o, LV_OBJ_FLAG_CLICKABLE);
+                    };
+                    disc(9, 2, 9);      // head
+                    disc(3, 15, 20);    // shoulders
+                } else if (iconKind == CI_LAN) {
+                    // Two nodes joined by a line: a link, not a globe — this is
+                    // the local network, not the internet.
+                    ring(iconArea, 1, 8, 9, iconCol);
+                    ring(iconArea, 16, 8, 9, iconCol);
+                    bar(iconArea, 9, 11, 8, 3, 1, iconCol);
                 } else if (iconKind == CI_TARGET) {
                     // Calibration: target/adjustment icon (ring + inner ring +
                     // crosshair + 4 tick marks), ported from the existing but
@@ -4775,7 +5418,7 @@ static void runSettingsMenu() {
         makeCard(X0, Y0, CI_GLYPH, LV_SYMBOL_WIFI, wifiConnected ? LVCOL_GREEN : LVCOL_RED, wifiVal, SA_WIFI);
 
         String fbVal = firebaseAuth ? "OK" : t(I18N_NO_ACCOUNT);
-        makeCard(X1, Y0, CI_CLOUD, nullptr, firebaseAuth ? LVCOL_GREEN : LVCOL_RED, fbVal, SA_FIREBASE);
+        makeCard(X1, Y0, CI_USER, nullptr, firebaseAuth ? LVCOL_GREEN : LVCOL_RED, fbVal, SA_FIREBASE);
 
         String volVal = gMute ? String(t(I18N_MUTE)) : (String((int)gVolume) + "%");
         makeCard(X2, Y0, CI_GLYPH, gMute ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX, gMute ? LVCOL_RED : LVCOL_TEXT, volVal, SA_VOLUME);
@@ -4792,6 +5435,8 @@ static void runSettingsMenu() {
 
         // Row 3: Update — same card style as the other 6, under Calibrate
         makeCard(X0, Y2, CI_GLYPH, LV_SYMBOL_REFRESH, LVCOL_TEXT, String(t(I18N_UPDATE)), SA_UPDATE);
+        makeCard(X1, Y2, CI_LAN, nullptr, gLanLiveView ? LVCOL_GREEN : LVCOL_MUTED,
+                 String(t(I18N_LAN_TITLE)), SA_LAN);
 
         // Back — top-left arrow, matching the keyboard screen's back button
         lv_obj_t *backBtn = lv_btn_create(scr);
@@ -4852,13 +5497,19 @@ static void runSettingsMenu() {
                     lv_scr_load(prevSettingsScr);
                     lv_obj_del(noWifiScr);
                 } else {
-                    bool ok = firebaseTouchLogin(); if (ok) firebaseAuth = true;
+                    // Two doors, because there are two kinds of account. Typing an
+                    // e-mail and a password is the familiar one and stays first;
+                    // the second exists because a Google sign-up HAS no password,
+                    // so for those owners the keyboard is a dead end no matter how
+                    // carefully they type.
+                    if (runSignInForm()) firebaseAuth = true;
                 }
                 break;
             case SA_VOLUME:     runVolumeSettings();     break;
             case SA_CALIBRATE:  runCalibrationWizard();  break;
             case SA_LANGUAGE:   runLanguageSettings();   break;
             case SA_HARDWARE:   runHardwareTest();       break;
+            case SA_LAN:        runLanSettings();        break;
             case SA_UPDATE:     runOtaMenu();            break;
             default: break;
         }
@@ -4876,6 +5527,13 @@ void setupWiFi() {
     Serial.println("[WIFI] mode STA");
     WiFi.mode(WIFI_STA);
     WiFi.setHostname(gMdnsName.c_str());
+    // Modem sleep is on by default and costs 300-600 ms of latency on every
+    // packet, with visible loss — measured on this unit before it was turned
+    // off. That penalty lands on everything the scale serves: the 10 Hz
+    // WebSocket the web UI lives on, the screen mirror, and the OTA download.
+    // It buys perhaps 20 mA, which matters on a battery this board treats as
+    // optional and never on the USB power it normally runs from.
+    WiFi.setSleep(false);
     Serial.println("[WIFI] mode STA done");
 
     // Use OUR credentials from ts-wifi namespace only
@@ -8214,6 +8872,7 @@ void setupWebServer() {
         }
     );
 
+    // A tap, in the same coordinate space the panel reports.
     server.on("/api/firebase/status", HTTP_GET, [](AsyncWebServerRequest *request){
         bool cfg  = isFirebaseConfigured();
         bool auth = firebaseAuth;
@@ -11391,8 +12050,6 @@ static lv_indev_drv_t     lvIndevDrv;
 // lvglReady is declared earlier (near the gfx/panel globals) so bootProgress()
 // can use it -- it's defined before this LVGL bridge section in file order.
 
-// Pushes the redrawn area into the existing canvas buffer, then flushes to the
-// physical panel only once LVGL has finished the whole frame (flush_is_last).
 static void lvglFlushCb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p) {
     int32_t w = area->x2 - area->x1 + 1;
     int32_t h = area->y2 - area->y1 + 1;
@@ -11403,6 +12060,7 @@ static void lvglFlushCb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *c
 
 // Wraps the existing AXS5106L polling function (already returns coordinates
 // pre-rotated into the same 480x320 landscape space LVGL expects).
+
 static void lvglTouchCb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
     int16_t tx, ty;
     if (tsRead(tx, ty)) {
@@ -11433,6 +12091,9 @@ static void lvglInit() {
     lvDispDrv.flush_cb = lvglFlushCb;
     lvDispDrv.draw_buf = &lvDrawBuf;
     lv_disp_drv_register(&lvDispDrv);
+
+
+    lanEnsureCode();   // generated once, then kept
 
     lv_indev_drv_init(&lvIndevDrv);
     lvIndevDrv.type    = LV_INDEV_TYPE_POINTER;
@@ -11592,38 +12253,49 @@ static void lvglBuildMainScreen() {
     lvWifiLabel = lv_label_create(statusRow);
     lv_label_set_text(lvWifiLabel, LV_SYMBOL_WIFI);
 
-    // Cloud: large dome + smaller overlapping dome + flat base, matching the
-    // provided clouds-cloud-svgrepo-com.svg silhouette.
+    // Account: head over shoulders, after account.svg in Tiger RFID Connect.
+    //
+    // No circle around it. The reference has one, but this is composed from LVGL
+    // objects clipped to a rectangle, so a shoulders disc wide enough to read as
+    // shoulders punches through the ring at the bottom and leaves a broken
+    // circle. The silhouette alone reads as a person at 16 px; a broken circle
+    // reads as a mistake.
+    //
+    // The three objects keep their old names: the status-row recolouring below
+    // drives them by variable, and renaming would be churn for no gain. The
+    // third is unused here and stays zero-sized rather than being deleted, so
+    // that recolouring code needs no special case.
     lv_obj_t *cloudGroup = lv_obj_create(statusRow);
     lv_obj_remove_style_all(cloudGroup);
-    lv_obj_set_size(cloudGroup, 22, 14);
+    lv_obj_set_size(cloudGroup, 16, 16);
     lv_obj_clear_flag(cloudGroup, LV_OBJ_FLAG_SCROLLABLE);
 
-    lvCloudDome1 = lv_obj_create(cloudGroup);
-    lv_obj_set_size(lvCloudDome1, 14, 14);
+    lvCloudDome1 = lv_obj_create(cloudGroup);          // head
+    lv_obj_set_size(lvCloudDome1, 7, 7);
     lv_obj_set_style_radius(lvCloudDome1, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(lvCloudDome1, 0, 0);
-    lv_obj_set_pos(lvCloudDome1, 0, 0);
+    lv_obj_set_pos(lvCloudDome1, 5, 1);
     lv_obj_clear_flag(lvCloudDome1, LV_OBJ_FLAG_SCROLLABLE);
 
-    lvCloudDome2 = lv_obj_create(cloudGroup);
-    lv_obj_set_size(lvCloudDome2, 10, 10);
+    lvCloudDome2 = lv_obj_create(cloudGroup);          // shoulders, clipped to a dome
+    lv_obj_set_size(lvCloudDome2, 14, 14);
     lv_obj_set_style_radius(lvCloudDome2, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(lvCloudDome2, 0, 0);
-    lv_obj_set_pos(lvCloudDome2, 11, 4);
+    lv_obj_set_pos(lvCloudDome2, 1, 10);
     lv_obj_clear_flag(lvCloudDome2, LV_OBJ_FLAG_SCROLLABLE);
 
     lvCloudBase = lv_obj_create(cloudGroup);
     lv_obj_remove_style_all(lvCloudBase);
-    lv_obj_set_size(lvCloudBase, 22, 6);
-    lv_obj_set_style_bg_opa(lvCloudBase, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(lvCloudBase, 2, 0);
-    lv_obj_set_pos(lvCloudBase, 0, 8);
+    lv_obj_set_size(lvCloudBase, 0, 0);
     lv_obj_clear_flag(lvCloudBase, LV_OBJ_FLAG_SCROLLABLE);
 
     // Volume: text set in update() to LV_SYMBOL_MUTE / VOLUME_MID / VOLUME_MAX
     // depending on gVolume, so the arcs actually reflect the configured level.
-    lvVolumeLabel = lv_label_create(statusRow);
+    // No speaker here any more: it restated a setting that is changed two taps
+    // away and never needed watching. The object stays so the update code below
+    // keeps one code path, but it is never attached to the row.
+    lvVolumeLabel = lv_label_create(lvScreen);
+    lv_obj_add_flag(lvVolumeLabel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_text_color(lvVolumeLabel, LVCOL_TEXT, 0);
 
     // Battery: outline body (no fill, like the SVG) + terminal nub + 3 bar

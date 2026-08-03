@@ -6,4 +6,4 @@ this file to the header above.
 
 ---
 
-_Checkpoint: QR widget enabled for account pairing._
+_Checkpoint: account pairing by phone, on-device sign-in form, and a LAN page._

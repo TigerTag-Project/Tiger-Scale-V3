@@ -38,11 +38,11 @@
 //   mDNS                                                 10213-10250
 //   SCALE                                                10251-10417
 //   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  10418-10535
-//   RFID                                                 10536-11551
-//   OTA — Over-the-air firmware + filesystem update    11552-12208
-//   LVGL bridge + main weigh screen                      12209-12909
-//   Remote live view: the screen out, taps back in       12910-13737
-//   SETUP & LOOP                                         13738-14778
+//   RFID                                                 10536-11554
+//   OTA — Over-the-air firmware + filesystem update    11555-12211
+//   LVGL bridge + main weigh screen                      12212-12912
+//   Remote live view: the screen out, taps back in       12913-13740
+//   SETUP & LOOP                                         13741-14781
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -698,11 +698,11 @@ static void applyPN532RfTuning(Adafruit_PN532 &pn532, uint8_t level) {
     if (!pn532.sendCommandCheckAck(cmd, sizeof(cmd), 500)) {
         delay(40);
         if (!pn532.sendCommandCheckAck(cmd, sizeof(cmd), 500)) {
-            Serial.printf("[RFID] RF tuning level %u: no ACK (kept previous config)\n", level);
+            netLog("RFTUNE L" + String(level) + " no ACK (kept previous config)");
             return;
         }
     }
-    Serial.printf("[RFID] RF tuning level %u applied\n", level);
+    netLog("RFTUNE L" + String(level) + " applied");
 }
 
 #if RFID_TRANSPORT_HSU
@@ -10655,9 +10655,12 @@ static bool rfidFieldTest(PN532Reader &tgt, uint8_t tgtSs, uint8_t tgtRst,
         if (!ok && detail.length() == 0) detail = "no field";
     }
 
-    Serial.printf("[RFID] field test -> %s sent %02X%02X%02X : %s %s\n",
-                  tgtLabel, id[0], id[1], id[2],
-                  ok ? "OK" : "FAIL", ok ? "" : detail.c_str());
+    // Through netLog, not just Serial: the USB console on this unit stops
+    // producing output after a while and only comes back with a replug, while
+    // GET /api/logs keeps working. A diagnostic you cannot read is not one.
+    netLog("RFTEST " + String(tgtLabel) + " L" + String(level)
+           + " id=" + String(id[0], HEX) + String(id[1], HEX) + String(id[2], HEX)
+           + (ok ? " OK" : " FAIL " + detail));
 
     // Always restore, pass or fail. A reader left emulating a card stops
     // reading spools entirely, which would be a far worse bug than the one this

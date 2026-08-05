@@ -72,7 +72,15 @@ property: an empty input set is an error, not a pass.
 - **Don't encode a bug into the tooling.** `update_toc.sh` used to match the
   literal mojibake that `§` had decayed into, rather than the `§` itself. The
   corruption then looked "normal" and spread. Fix the cause.
-- **Update `WORKLOG.md` as you go**, naming the files touched.
+- **Update `WORKLOG.md` as you go**, naming the files touched. Its headings are
+  Keep a Changelog's (`Added` / `Changed` / `Fixed` / `Removed`), so the release
+  entry is synthesised from it rather than re-derived from the diff. Describe the
+  end state, not the journey.
+- **Never commit, tag or push without being asked.** Make the change, run the
+  guards, report, and stop.
+- **Install the hooks once per clone**: `bash scripts/install-hooks.sh`.
+  Machine-local truth — bench address, serial port, which account pushes where —
+  lives in the gitignored `LOCAL.md`, never in a committed file.
 
 ## Things that are settled — do not re-litigate
 

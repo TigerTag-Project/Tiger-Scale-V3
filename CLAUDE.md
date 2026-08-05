@@ -52,8 +52,9 @@ Never read the whole file. The loop is:
 
 **CODEMAP.md has a "Landmines" table.** Read the row for any function you are
 about to touch. Every entry is there because it cost a debugging session:
-`downloadUserAvatar` is suspected to hang the device when given a valid URL,
-`readWeight` can look broken when the real fault is a swapped load-cell wire,
+`computeWeightAvailable` gave two different answers for the same spool depending
+on which code path won a race, `readWeight` can look broken when the real fault
+is a swapped load-cell wire,
 `processAutoTare` must not have a short-debounce variant re-added, and so on.
 
 ### Section banners
@@ -212,6 +213,13 @@ visible ink, so use a bitmap for small icons; widgets whose constructors call
 single control key; and never let raw-`gfx` drawing happen while an LVGL screen
 is loaded.
 
+3. **Refresh the smallest thing that changed.** `lvglUpdateMainScreen()` sets the
+   labels it owns and lets LVGL decide what to repaint; it does not rebuild the
+   screen. Tearing down a container to reflect one changed value is the recurring
+   bug in any long-lived UI — it drops scroll and focus, restarts animations, and
+   re-runs every wiring. Rebuild only when the whole screen genuinely changed,
+   and remember `lv_scr_load(new)` comes before `lv_obj_del(old)`.
+
 **You do not have to photograph the device to see a screen.** Turn on Settings →
 LAN → Live view, open `http://<scale-ip>/live` with the code shown on that page,
 and you get the panel in a browser with clicks going back the other way. It is a
@@ -233,9 +241,14 @@ including `pt-pt`, which the firmware table does not have).
 
 ## Repository conventions
 
-- **[`WORKLOG.md`](WORKLOG.md)** — append what you changed as you change it,
-  naming the files touched. At a checkpoint, synthesise it into one line, use
-  that as the commit message, and reset the file.
+- **[`WORKLOG.md`](WORKLOG.md)** is the single source of truth for everything
+  done since the last commit — read it at the start of a session, and append to
+  it the moment a change is done rather than in a batch at the end. Its headings
+  are Keep a Changelog's, so a release entry is synthesised from it instead of
+  being re-derived from the diff. Describe the end state, not the journey:
+  an "Added X" and a later "Fixed X" from the same cycle collapse into one
+  entry, and anything reverted disappears. At a checkpoint, synthesise it into
+  one line, use that as the commit message, and reset the file to its header.
 - **The version lives in one place**: `TIGERSCALE_FW_VERSION` in §2. The release
   workflow refuses to publish if the git tag disagrees with it, and generates the
   published manifest from it via `scripts/make-manifest.py` — there is no committed
@@ -247,13 +260,72 @@ including `pt-pt`, which the firmware table does not have).
   ships, and is documented as such at its definition. Never commit WiFi
   credentials, tokens, or personal network addresses — `scripts/watch_logs.py`
   takes the device address as an argument for exactly this reason.
+- **`LOCAL.md` (gitignored) holds the machine-local truth** — the bench scale's
+  address and access code, the serial port, which account pushes where. Read it
+  when you need one of those instead of asking; update it when one changes. It
+  exists so that no committed file ever has to carry an address or an absolute
+  path, and so a session does not spend a round-trip re-learning what the last
+  one already knew.
 - **Binaries** go to GitHub Releases, never into git. A committed binary stays in
   the history forever, even after it is deleted.
+- **Reviews** live in [`docs/reviews/`](docs/reviews/), one file each, kept
+  permanently, worked from the standing brief in
+  [`docs/REVIEW-BRIEF.md`](docs/REVIEW-BRIEF.md). After acting on one, annotate
+  every finding fixed / deferred / rejected **in the report** — an unannotated
+  report reads to the next reviewer as though nothing was ever done, and the
+  findings get re-litigated from scratch.
+- **Install the hooks once per clone**: `bash scripts/install-hooks.sh`. It
+  points `core.hooksPath` at `scripts/hooks/`, so `pre-commit` runs
+  `verify.sh --quick` and the mechanical, regenerable things can no longer be
+  the reason a push goes red. It deliberately does not compile — a build on
+  every commit is how people learn to reach for `--no-verify`.
 
-## Model guidance
+## Hard rules
+
+Short list, each one earned.
+
+- **Never commit, tag or push without being asked.** Make the change, run the
+  guards, report, and stop. The one thing that cannot be undone by editing a
+  file is a tag that has already been pushed: the release workflow acts on it.
+- **No AI attribution anywhere** — not in commit messages, not in PR bodies, not
+  in code comments or contributor lists.
+- **Conversation in French, everything committed in English** — code, comments,
+  commit messages, docs, this file. A repository that mixes both is a repository
+  nobody outside the room can read.
+- **Verify your own work before reporting.** Run the guards, read the output,
+  and check the result. Ask the human to test only what genuinely needs the
+  hardware in front of them — and ask once, at the moment it is needed, not as a
+  substitute for looking. The live view exists precisely so that "does it look
+  right?" is a question you can answer yourself (§LIVE).
+- **Report faithfully.** If a check failed, show its output. If a step was
+  skipped, say which and why. Partially done is never reported as done.
+- **When a rule here turns out to be wrong, change it in the same session.** A
+  stale line in this file mis-teaches every session that follows, which is
+  exactly how the previous version reached 27 KB of contradictions.
+
+## Model guidance and delegation
 
 | Task | Suggestion |
 |------|-----------|
 | Single function, under 30 lines | any model |
 | New feature spanning 2+ sections, or a refactor | a stronger model |
 | Long conversation, several sections already read | switch to targeted grep + slice; do not re-read |
+
+Two sub-agents are defined in `.claude/agents/`, both for keeping search cost out
+of the main context rather than for going faster:
+
+- **`locator`** (cheapest model, read-only) — "where is the code that…". It does
+  its own searching in its own context and returns paths and line numbers.
+- **`single-edit`** (mid model) — one already-decided, self-contained edit. Its
+  prompt must name the exact file, the exact change and the expected result: it
+  sees nothing of the conversation that decided it, and it is instructed to stop
+  and ask rather than guess.
+
+**Never delegate** a multi-section change, a new subsystem, a debugging session,
+the version decision, the guards, the final read-through, or any git step.
+Delegating those loses the reasoning and costs more in rework than it saves.
+
+**Never fan out.** Parallel sub-agents keep the main context lean but multiply
+the bill — each carries its own system prompt and independently re-reads the same
+large files. The default is to do it inline; if the context is genuinely too
+large, hand the whole block to exactly one agent with a self-sufficient prompt.

@@ -22,6 +22,14 @@ if ! git diff --cached --name-only | grep -qE '\.(ino|h|md|json|py|sh|ini|csv)$'
   exit 0
 fi
 
+# Fingerprint the regenerable files first. --quick rewrites the table of
+# contents in place, and the only thing we care about is whether *it* changed
+# them — not whether they happened to be dirty already. Comparing against the
+# index instead would reject every partial commit, which is how the first
+# version of this hook blocked a commit that had nothing wrong with it.
+REGEN="TigerTagSplashESP32/TigerTagSplashESP32.ino CODEMAP.md"
+before=$(md5 -q $REGEN 2>/dev/null || md5sum $REGEN 2>/dev/null)
+
 if ! out=$(bash scripts/verify.sh --quick 2>&1); then
   echo "$out"
   echo
@@ -30,12 +38,11 @@ if ! out=$(bash scripts/verify.sh --quick 2>&1); then
   exit 1
 fi
 
-# --quick exits 0 even when it regenerated something, so catch the case where
-# the tree no longer matches what is staged.
-if ! git diff --quiet -- TigerTagSplashESP32/TigerTagSplashESP32.ino CODEMAP.md; then
+after=$(md5 -q $REGEN 2>/dev/null || md5sum $REGEN 2>/dev/null)
+if [ "$before" != "$after" ]; then
   echo "pre-commit: the guards regenerated the table of contents or CODEMAP."
-  echo "The staged commit does not include that regeneration. Stage it and retry:"
-  echo "  git add TigerTagSplashESP32/TigerTagSplashESP32.ino CODEMAP.md"
+  echo "Stage that regeneration and retry:"
+  echo "  git add $REGEN"
   exit 1
 fi
 

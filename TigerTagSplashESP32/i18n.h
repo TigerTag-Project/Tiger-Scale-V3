@@ -131,6 +131,11 @@ enum LangKey : uint8_t {
     I18N_LAN_CODE,
     I18N_LAN_LIVE,
     I18N_LAN_LIVE_OFF,
+    I18N_SLEEP_TITLE,
+    I18N_SLEEP_ENABLE,
+    I18N_SLEEP_DELAY,
+    I18N_SLEEP_MINUTES,
+    I18N_SLEEP_OFF,
     I18N_COUNT,
 };
 
@@ -243,6 +248,11 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* LAN_CODE        */ "Access code",
           /* LAN_LIVE        */ "Live view",
           /* LAN_LIVE_OFF    */ "Live view is off",
+          /* SLEEP_TITLE     */ "Screen sleep",
+          /* SLEEP_ENABLE    */ "Screen sleep",
+          /* SLEEP_DELAY     */ "Delay",
+          /* SLEEP_MINUTES   */ "minutes of inactivity",
+          /* SLEEP_OFF       */ "Screen stays on",
     },
     // PT
     {
@@ -349,6 +359,11 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* LAN_CODE        */ "Codigo de acesso",
           /* LAN_LIVE        */ "Vista ao vivo",
           /* LAN_LIVE_OFF    */ "Vista ao vivo desligada",
+          /* SLEEP_TITLE     */ "Suspensao",
+          /* SLEEP_ENABLE    */ "Suspender ecra",
+          /* SLEEP_DELAY     */ "Atraso",
+          /* SLEEP_MINUTES   */ "minutos sem uso",
+          /* SLEEP_OFF       */ "Ecra sempre ligado",
     },
     // FR
     {
@@ -455,6 +470,11 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* LAN_CODE        */ "Code d'acces",
           /* LAN_LIVE        */ "Vue live",
           /* LAN_LIVE_OFF    */ "Vue live desactivee",
+          /* SLEEP_TITLE     */ "Veille",
+          /* SLEEP_ENABLE    */ "Ecran de veille",
+          /* SLEEP_DELAY     */ "Delai",
+          /* SLEEP_MINUTES   */ "minutes d inactivite",
+          /* SLEEP_OFF       */ "L ecran reste allume",
     },
     // ES
     {
@@ -561,6 +581,11 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* LAN_CODE        */ "Codigo de acceso",
           /* LAN_LIVE        */ "Vista en vivo",
           /* LAN_LIVE_OFF    */ "Vista en vivo desactivada",
+          /* SLEEP_TITLE     */ "Suspension",
+          /* SLEEP_ENABLE    */ "Apagar pantalla",
+          /* SLEEP_DELAY     */ "Retardo",
+          /* SLEEP_MINUTES   */ "minutos sin uso",
+          /* SLEEP_OFF       */ "Pantalla siempre activa",
     },
     // DE
     {
@@ -667,6 +692,11 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* LAN_CODE        */ "Zugangscode",
           /* LAN_LIVE        */ "Live-Ansicht",
           /* LAN_LIVE_OFF    */ "Live-Ansicht aus",
+          /* SLEEP_TITLE     */ "Ruhezustand",
+          /* SLEEP_ENABLE    */ "Bildschirm aus",
+          /* SLEEP_DELAY     */ "Verzoegerung",
+          /* SLEEP_MINUTES   */ "Minuten ohne Aktion",
+          /* SLEEP_OFF       */ "Bildschirm bleibt an",
     },
     // ZH (pinyin — ASCII font only)
     {
@@ -773,6 +803,11 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* LAN_CODE        */ "Fangwen ma",
           /* LAN_LIVE        */ "Shishi huamian",
           /* LAN_LIVE_OFF    */ "Shishi huamian yi guanbi",
+          /* SLEEP_TITLE     */ "Xiumian",
+          /* SLEEP_ENABLE    */ "Pingmu xiumian",
+          /* SLEEP_DELAY     */ "Yanchi",
+          /* SLEEP_MINUTES   */ "fenzhong wu caozuo",
+          /* SLEEP_OFF       */ "Pingmu changliang",
     },
     // IT
     {
@@ -879,6 +914,11 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* LAN_CODE        */ "Codice di accesso",
           /* LAN_LIVE        */ "Vista live",
           /* LAN_LIVE_OFF    */ "Vista live disattivata",
+          /* SLEEP_TITLE     */ "Sospensione",
+          /* SLEEP_ENABLE    */ "Spegni schermo",
+          /* SLEEP_DELAY     */ "Ritardo",
+          /* SLEEP_MINUTES   */ "minuti di inattivita",
+          /* SLEEP_OFF       */ "Schermo sempre acceso",
     },
     // PL
     {
@@ -985,6 +1025,11 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* LAN_CODE        */ "Kod dostepu",
           /* LAN_LIVE        */ "Podglad na zywo",
           /* LAN_LIVE_OFF    */ "Podglad wylaczony",
+          /* SLEEP_TITLE     */ "Uspienie",
+          /* SLEEP_ENABLE    */ "Wygaszacz ekranu",
+          /* SLEEP_DELAY     */ "Opoznienie",
+          /* SLEEP_MINUTES   */ "minut bezczynnosci",
+          /* SLEEP_OFF       */ "Ekran zawsze wlaczony",
     },
 };
 

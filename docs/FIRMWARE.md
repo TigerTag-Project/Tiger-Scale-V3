@@ -55,6 +55,14 @@ WF_IDLE → WF_SCANNING → WF_STABLE_WAIT → WF_SENDING → WF_DONE → WF_IDL
 - **Net weight** is gross minus the spool's container weight, fetched from the
   user's inventory. If that fetch fails the send still proceeds with net = 0
   rather than being blocked.
+- **It is not clamped to `measure_gr`**, the manufacturer's nominal fill. Spools
+  routinely leave the factory holding a little more than the label says, and the
+  scale reports what is on it. The clamp that used to be there was also the
+  source of a race: `measure_gr` is only read on the path that fetches the
+  inventory record inline, never on the one that uses the value prefetched
+  during `WF_SCANNING`, so the same spool at the same gross weight was sent as
+  524.8 g or 500.0 g depending on whether the prefetch beat the settling time.
+  Making the workflow faster made the wrong value win more often.
 
 ### Auto-tare
 

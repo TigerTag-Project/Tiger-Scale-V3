@@ -72,64 +72,63 @@ Two gaps and two oddities in that numbering, all deliberate:
 
 | Function | Line | Section |
 |----------|------|---------|
-| `axpRead` | 473 | §3 |
-| `axpBatteryPercent` | 482 | §3 |
-| `roundWeight` | 536 | §4 |
-| `applyPN532RfTuning` | 642 | §5 |
-| `runScreensaver` | 1336 | §7 |
-| `displayWeightWithState` | 1744 | §7 |
-| `tsPollLoop` | 2190 | §9 |
-| `tsBtn` | 2227 | §9 |
-| `tsKeyboard` | 2487 | §9 |
-| `wifiTouchConfigure` | 2687 | §9 |
-| `tsNumericInput` | 2837 | §9 |
-| `runCalibrationWizard` | 2989 | §9 |
-| `runLanguageSettings` | 3605 | §9 |
-| `runHardwareTest` | 3985 | §9 |
-| `lvglAskYesNo` | 4297 | §9 |
-| `runOtaMenu` | 5017 | §9 |
-| `runSettingsMenu` | 5329 | §9 |
-| `setupWiFi` | 5614 | §9 |
-| `setupFileSystem` | 5791 | §10 |
-| `firebaseSignIn` | 5988 | §11 |
-| `fetchApiKeyFromFirestore` | 6074 | §11 |
-| `syncClockFromFirestore` | 6232 | §11 |
-| `readInventoryContainerWeight` | 6675 | §11 |
-| `pushLatestEventToFirestore` | 7272 | §11 |
-| `buildWsFrame` | 7732 | §15 |
-| `resetWeightFilters` | 7819 | §16 |
-| `resetAfterSuccessfulSend` | 7834 | §17 |
-| `handleWeightPushBody` | 7855 | §18 |
-| `setupWebServer` | 8112 | §19 |
-| `sendSingleUidToCloud` | 9398 | §20 |
-| `parseCloudSpoolMeta` | 9454 | §20 |
-| `pushWeightToCloud` | 9504 | §20 |
-| `fetchMetaFromApiByUid` | 9542 | §20 |
-| `handleWeighWorkflow` | 9631 | §21 |
-| `startMDNS` | 10042 | §22 |
-| `setupScale` | 10080 | §23 |
-| `isRapidChange` | 10111 | §23 |
-| `readWeight` | 10147 | §23 |
-| `playSoundTheme` | 10323 | §AUDIO |
-| `rfidSelectReader` | 10395 | §24 |
-| `normalizeRfidHwConfig` | 10449 | §24 |
-| `setupRFID` | 10459 | §24 |
-| `setupServo` | 10666 | §24 |
-| `processAutoTare` | 10680 | §24 |
-| `downloadUserAvatar` | 10958 | §24 |
-| `fetchMetaFromFirestore` | 11206 | §24 |
-| `readTigerTagMetadata` | 11300 | §24 |
-| `pollRFIDReader` | 11384 | §24 |
-| `recoverRFIDReaderIfNeeded` | 11463 | §24 |
-| `isDuplicateRecentUid` | 11483 | §24 |
-| `isUidLatched` | 11487 | §24 |
-| `finishRfidSession` | 11499 | §24 |
-| `otaApply` | 11692 | §25 |
-| `otaFetchLatest` | 11834 | §25 |
-| `lvglBuildMainScreen` | 12349 | §LVGL |
-| `lvglUpdateMainScreen` | 12656 | §LVGL |
-| `setup` | 13643 | §26 |
-| `loop` | 13801 | §26 |
+| `axpRead` | 482 | §3 |
+| `axpBatteryPercent` | 491 | §3 |
+| `roundWeight` | 545 | §4 |
+| `applyPN532RfTuning` | 651 | §5 |
+| `runScreensaver` | 1406 | §7 |
+| `displayWeightWithState` | 1814 | §7 |
+| `tsPollLoop` | 2233 | §9 |
+| `tsBtn` | 2270 | §9 |
+| `tsKeyboard` | 2530 | §9 |
+| `wifiTouchConfigure` | 2730 | §9 |
+| `tsNumericInput` | 2880 | §9 |
+| `runCalibrationWizard` | 3032 | §9 |
+| `runLanguageSettings` | 3648 | §9 |
+| `runHardwareTest` | 4016 | §9 |
+| `lvglAskYesNo` | 4377 | §9 |
+| `runOtaMenu` | 5232 | §9 |
+| `runSettingsMenu` | 5544 | §9 |
+| `setupWiFi` | 5852 | §9 |
+| `setupFileSystem` | 6029 | §10 |
+| `firebaseSignIn` | 6226 | §11 |
+| `fetchApiKeyFromFirestore` | 6312 | §11 |
+| `syncClockFromFirestore` | 6470 | §11 |
+| `readInventoryContainerWeight` | 6773 | §11 |
+| `pushLatestEventToFirestore` | 7414 | §11 |
+| `buildWsFrame` | 7860 | §15 |
+| `resetWeightFilters` | 7947 | §16 |
+| `resetAfterSuccessfulSend` | 7962 | §17 |
+| `handleWeightPushBody` | 7983 | §18 |
+| `setupWebServer` | 8240 | §19 |
+| `sendSingleUidToCloud` | 9526 | §20 |
+| `parseCloudSpoolMeta` | 9582 | §20 |
+| `pushWeightToCloud` | 9632 | §20 |
+| `fetchMetaFromApiByUid` | 9670 | §20 |
+| `handleWeighWorkflow` | 9759 | §21 |
+| `startMDNS` | 10167 | §22 |
+| `setupScale` | 10205 | §23 |
+| `isRapidChange` | 10236 | §23 |
+| `readWeight` | 10272 | §23 |
+| `playSoundTheme` | 10448 | §AUDIO |
+| `rfidSelectReader` | 10591 | §24 |
+| `normalizeRfidHwConfig` | 10645 | §24 |
+| `setupRFID` | 10655 | §24 |
+| `setupServo` | 10861 | §24 |
+| `processAutoTare` | 10875 | §24 |
+| `fetchMetaFromFirestore` | 11182 | §24 |
+| `readTigerTagMetadata` | 11276 | §24 |
+| `pollRFIDReader` | 11347 | §24 |
+| `recoverRFIDReaderIfNeeded` | 11430 | §24 |
+| `isDuplicateRecentUid` | 11450 | §24 |
+| `isUidLatched` | 11454 | §24 |
+| `finishRfidSession` | 11466 | §24 |
+| `otaApply` | 11659 | §25 |
+| `otaFetchLatest` | 11801 | §25 |
+| `lvglBuildMainScreen` | 12321 | §LVGL |
+| `lvglUpdateMainScreen` | 12647 | §LVGL |
+| `setup` | 13677 | §26 |
+| `loop` | 13833 | §26 |
 
 ## Landmines — read the note before editing these
 
@@ -145,11 +144,11 @@ a debugging session at least once.
 | `processAutoTare` | There is exactly **one** auto-tare handler: the negative-drift one (1 s sustained, plus idle/empty guard, plus 10 s cooldown). An earlier "immediate" ~250 ms handler was removed because a firm spool placement's mechanical undershoot could trigger it, taring the scale onto the item's own weight while it sat on the platform. Do not reintroduce a short-debounce variant. |
 | `readWeight` | If this ever reads 0 g or inverted "no matter what", check the **sign** of raw `scale.get_units()` before touching filters or auto-tare. A swapped load-cell wire produces exactly that symptom, because the downstream `if (weight < 0) weight = 0` clamp makes a hardware polarity fault look identical to a software bug. This has happened once already. |
 | `lvglAskYesNo` | Blocks on `lv_timer_handler()` until a button is pressed, so calling it from inside an LVGL event callback re-enters the handler and deadlocks — the first trap in `docs/FIRMWARE.md`. Both call sites are `loop()` and `runOtaMenu`, neither of which is a callback. It also sizes its card by measuring the wrapped body label, not by assuming a line count: the same sentence is one line in English and two in German. |
-| `downloadUserAvatar` | **Suspected to hang the device** when given a real, valid URL. Until 2026-07-28 it had only ever run with an empty or invalid URL, so nobody noticed. Not isolated yet — read this before touching the avatar-photo feature. |
 | `readInventoryContainerWeight` | Silently returns 0 on any HTTP or parse failure, with no retry. Known gap, not a bug to be surprised by. |
 | `otaApply` | `firmware_url` must point at the plain `firmware.bin`. `Update.begin()`/`write()` only replace the app partition, so handing it a `firmware.factory.bin` corrupts the bootloader and partition table. |
 | `applyPN532RfTuning` | Sets TX drive and RX sensitivity together via `RFConfiguration` CfgItem 0x0A, through the library's public `sendCommandCheckAck()` — no library patch needed. The 5-level table exists because the two antennas sit ~75 mm apart facing each other and cross-talk; the levels span only the low-power end, which is the range that matters for that. Default level 3. |
 | `tsKeyboard` | The shift-key highlight uses an `LV_EVENT_DRAW_PART_BEGIN` callback on a specific button index, **not** `LV_STATE_CHECKED`. `LV_KEYBOARD_CTRL_BTN_FLAGS` bakes `LV_BTNMATRIX_CTRL_CHECKED` into every control key, so styling via that state lights up shift, 1# and backspace all at once, and lights them from creation regardless of actual state. |
+| `computeWeightAvailable` | The net weight is **not** clamped to `measure_gr`, and that is a decision, not an omission: a spool holding more than its label says is a real measurement. The clamp that used to be there was also a race — `measure_gr` is only read on the branch that fetches the inventory record inline, never on the branch that uses the value prefetched during `WF_SCANNING` — so the same spool at the same gross weight was sent as 524.8 g or 500.0 g depending on whether the network beat the settling time, and speeding the workflow up made the wrong one win more often. |
 | `updateStableWindow` | Runs in **both** `WF_SCANNING` and `WF_STABLE_WAIT`, and the settle window is deliberately not reset on the transition between them — that reset was making every weighing pay a fresh `STABLE_WINDOW_MS` it had already earned during the scan. It also requires `slopeBufFull` before calling the weight steady: `wfCurrentSlope` is 0.0 until the ring buffer fills (6 x 400 ms), and 0.0 otherwise means "perfectly steady", so without that test an unfilled buffer reads as stable at exactly the moment a spool is being placed. |
 | `liveCapture` | Reads the canvas **once** per band, into a scratch buffer, then hashes and encodes that copy. Hashing the canvas and encoding the canvas as two separate reads lets a repaint slip in between, and the viewer is then recorded as holding a band it never received — a permanent artifact that only a reconnect clears. It must also return early when there are no viewers: the working buffers are only allocated while someone is watching, and running it without them wrote to a null pointer and panicked core 0. |
 | `liveHandleRequest` | Every response is **keep-alive**, deliberately. Closing them meant one TCP connection per tap; the scale closes first, so each sat in `TIME_WAIT` for two minutes against lwIP's ten sockets. A minute of ordinary clicking exhausted them and the port refused connections outright — the feature worked, stopped dead, then recovered a minute later on its own. Do not "tidy" these back to `Connection: close`. |

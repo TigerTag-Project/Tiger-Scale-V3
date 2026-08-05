@@ -15,34 +15,34 @@
 //
 //   TABLE OF CONTENTS                                     line range
 //   ---------------------------------------------------- -----------
-//   HARDWARE CONFIGURATION                                 208-  363
-//   OTA CONFIGURATION                                      364-  386
-//   FORWARD DECLARATIONS                                   387-  532
-//   WEIGHT ROUNDING                                        533-  552
-//   GLOBAL OBJECTS                                         553-  888
-//   CONFIGURATION VARIABLES                                889- 1305
-//   OLED DISPLAY                                          1306- 2056
-//   CLOUD PARSING                                         2057- 2071
-//   WIFI SETUP                                            2072- 5676
-//   LITTLEFS                                              5677- 5976
-//   FIREBASE AUTHENTICATION                               5977- 7585
-//   WEBSOCKET                                             7586- 7612
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  7613- 7724
-//   UNIFIED WS FRAME BUILDER                              7725- 7815
-//   WEIGHT FILTER HELPERS                                 7816- 7830
-//   POST-SEND STATE RESET (shared by all send paths)      7831- 7851
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  7852- 8108
-//   WEB SERVER                                            8109- 9394
-//   CLOUD COMMUNICATION                                   9395- 9577
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  9578-10038
-//   mDNS                                                 10039-10076
-//   SCALE                                                10077-10243
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  10244-10361
-//   RFID                                                 10362-11504
-//   OTA — Over-the-air firmware + filesystem update    11505-12161
-//   LVGL bridge + main weigh screen                      12162-12811
-//   Remote live view: the screen out, taps back in       12812-13639
-//   SETUP & LOOP                                         13640-14667
+//   HARDWARE CONFIGURATION                                 213-  368
+//   OTA CONFIGURATION                                      369-  391
+//   FORWARD DECLARATIONS                                   392-  542
+//   WEIGHT ROUNDING                                        543-  562
+//   GLOBAL OBJECTS                                         563- 1008
+//   CONFIGURATION VARIABLES                               1009- 1409
+//   OLED DISPLAY                                          1410- 2133
+//   CLOUD PARSING                                         2134- 2148
+//   WIFI SETUP                                            2149- 5963
+//   LITTLEFS                                              5964- 6263
+//   FIREBASE AUTHENTICATION                               6264- 7776
+//   WEBSOCKET                                             7777- 7803
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  7804- 7901
+//   UNIFIED WS FRAME BUILDER                              7902- 7992
+//   WEIGHT FILTER HELPERS                                 7993- 8007
+//   POST-SEND STATE RESET (shared by all send paths)      8008- 8028
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  8029- 8285
+//   WEB SERVER                                            8286- 9571
+//   CLOUD COMMUNICATION                                   9572- 9754
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  9755-10212
+//   mDNS                                                 10213-10250
+//   SCALE                                                10251-10417
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  10418-10535
+//   RFID                                                 10536-11551
+//   OTA — Over-the-air firmware + filesystem update    11552-12208
+//   LVGL bridge + main weigh screen                      12209-12909
+//   Remote live view: the screen out, taps back in       12910-13737
+//   SETUP & LOOP                                         13738-14778
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -100,7 +100,6 @@ enum OledState : uint8_t {
 
 struct MetadataCache { String mfr; String mat; String col; uint32_t productId; };
 #include <esp_system.h>
-#include <JPEGDEC.h>              // supports baseline + progressive JPEG
 #include "logo_tigertag.h"        // 150x150 RGB565 logo for screensaver bounce
 #include "logo_tigertag_splash.h" // 480x320 RGB565 TigerTag logo for boot splash
 #include "icon_bolt.h"            // 8x14 RGB565 charging-bolt icon for the battery status icon
@@ -123,6 +122,12 @@ struct MetadataCache { String mfr; String mat; String col; uint32_t productId; }
 // reading it. What it stops is casual access by someone who merely knows the IP.
 static String gLanAccessCode;          // 6 chars, mixed case + digits
 static bool   gLanLiveView = true;     // on by default, so Studio can just work
+
+// Screen sleep. Was a hard-coded 300000UL in loop(); now both halves are the
+// owner's choice and persist in NVS. The delay is stored in minutes because
+// that is the unit the settings screen offers and the unit a person thinks in.
+static bool    gSleepEnabled  = true;
+static uint8_t gSleepDelayMin = 5;
 
 // Live view, the two pieces that have to live this early in the file.
 //
@@ -422,7 +427,8 @@ void sendScaleHeartbeat();
 bool updateScaleLastSpool(const String& uid_a, const String& uid_b, float weight_raw, float weight_available);
 bool waitForNtpSync(uint32_t timeoutMs = 10000, time_t minUnixTime = 1000000000L);
 bool readInventoryDocTwinTag(const String& uid, String& outTwinUid);
-float readInventoryContainerWeight(const String& uid, float* outMeasureGr = nullptr);
+float readInventoryContainerWeight(const String& uid, float* outMeasureGr = nullptr,
+                                   String* outTwinUid = nullptr);
 float computeWeightAvailable(float raw_grams, const String& uid_a);
 bool readScaleDisplayName(const String& mac, String& outDisplayName, String* outServerTimestamp = nullptr);
 static bool syncClockFromFirestore();
@@ -439,7 +445,6 @@ static uint16_t be16(uint8_t hi, uint8_t lo);
 static String lookupNameInTigerTagDb(const char* url, uint32_t id);
 static String resolveBrandNameOnlineFirst(uint32_t idBrand);
 static String resolveMaterialNameOnlineFirst(uint32_t idMaterial);
-static bool downloadProductImage(uint32_t productId);
 void dumpTigerTagPages(PN532Reader &reader, const String& uidDec);
 void displayWeightWithState(float weight, const String& uid, OledState state);
 static void lvglUpdateMainScreen(float weight, const String& uid, OledState state);
@@ -451,10 +456,15 @@ static void drawCalibrateIcon(int16_t cx, int16_t cy, int16_t r, uint16_t color,
 static void drawLanguageIcon(int16_t cx, int16_t cy, uint16_t color, uint16_t bg);
 static void runFirebaseAccountMenu();
 static void runHardwareTest();
+// RF self-test, defined in §24 next to the reader init it has to undo.
+static bool rfidFieldTest(PN532Reader &tgt, uint8_t tgtSs, uint8_t tgtRst,
+                          const char *tgtLabel, PN532Reader &ini,
+                          uint8_t level, String &detail);
 static void runOtaMenu();
 static bool runAccountPairing(bool* wantsEmail);
 static bool runSignInForm();
 static void runLanSettings();
+static void runSleepSettings();
 static bool otaFetchLatestPumping();
 static bool firebaseSignInWithCustomToken(const String& customToken);
 static void runSettingsMenu();
@@ -631,6 +641,24 @@ static const PN532RfLevel PN532_RF_LEVELS[] = {
     { 0x40, 0x10, 0x04, 0xB }, // 4: former level 1 endpoint
 };
 static const uint8_t PN532_RF_LEVEL_COUNT = sizeof(PN532_RF_LEVELS) / sizeof(PN532_RF_LEVELS[0]);
+
+// Power steps for the self-test only, deliberately a different scale.
+//
+// PN532_RF_LEVELS above is the owner's everyday range and stops at
+// gsNOn=0x40 / cwGsP=0x10 — a narrow band near the bottom of what the chip can
+// drive, chosen because these two antennas sit 75 mm apart facing each other
+// and cross-talk. The self-test wants the opposite: enough field to cross that
+// gap on purpose. So it starts where the everyday range ends and climbs to the
+// datasheet maximum, reporting the first step that carries the bytes — which is
+// the coupling margin, not just a pass or a fail.
+static const PN532RfLevel PN532_RF_TEST_LEVELS[] = {
+    { 0x40, 0x10, 0x04, 0xB },  // where the everyday range ends
+    { 0x80, 0x20, 0x10, 0x8 },
+    { 0xC0, 0x30, 0x20, 0x5 },
+    { 0xF8, 0x3F, 0x3F, 0x2 },  // maximum drive, most sensitive receiver
+};
+static const uint8_t PN532_RF_TEST_LEVEL_COUNT =
+    sizeof(PN532_RF_TEST_LEVELS) / sizeof(PN532_RF_TEST_LEVELS[0]);
 uint8_t gRfidPowerLevel = 3; // index into PN532_RF_LEVELS, adjustable live from the Hardware/RFID Test screen
 
 // Sent through Adafruit_PN532's public sendCommandCheckAck(), no library
@@ -657,9 +685,24 @@ static void applyPN532RfTuning(Adafruit_PN532 &pn532, uint8_t level) {
         0x62, // MifNFC
         0x87, // TxBitPhase
     };
-    if (!pn532.sendCommandCheckAck(cmd, sizeof(cmd))) {
-        Serial.printf("[RFID] RF tuning level %u: no ACK (kept previous config)\n", level);
+    // Settle, then a generous timeout, then one retry.
+    //
+    // This is called straight after the firmware-version query inside init(),
+    // and on this hardware a command issued immediately behind another is not
+    // acknowledged — the same flakiness initPN532Reader() documents for two
+    // back-to-back version queries. The consequence was invisible and real: the
+    // serial log showed "no ACK (kept previous config)" on every single call,
+    // so the RF power level chosen in Settings -> Hardware was never actually
+    // applied to either reader. The setting moved, the radio did not.
+    delay(20);
+    if (!pn532.sendCommandCheckAck(cmd, sizeof(cmd), 500)) {
+        delay(40);
+        if (!pn532.sendCommandCheckAck(cmd, sizeof(cmd), 500)) {
+            Serial.printf("[RFID] RF tuning level %u: no ACK (kept previous config)\n", level);
+            return;
+        }
     }
+    Serial.printf("[RFID] RF tuning level %u applied\n", level);
 }
 
 #if RFID_TRANSPORT_HSU
@@ -669,7 +712,15 @@ static void applyPN532RfTuning(Adafruit_PN532 &pn532, uint8_t level) {
 // mode switch to HSU (see CLAUDE.md) before flashing this env.
 class PN532Reader {
 public:
-    struct Uid { uint8_t size = 0; uint8_t uidByte[10] = {0}; } uid;
+    // 255 bytes, not the 10 a real UID needs, and that is the whole point.
+    // readPassiveTargetID() copies as many bytes as the response frame claims,
+    // and a corrupted read has been observed claiming 255. Handing it a 10-byte
+    // array let the library write 245 bytes past the end of this struct, into
+    // whatever globals sit next to it, and core 1 panicked with a corrupted
+    // backtrace. Validating the length afterwards — which isNewCardPresent()
+    // does — cannot help: by then the memory is already gone. The buffer has to
+    // be able to absorb the worst case the library can produce.
+    struct Uid { uint8_t size = 0; uint8_t uidByte[255] = {0}; } uid;
 
     PN532Reader(uint8_t resetPin, HardwareSerial &serial, int8_t rxPin, int8_t txPin)
         : _pn532(resetPin, &serial), _serial(serial), _rxPin(rxPin), _txPin(txPin) {}
@@ -693,6 +744,18 @@ public:
     bool isNewCardPresent() {
         uint8_t len = 0;
         bool ok = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.uidByte, &len, 30);
+        // An ISO14443A UID is 4, 7 or 10 bytes, and uidByte is sized for 10.
+        // The library reports whatever length the frame claimed, and a corrupted
+        // read has been seen claiming about 250: the hex loops in §24 then ran
+        // 240 bytes past the end of this array, built a 500-character "UID", and
+        // carried it as far as an NVS key — the limit there is 15 — before core 1
+        // panicked with a corrupted backtrace, on a loop, with a spool sitting on
+        // the platform. Reject the length here, once, at the only place it enters
+        // the firmware.
+        if (ok && len != 4 && len != 7 && len != 10) {
+            Serial.printf("[RFID] rejected UID length %u\n", (unsigned)len);
+            ok = false;
+        }
         if (ok) uid.size = len;
         _pendingUid = ok;
         return ok;
@@ -711,6 +774,14 @@ public:
     // Re-applies RF power/sensitivity live (no re-init needed) -- used by
     // the Hardware/RFID Test screen's "Pot:" stepper.
     void applyRfPower(uint8_t level) { applyPN532RfTuning(_pn532, level); }
+
+    // Send a raw frame and stop at the ACK, deliberately without reading the
+    // response. TgInitAsTarget only answers once an initiator activates the
+    // module, so reading here would block the very poll meant to activate it.
+    // Used by the RF self-test (§24) and by nothing else.
+    bool sendRawNoReply(uint8_t *frame, uint8_t len, uint16_t timeoutMs = 300) {
+        return _pn532.sendCommandCheckAck(frame, len, timeoutMs);
+    }
     bool antennaIsOn() const { return _fieldOn; }
 
     bool readPages16(uint8_t page, uint8_t *out16) {
@@ -748,7 +819,15 @@ PN532Reader rfid2(PN532_2_RST, Serial2, PN532_2_RXD, PN532_2_TXD);
 // the USB build's single-reader PoC.
 class PN532Reader {
 public:
-    struct Uid { uint8_t size = 0; uint8_t uidByte[10] = {0}; } uid;
+    // 255 bytes, not the 10 a real UID needs, and that is the whole point.
+    // readPassiveTargetID() copies as many bytes as the response frame claims,
+    // and a corrupted read has been observed claiming 255. Handing it a 10-byte
+    // array let the library write 245 bytes past the end of this struct, into
+    // whatever globals sit next to it, and core 1 panicked with a corrupted
+    // backtrace. Validating the length afterwards — which isNewCardPresent()
+    // does — cannot help: by then the memory is already gone. The buffer has to
+    // be able to absorb the worst case the library can produce.
+    struct Uid { uint8_t size = 0; uint8_t uidByte[255] = {0}; } uid;
 
     PN532Reader(uint8_t resetPin, uint8_t irqPin)
         : _pn532(irqPin, resetPin, &Wire1), _isPrimary(!_primaryClaimed) {
@@ -771,6 +850,11 @@ public:
         if (!_isPrimary) return false;
         uint8_t len = 0;
         bool ok = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.uidByte, &len, 30);
+        // Same length guard as the other two transports — see the note there.
+        if (ok && len != 4 && len != 7 && len != 10) {
+            Serial.printf("[RFID] rejected UID length %u\n", (unsigned)len);
+            ok = false;
+        }
         if (ok) uid.size = len;
         _pendingUid = ok;
         return ok;
@@ -789,6 +873,14 @@ public:
     // Re-applies RF power/sensitivity live (no re-init needed) -- used by
     // the Hardware/RFID Test screen's "Pot:" stepper.
     void applyRfPower(uint8_t level) { applyPN532RfTuning(_pn532, level); }
+
+    // Send a raw frame and stop at the ACK, deliberately without reading the
+    // response. TgInitAsTarget only answers once an initiator activates the
+    // module, so reading here would block the very poll meant to activate it.
+    // Used by the RF self-test (§24) and by nothing else.
+    bool sendRawNoReply(uint8_t *frame, uint8_t len, uint16_t timeoutMs = 300) {
+        return _pn532.sendCommandCheckAck(frame, len, timeoutMs);
+    }
     bool antennaIsOn() const { return _fieldOn; }
 
     bool readPages16(uint8_t page, uint8_t *out16) {
@@ -815,7 +907,15 @@ PN532Reader rfid2(PN532_2_RST, PN532_2_IRQ);
 
 class PN532Reader {
 public:
-    struct Uid { uint8_t size = 0; uint8_t uidByte[10] = {0}; } uid;
+    // 255 bytes, not the 10 a real UID needs, and that is the whole point.
+    // readPassiveTargetID() copies as many bytes as the response frame claims,
+    // and a corrupted read has been observed claiming 255. Handing it a 10-byte
+    // array let the library write 245 bytes past the end of this struct, into
+    // whatever globals sit next to it, and core 1 panicked with a corrupted
+    // backtrace. Validating the length afterwards — which isNewCardPresent()
+    // does — cannot help: by then the memory is already gone. The buffer has to
+    // be able to absorb the worst case the library can produce.
+    struct Uid { uint8_t size = 0; uint8_t uidByte[255] = {0}; } uid;
 
     explicit PN532Reader(uint8_t ssPin) : _pn532(ssPin), _ssPin(ssPin) {}
 
@@ -833,6 +933,18 @@ public:
     bool isNewCardPresent() {
         uint8_t len = 0;
         bool ok = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.uidByte, &len, 30);
+        // An ISO14443A UID is 4, 7 or 10 bytes, and uidByte is sized for 10.
+        // The library reports whatever length the frame claimed, and a corrupted
+        // read has been seen claiming about 250: the hex loops in §24 then ran
+        // 240 bytes past the end of this array, built a 500-character "UID", and
+        // carried it as far as an NVS key — the limit there is 15 — before core 1
+        // panicked with a corrupted backtrace, on a loop, with a spool sitting on
+        // the platform. Reject the length here, once, at the only place it enters
+        // the firmware.
+        if (ok && len != 4 && len != 7 && len != 10) {
+            Serial.printf("[RFID] rejected UID length %u\n", (unsigned)len);
+            ok = false;
+        }
         if (ok) uid.size = len;
         _pendingUid = ok;
         return ok;
@@ -855,6 +967,14 @@ public:
     // Re-applies RF power/sensitivity live (no re-init needed) -- used by
     // the Hardware/RFID Test screen's "Pot:" stepper.
     void applyRfPower(uint8_t level) { applyPN532RfTuning(_pn532, level); }
+
+    // Send a raw frame and stop at the ACK, deliberately without reading the
+    // response. TgInitAsTarget only answers once an initiator activates the
+    // module, so reading here would block the very poll meant to activate it.
+    // Used by the RF self-test (§24) and by nothing else.
+    bool sendRawNoReply(uint8_t *frame, uint8_t len, uint16_t timeoutMs = 300) {
+        return _pn532.sendCommandCheckAck(frame, len, timeoutMs);
+    }
     bool antennaIsOn() const { return _fieldOn; }
 
     // Reads 4 pages (16 bytes) starting at `page` — matches the block-of-4
@@ -1095,28 +1215,12 @@ static String gLastColor      = "--";
 static std::map<String, MetadataCache> gMetaCache;
 
 
-// Product image from CDN
-static uint32_t  gLastProductId       = 0xFFFFFFFF;
-static uint16_t *gProductImgBuf       = nullptr;
-static uint16_t  gProductImgW         = 0;
-static uint16_t  gProductImgH         = 0;
-static volatile bool gProductImgReady = false;
-
-static uint16_t *gUserAvatarBuf       = nullptr;
-static uint16_t  gUserAvatarW         = 0;
-static uint16_t  gUserAvatarH         = 0;
-static volatile bool gUserAvatarReady = false;
-static String    gUserAvatarUrl       = "";
-static String    gUserAvatarUid       = "";  // UID whose avatar is in gUserAvatarBuf
-static volatile bool gAvatarRetryPending = false;
-static uint32_t      gAvatarRetryAtMs   = 0;
-static volatile bool gImgDownloadPending = false;
-static uint32_t  gImgDownloadProductId = 0;
-static const uint16_t PRODUCT_IMG_MAX_W = 120;
-static const uint16_t PRODUCT_IMG_MAX_H = 140;
-// JPEGDEC draw callback state — only set during downloadProductImage
-static uint16_t *s_jdecBuf    = nullptr;
-static uint16_t  s_jdecStride = 0;
+// The product image and the user avatar used to be downloaded and decoded here.
+// Both are gone, and nothing displayed them: displayWeightWithState() delegates
+// to lvglUpdateMainScreen() and returns, so the only code that drew them sat
+// below that return, and the LVGL screen draws initials in a coloured circle.
+// They cost two TLS downloads, a JPEG decode on cloudWorker's stack, and three
+// extra Firestore round trips at sign-in hunting for an avatar URL.
 
 // Session/history telemetry
 static uint32_t gSessionCounter = 0;
@@ -1800,34 +1904,14 @@ void displayWeightWithState(float weight, const String& uid, OledState state) {
         gfx->print(statusLbl);
     }
 
-    // --- User/scale name + avatar centered at top ---
-    // Buffer present, same user → re-enable immediately on re-login
-    if (firebaseAuth && gUserAvatarBuf != nullptr && !gUserAvatarReady
-            && gUserAvatarUid == firebaseUid)
-        gUserAvatarReady = true;
-    // Buffer gone (reboot between logout and re-login) → ask cloud worker to re-download.
-    // Only trigger if the cached URL belongs to the current user (UID matches) to avoid
-    // downloading the previous user's avatar before initScaleFirestoreSync() can clear it.
-    static bool sAvatarRedownloadRequested = false;
-    if (firebaseAuth && gUserAvatarBuf == nullptr && !gUserAvatarReady
-            && gUserAvatarUrl.length() > 0 && !gAvatarRetryPending
-            && !sAvatarRedownloadRequested
-            && gUserAvatarUid.length() > 0 && gUserAvatarUid == firebaseUid) {
-        sAvatarRedownloadRequested = true;
-        gAvatarRetryPending = true;
-        gAvatarRetryAtMs    = millis() + 500;
-    }
-    if (!firebaseAuth) sAvatarRedownloadRequested = false;
+    // --- User/scale name + initials badge centered at top ---
     String scaleName = (firebaseAuth && firebaseDisplayName.length()) ? firebaseDisplayName : "Tiger Scale";
     int16_t nameW = (int16_t)(scaleName.length() * 12);
     if (firebaseAuth) {
         const int16_t AV = 32, GAP = 6;
         int16_t gx = (W - (AV + GAP + nameW)) / 2;
-        if (gUserAvatarReady && gUserAvatarBuf != nullptr) {
-            // Real photo
-            gfx->draw16bitRGBBitmap(gx, 6, gUserAvatarBuf, gUserAvatarW, gUserAvatarH);
-        } else {
-            // Initials circle fallback
+        {
+            // Initials circle
             String src = firebaseDisplayName.length() ? firebaseDisplayName : firebaseEmail;
             char ini = src.length() ? (char)toupper((unsigned char)src.charAt(0)) : '?';
             // Pick a colour from the initial (deterministic)
@@ -1985,13 +2069,6 @@ void displayWeightWithState(float weight, const String& uid, OledState state) {
         gfx->setTextColor(COL_ON_ACCENT); gfx->setTextSize(2);
         gfx->setCursor(cx - (int16_t)(gLastRackPosition.length() * 12 / 2), PBY + 3);
         gfx->print(gLastRackPosition);
-    }
-
-    // --- Product image (centered between readers) ---
-    if (gProductImgReady && gProductImgBuf != nullptr && gProductImgW > 0 && gProductImgH > 0) {
-        int16_t imgX = (W - (int16_t)gProductImgW) / 2;
-        int16_t imgY = RBY;
-        gfx->draw16bitRGBBitmap(imgX, imgY, gProductImgBuf, gProductImgW, gProductImgH);
     }
 
     // --- Thin divider above control buttons ---
@@ -3927,18 +4004,6 @@ static void runFirebaseAccountMenu() {
         prefs.remove("fbPass");
         prefs.remove("fbDisplayName");
         prefs.end();
-        // Free avatar buffer HERE on Core 1 (same core as display loop) so Core 1
-        // never sees a stale non-null pointer belonging to the previous user.
-        // Keep avatarUrl/avatarUid in prefs so the retry mechanism can re-download
-        // on next login. initScaleFirestoreSync() will detect UID mismatch and
-        // clear/re-fetch when a different user logs in.
-        gUserAvatarReady    = false;
-        gAvatarRetryPending = false;
-        if (gUserAvatarBuf) { free(gUserAvatarBuf); gUserAvatarBuf = nullptr; }
-        // Clear in-memory URL/UID so the retry path in this session doesn't use
-        // the old URL before initScaleFirestoreSync() has a chance to verify UID.
-        gUserAvatarUrl = "";
-        gUserAvatarUid = "";
         // Clear Firebase identity so cloud worker re-inits after next login
         firebaseUid      = "";
         gScaleMacAddress = "";
@@ -3986,7 +4051,7 @@ static void runHardwareTest() {
     String uid1 = "", uid2 = "";
     bool scanning = false;
 
-    enum HwAction { HA_NONE, HA_MINUS, HA_PLUS, HA_PILL1, HA_PILL2, HA_SCAN, HA_BACK };
+    enum HwAction { HA_NONE, HA_MINUS, HA_PLUS, HA_PILL1, HA_PILL2, HA_SCAN, HA_TEST, HA_BACK };
     static HwAction sHwAction;
     auto actionCb = [](lv_event_t *e) {
         lv_obj_t *o = (lv_obj_t *)lv_event_get_target(e);
@@ -4142,9 +4207,10 @@ static void runHardwareTest() {
     lv_obj_set_pos(box2Val, 10, 30);
 
     // Scan / Stop button — centered, not full width, big enough to tap easily
+    // Scan shares the bottom row with the self-test now, so it narrows.
     lv_obj_t *scanBtn = lv_btn_create(scr);
-    lv_obj_set_size(scanBtn, 280, 70);
-    lv_obj_align(scanBtn, LV_ALIGN_TOP_MID, 0, 242);
+    lv_obj_set_size(scanBtn, 236, 70);
+    lv_obj_align(scanBtn, LV_ALIGN_TOP_MID, -74, 242);
     lv_obj_set_style_border_width(scanBtn, 1, 0);
     lv_obj_set_style_radius(scanBtn, 12, 0);
     lv_obj_set_style_shadow_width(scanBtn, 0, 0);
@@ -4155,6 +4221,26 @@ static void runHardwareTest() {
     lv_obj_center(scanLbl);
 
     // Back
+    // Self-test: one reader emulates a card with three random bytes, the other
+    // reads it. Both directions, so a failure names the antenna. See
+    // rfidFieldTest() in §24. Label left untranslated -- "TEST" reads the same
+    // in all eight languages this firmware ships.
+    lv_obj_t *testBtn = lv_btn_create(scr);
+    lv_obj_set_size(testBtn, 140, 70);
+    lv_obj_align(testBtn, LV_ALIGN_TOP_MID, 122, 242);
+    lv_obj_set_style_bg_color(testBtn, LVCOL_CARD, 0);
+    lv_obj_set_style_border_color(testBtn, LVCOL_BORDER, 0);
+    lv_obj_set_style_border_width(testBtn, 1, 0);
+    lv_obj_set_style_radius(testBtn, 12, 0);
+    lv_obj_set_style_shadow_width(testBtn, 0, 0);
+    lv_obj_set_user_data(testBtn, (void *)(intptr_t)HA_TEST);
+    lv_obj_add_event_cb(testBtn, actionCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *testLbl = lv_label_create(testBtn);
+    lv_label_set_text(testLbl, "TEST");
+    lv_obj_set_style_text_font(testLbl, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(testLbl, LVCOL_TEXT, 0);
+    lv_obj_center(testLbl);
+
     lv_obj_t *backBtn = lv_btn_create(scr);
     lv_obj_set_size(backBtn, 34, 36);
     lv_obj_set_pos(backBtn, 0, 0);
@@ -4239,6 +4325,49 @@ static void runHardwareTest() {
                 scanning = true;
                 updateBoxes(); updateScanBtn();
                 // Wait for finger lift before entering the scan loop
+                { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis()-t0 < 600) delay(20); }
+            } else if (sHwAction == HA_TEST) {
+                // Needs both readers and an empty platform: a spool between the
+                // antennas blocks the field and fails for the wrong reason.
+                if (hwRfidCount < 2) {
+                    lv_label_set_text(box1Val, "2 readers");
+                    lv_label_set_text(box2Val, "required");
+                    lv_obj_set_style_text_color(box1Val, LVCOL_MUTED, 0);
+                    lv_obj_set_style_text_color(box2Val, LVCOL_MUTED, 0);
+                } else {
+                    lv_label_set_text(box1Val, "...");
+                    lv_label_set_text(box2Val, "...");
+                    lv_obj_set_style_text_color(box1Val, LVCOL_MUTED, 0);
+                    lv_obj_set_style_text_color(box2Val, LVCOL_MUTED, 0);
+                    lv_timer_handler();
+
+                    // Sweep the power from the lowest level upwards and stop at
+                    // the first that carries the bytes. Reporting the level is
+                    // the point: it is the coupling margin, not just a pass.
+                    String d1, d2;
+                    int lv1 = -1, lv2 = -1;
+
+                    // Right emits, left listens -> the LEFT box reports it.
+                    for (uint8_t lv = 0; lv < PN532_RF_TEST_LEVEL_COUNT && lv1 < 0; lv++) {
+                        if (rfidFieldTest(rfid1, PN532_1_SS, PN532_1_RST, "PN532-1", rfid2, lv, d1))
+                            lv1 = lv;
+                        lv_timer_handler();
+                    }
+                    String r1 = (lv1 >= 0) ? ("OK L" + String(lv1)) : d1;
+                    lv_label_set_text(box1Val, r1.c_str());
+                    lv_obj_set_style_text_color(box1Val, lv1 >= 0 ? LVCOL_GREEN : LVCOL_RED, 0);
+                    lv_timer_handler();
+
+                    // Left emits, right listens.
+                    for (uint8_t lv = 0; lv < PN532_RF_TEST_LEVEL_COUNT && lv2 < 0; lv++) {
+                        if (rfidFieldTest(rfid2, PN532_2_SS, PN532_2_RST, "PN532-2", rfid1, lv, d2))
+                            lv2 = lv;
+                        lv_timer_handler();
+                    }
+                    String r2 = (lv2 >= 0) ? ("OK L" + String(lv2)) : d2;
+                    lv_label_set_text(box2Val, r2.c_str());
+                    lv_obj_set_style_text_color(box2Val, lv2 >= 0 ? LVCOL_GREEN : LVCOL_RED, 0);
+                }
                 { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis()-t0 < 600) delay(20); }
             } else if (sHwAction == HA_BACK) {
                 break;
@@ -4410,6 +4539,9 @@ static void lanEnsureCode() {
     prefs.begin("config", false);
     gLanAccessCode = prefs.getString("lanCode", "");
     gLanLiveView   = prefs.getBool("lanLive", true);
+    gSleepEnabled  = prefs.getBool("sleepOn", true);
+    gSleepDelayMin = prefs.getUChar("sleepMin", 5);
+    if (gSleepDelayMin == 0) gSleepDelayMin = 5;
     if (gLanAccessCode.length() != 6) {
         gLanAccessCode = lanMakeCode();
         prefs.putString("lanCode", gLanAccessCode);
@@ -4535,6 +4667,138 @@ static void runLanSettings() {
         } else if (sAct == L_TOGGLE) {
             gLanLiveView = lv_obj_has_state(sw, LV_STATE_CHECKED);
             prefs.begin("config", false); prefs.putBool("lanLive", gLanLiveView); prefs.end();
+        }
+        paint();
+    }
+
+    lv_scr_load(prev);
+    lv_obj_del(scr);
+    { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis()-t0 < 800) delay(20); }
+}
+
+
+// Screen sleep: the switch, and how long the scale waits before using it.
+//
+// Both used to be a single hard-coded 300000UL in loop(). Same layout as the LAN
+// page above -- 420-wide rows, the same switch, the same back arrow -- because a
+// settings screen that looks like the other settings screens needs no learning.
+static const uint8_t kSleepDelays[] = { 1, 2, 5, 10, 15, 30 };
+
+static void runSleepSettings() {
+    enum { S_NONE = 0, S_BACK, S_TOGGLE, S_CHIP0 };
+    static int sAct;
+    sAct = S_NONE;
+    auto cb = [](lv_event_t *e) {
+        sAct = (int)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_target(e));
+    };
+
+    lv_obj_t *scr = lv_obj_create(nullptr);
+    lv_obj_set_style_bg_color(scr, LVCOL_BG, 0);
+    lv_obj_set_style_border_width(scr, 0, 0);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = lv_label_create(scr);
+    lv_label_set_text(title, t(I18N_SLEEP_TITLE));
+    lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+
+    lv_obj_t *back = lv_btn_create(scr);
+    lv_obj_set_size(back, 44, 38); lv_obj_set_pos(back, 0, 0);
+    lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(back, 0, 0);
+    lv_obj_set_style_shadow_width(back, 0, 0);
+    lv_obj_set_user_data(back, (void *)(intptr_t)S_BACK);
+    lv_obj_add_event_cb(back, cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *backIcon = lv_label_create(back);
+    lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
+    lv_obj_set_style_text_color(backIcon, LVCOL_MUTED, 0);
+    lv_obj_center(backIcon);
+
+    lv_obj_t *row = lv_obj_create(scr);
+    lv_obj_set_size(row, 420, 52);
+    lv_obj_align(row, LV_ALIGN_TOP_MID, 0, 52);
+    lv_obj_set_style_bg_color(row, LVCOL_CARD, 0);
+    lv_obj_set_style_border_color(row, LVCOL_BORDER, 0);
+    lv_obj_set_style_border_width(row, 1, 0);
+    lv_obj_set_style_radius(row, 10, 0);
+    lv_obj_set_style_shadow_width(row, 0, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *rowLbl = lv_label_create(row);
+    lv_label_set_text(rowLbl, t(I18N_SLEEP_ENABLE));
+    lv_obj_set_style_text_color(rowLbl, LVCOL_MUTED, 0);
+    lv_obj_align(rowLbl, LV_ALIGN_LEFT_MID, 14, 0);
+
+    lv_obj_t *sw = lv_switch_create(row);
+    lv_obj_set_size(sw, 56, 30);
+    lv_obj_align(sw, LV_ALIGN_RIGHT_MID, -14, 0);
+    lv_obj_set_style_bg_color(sw, LVCOL_GREEN, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_user_data(sw, (void *)(intptr_t)S_TOGGLE);
+    lv_obj_add_event_cb(sw, cb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    lv_obj_t *delayLbl = lv_label_create(scr);
+    lv_label_set_text(delayLbl, t(I18N_SLEEP_DELAY));
+    lv_obj_set_style_text_color(delayLbl, LVCOL_MUTED, 0);
+    lv_obj_set_pos(delayLbl, 30, 116);
+
+    const int N = (int)(sizeof(kSleepDelays) / sizeof(kSleepDelays[0]));
+    const int CW = 66, CGAP = 8;
+    lv_obj_t *chip[N];
+    for (int i = 0; i < N; i++) {
+        chip[i] = lv_btn_create(scr);
+        lv_obj_set_size(chip[i], CW, 44);
+        lv_obj_set_pos(chip[i], 30 + i * (CW + CGAP), 142);
+        lv_obj_set_style_radius(chip[i], 10, 0);
+        lv_obj_set_style_border_width(chip[i], 1, 0);
+        lv_obj_set_style_shadow_width(chip[i], 0, 0);
+        lv_obj_set_user_data(chip[i], (void *)(intptr_t)(S_CHIP0 + i));
+        lv_obj_add_event_cb(chip[i], cb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t *l = lv_label_create(chip[i]);
+        lv_label_set_text_fmt(l, "%u", (unsigned)kSleepDelays[i]);
+        lv_obj_center(l);
+    }
+
+    lv_obj_t *unit = lv_label_create(scr);
+    lv_obj_set_style_text_color(unit, LVCOL_FAINT, 0);
+    lv_obj_set_style_text_font(unit, &lv_font_montserrat_14, 0);
+    lv_obj_set_width(unit, 420);
+    lv_obj_set_style_text_align(unit, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(unit, LV_ALIGN_TOP_MID, 0, 196);
+
+    auto paint = [&]() {
+        if (gSleepEnabled) lv_obj_add_state(sw, LV_STATE_CHECKED);
+        else               lv_obj_clear_state(sw, LV_STATE_CHECKED);
+        for (int i = 0; i < N; i++) {
+            bool sel = gSleepEnabled && kSleepDelays[i] == gSleepDelayMin;
+            lv_obj_set_style_bg_color(chip[i], sel ? LVCOL_ACCENT : LVCOL_CARD, 0);
+            lv_obj_set_style_border_color(chip[i], sel ? LVCOL_ACCENT : LVCOL_BORDER, 0);
+            lv_obj_t *l = lv_obj_get_child(chip[i], 0);
+            // Greyed rather than hidden when the switch is off: the chosen delay
+            // stays readable, so turning sleep back on needs no re-picking.
+            if (l) lv_obj_set_style_text_color(l, sel ? LVCOL_TEXT
+                                                      : (gSleepEnabled ? LVCOL_MUTED : LVCOL_FAINT), 0);
+        }
+        lv_label_set_text(unit, gSleepEnabled ? t(I18N_SLEEP_MINUTES) : t(I18N_SLEEP_OFF));
+    };
+    paint();
+
+    lv_obj_t *prev = lv_scr_act();
+    lv_scr_load(scr);
+    for (;;) {
+        sAct = S_NONE;
+        while (sAct == S_NONE) { lv_timer_handler(); delay(5); }
+        if (sAct == S_BACK) break;
+        if (sAct == S_TOGGLE) {
+            gSleepEnabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
+            prefs.begin("config", false); prefs.putBool("sleepOn", gSleepEnabled); prefs.end();
+        } else if (sAct >= S_CHIP0 && sAct < S_CHIP0 + N) {
+            gSleepDelayMin = kSleepDelays[sAct - S_CHIP0];
+            if (!gSleepEnabled) {           // picking a delay implies wanting it on
+                gSleepEnabled = true;
+                prefs.begin("config", false); prefs.putBool("sleepOn", true); prefs.end();
+            }
+            prefs.begin("config", false); prefs.putUChar("sleepMin", gSleepDelayMin); prefs.end();
+            gLastActivityMs = millis();     // restart the countdown from the new value
         }
         paint();
     }
@@ -5327,7 +5591,7 @@ static void runOtaMenu() {
 // LVGL screen. Sub-screens (calibration wizard, hardware test, wifi setup,
 // etc.) are untouched raw-gfx and still called exactly as before.
 static void runSettingsMenu() {
-    enum SettingsAction { SA_NONE, SA_WIFI, SA_FIREBASE, SA_VOLUME, SA_CALIBRATE, SA_LANGUAGE, SA_HARDWARE, SA_LAN, SA_UPDATE, SA_BACK };
+    enum SettingsAction { SA_NONE, SA_WIFI, SA_FIREBASE, SA_VOLUME, SA_CALIBRATE, SA_LANGUAGE, SA_HARDWARE, SA_LAN, SA_SLEEP, SA_UPDATE, SA_BACK };
     static SettingsAction sAction;
     lv_obj_t *prevScr = nullptr;
 
@@ -5362,7 +5626,7 @@ static void runSettingsMenu() {
         const int X1 = X0 + CW + GAP, X2 = X1 + CW + GAP;
         const int Y0 = 44, Y1 = Y0 + CH + 8, Y2 = Y1 + CH + 10;
 
-        enum CardIcon { CI_GLYPH, CI_USER, CI_LAN, CI_TARGET, CI_GLOBE, CI_CHIP };
+        enum CardIcon { CI_GLYPH, CI_USER, CI_LAN, CI_TARGET, CI_GLOBE, CI_CHIP, CI_MOON };
 
         // Small hand-drawn-primitive icon helpers — a plain lv_obj with a
         // border and no fill draws an outline shape; bg-filled ones with
@@ -5450,6 +5714,24 @@ static void runSettingsMenu() {
                     };
                     disc(9, 2, 9);      // head
                     disc(3, 15, 20);    // shoulders
+                } else if (iconKind == CI_MOON) {
+                    // Crescent: a filled disc with a second disc in the card's
+                    // own colour biting into it. LVGL v8 ships no moon glyph —
+                    // the mockup borrowed one from an icon set the device does
+                    // not have, which is how LV_SYMBOL_EYE_CLOSE ended up here
+                    // instead. Two circles cost nothing and match the drawing.
+                    auto mdisc = [&](int x, int y, int d, lv_color_t col) {
+                        lv_obj_t *o = lv_obj_create(iconArea);
+                        lv_obj_set_size(o, d, d);
+                        lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
+                        lv_obj_set_style_border_width(o, 0, 0);
+                        lv_obj_set_style_bg_color(o, col, 0);
+                        lv_obj_set_pos(o, x, y);
+                        lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+                        lv_obj_clear_flag(o, LV_OBJ_FLAG_CLICKABLE);
+                    };
+                    mdisc(2, 2, 22, iconCol);     // the full moon
+                    mdisc(9, -2, 22, LVCOL_CARD); // the bite, in the card colour
                 } else if (iconKind == CI_LAN) {
                     // Two nodes joined by a line: a link, not a globe — this is
                     // the local network, not the internet.
@@ -5530,6 +5812,10 @@ static void runSettingsMenu() {
         makeCard(X1, Y2, CI_LAN, nullptr, gLanLiveView ? LVCOL_GREEN : LVCOL_MUTED,
                  String(t(I18N_LAN_TITLE)), SA_LAN);
 
+        String sleepVal = gSleepEnabled ? (String((int)gSleepDelayMin) + " min") : String(t(I18N_NO));
+        makeCard(X2, Y2, CI_MOON, nullptr, gSleepEnabled ? LVCOL_TEXT : LVCOL_MUTED,
+                 sleepVal, SA_SLEEP);
+
         // Back — top-left arrow, matching the keyboard screen's back button
         lv_obj_t *backBtn = lv_btn_create(scr);
         lv_obj_set_size(backBtn, 34, 36);
@@ -5602,6 +5888,7 @@ static void runSettingsMenu() {
             case SA_LANGUAGE:   runLanguageSettings();   break;
             case SA_HARDWARE:   runHardwareTest();       break;
             case SA_LAN:        runLanSettings();        break;
+            case SA_SLEEP:      runSleepSettings();      break;
             case SA_UPDATE:     runOtaMenu();            break;
             default: break;
         }
@@ -6342,13 +6629,6 @@ static void fetchUserDisplayName() {
         // Doc too large for 4096 — parse with filter for known fields only
         StaticJsonDocument<64> filter;
         filter["fields"]["displayName"] = true;
-        filter["fields"]["photoUrl"]    = true;
-        filter["fields"]["avatar"]      = true;
-        filter["fields"]["photo_url"]   = true;
-        filter["fields"]["avatarUrl"]   = true;
-        filter["fields"]["picture"]     = true;
-        filter["fields"]["profileImage"]= true;
-        filter["fields"]["imageUrl"]    = true;
         DynamicJsonDocument doc2(1024);
         deserializeJson(doc2, resp, DeserializationOption::Filter(filter));
         doc = std::move(doc2);
@@ -6374,113 +6654,6 @@ static void fetchUserDisplayName() {
         }
     }
 
-    // avatar URL — try known names first, then auto-detect any http URL string field
-    const char* avatarKeys[] = {
-        "photoUrl", "avatar", "photo_url", "avatarUrl", "picture",
-        "profileImage", "imageUrl", "profilePic", "userAvatar", "avatarURL"
-    };
-    for (size_t i = 0; i < sizeof(avatarKeys)/sizeof(avatarKeys[0]) && gUserAvatarUrl.length() == 0; i++) {
-        const char* k = avatarKeys[i];
-        if (fields.containsKey(k) && fields[k].containsKey("stringValue")) {
-            String av = fields[k]["stringValue"].as<String>();
-            av.trim();
-            if (av.startsWith("http")) { gUserAvatarUrl = av; Serial.printf("[FIREBASE] avatar field=%s\n", k); }
-        }
-    }
-    // Auto-detect: any string field whose value starts with "http" and contains image extension
-    if (gUserAvatarUrl.length() == 0) {
-        for (JsonPair kv : fields) {
-            if (!kv.value().containsKey("stringValue")) continue;
-            String v = kv.value()["stringValue"].as<String>();
-            if (v.startsWith("http") && (v.indexOf(".jpg") > 0 || v.indexOf(".png") > 0
-                    || v.indexOf(".jpeg") > 0 || v.indexOf("avatar") > 0
-                    || v.indexOf("photo") > 0 || v.indexOf("image") > 0)) {
-                gUserAvatarUrl = v;
-                Serial.printf("[FIREBASE] avatar auto-detected field=%s\n", kv.key().c_str());
-                break;
-            }
-        }
-    }
-
-    // Fetch avatar from userProfiles/{uid} → field photoURL (capital URL)
-    // This is the canonical location per TigerTag Studio Manager source.
-    if (gUserAvatarUrl.length() == 0) {
-        HTTPClient http2;
-        String url2 = "https://firestore.googleapis.com/v1/projects/tigertag-connect/databases/(default)/documents/userProfiles/"
-                      + firebaseUid + "?mask.fieldPaths=photoURL";
-        if (http2.begin(url2)) {
-            http2.addHeader("Authorization", "Bearer " + firebaseIdToken);
-            int code2 = http2.GET();
-            String resp2 = http2.getString();
-            http2.end();
-            Serial.printf("[FIREBASE] userProfiles fetch HTTP %d\n", code2);
-            if (code2 == 200) {
-                StaticJsonDocument<512> doc2;
-                if (!deserializeJson(doc2, resp2)) {
-                    JsonObject f2 = doc2["fields"];
-                    if (!f2.isNull() && f2.containsKey("photoURL") && f2["photoURL"].containsKey("stringValue")) {
-                        String av = f2["photoURL"]["stringValue"].as<String>();
-                        av.trim();
-                        if (av.startsWith("http")) {
-                            gUserAvatarUrl = av;
-                            Serial.printf("[FIREBASE] avatar from userProfiles.photoURL: %s\n", av.c_str());
-                        }
-                    } else {
-                        Serial.println("[FIREBASE] userProfiles: photoURL field missing");
-                        if (!f2.isNull()) {
-                            Serial.print("[FIREBASE] userProfiles fields: ");
-                            for (JsonPair kv2 : f2) { Serial.print(kv2.key().c_str()); Serial.print(" "); }
-                            Serial.println();
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Final fallback: Firebase Auth record via accounts:lookup
-    // Returns photoUrl for Google-authenticated users and any user with a profile photo.
-    if (gUserAvatarUrl.length() == 0 && firebaseIdToken.length() > 0) {
-        HTTPClient http3;
-        String url3 = String("https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=")
-                      + TIGERTAG_FIREBASE_WEB_API_KEY;
-        if (http3.begin(url3)) {
-            http3.addHeader("Content-Type", "application/json");
-            String body3 = "{\"idToken\":\"" + firebaseIdToken + "\"}";
-            int code3 = http3.POST(body3);
-            Serial.printf("[FIREBASE] accounts:lookup HTTP %d\n", code3);
-            if (code3 == 200) {
-                String resp3 = http3.getString();
-                // String-based extraction — avoids JSON doc size issues on large responses
-                int pi = resp3.indexOf("\"photoUrl\"");
-                if (pi > 0) {
-                    // Skip past key and colon to find opening quote of value
-                    int openQ = resp3.indexOf('"', pi + 11);  // skip "photoUrl" (10) + closing " (1)
-                    if (openQ > 0) {
-                        int closeQ = resp3.indexOf('"', openQ + 1);
-                        if (closeQ > openQ) {
-                            String purl = resp3.substring(openQ + 1, closeQ);
-                            if (purl.startsWith("http")) {
-                                gUserAvatarUrl = purl;
-                                Serial.printf("[FIREBASE] avatar accounts:lookup: %s\n", purl.substring(0,60).c_str());
-                            }
-                        }
-                    }
-                } else {
-                    Serial.println("[FIREBASE] accounts:lookup: no photoUrl field");
-                }
-            }
-            http3.end();
-        }
-    }
-    // Persist avatar URL + owning UID so it survives reboots
-    if (gUserAvatarUrl.length() > 0 && firebaseUid.length() > 0) {
-        prefs.begin("config", false);
-        prefs.putString("avatarUrl", gUserAvatarUrl);
-        prefs.putString("avatarUid", firebaseUid);
-        prefs.end();
-        Serial.printf("[AVATAR] URL saved to prefs for uid=%s\n", firebaseUid.substring(0, 8).c_str());
-    }
 }
 
 void initScaleFirestoreSync() {
@@ -6489,33 +6662,7 @@ void initScaleFirestoreSync() {
     gScaleDocPath = "users/" + firebaseUid + "/scales/" + gScaleMacAddress;
     Serial.printf("[SCALE] Firestore doc path: %s\n", gScaleDocPath.c_str());
 
-    // If the URL/UID in prefs belongs to a different user, discard it so
-    // fetchUserDisplayName() will look up the correct URL for this user.
-    bool avatarOwnerOk = (gUserAvatarUid.length() > 0 && gUserAvatarUid == firebaseUid);
-    if (!avatarOwnerOk && gUserAvatarUrl.length() > 0) {
-        gUserAvatarUrl = "";
-        gUserAvatarUid = "";
-        prefs.begin("config", false);
-        prefs.remove("avatarUrl"); prefs.remove("avatarUid");
-        prefs.end();
-        Serial.println("[AVATAR] cleared stale URL (different user)");
-    }
-
-    fetchUserDisplayName();  // sets gUserAvatarUrl + saves to prefs if found
-
-    if (!gUserAvatarReady) {
-        if (gUserAvatarUrl.length() > 0) {
-            if (downloadUserAvatar(gUserAvatarUrl)) {
-                gUserAvatarUid = firebaseUid;
-            } else {
-                gAvatarRetryPending = true;
-                gAvatarRetryAtMs    = millis() + 5000;
-                Serial.println("[AVATAR] download failed, will retry in 5s");
-            }
-        } else {
-            Serial.println("[AVATAR] no URL found for this user");
-        }
-    }
+    fetchUserDisplayName();
 }
 
 // Get current timestamp in milliseconds for Firestore
@@ -6672,7 +6819,7 @@ String readRackName(const String& rackId) {
 // Read inventory/{uid} and extract container_weight (§5 contract requirement)
 // Returns container_weight in grams, or 0.0 if not found
 // Also optionally returns measure_gr if caller provides pointer
-float readInventoryContainerWeight(const String& uid, float* outMeasureGr) {
+float readInventoryContainerWeight(const String& uid, float* outMeasureGr, String* outTwinUid) {
     if (firebaseIdToken.length() == 0 || firebaseUid.length() == 0 || uid.length() == 0) {
         gContainerFetchHttpCode = -1;  // sentinel: skipped (no token/uid)
         Serial.printf("[CONTAINER] skipped: no token/uid/firebaseUid\n");
@@ -6692,7 +6839,8 @@ float readInventoryContainerWeight(const String& uid, float* outMeasureGr) {
         // tiny (~200 B) and avoids NoMemory when parsing a 50-field inventory document.
         String url = "https://firestore.googleapis.com/v1/projects/tigertag-connect/databases/(default)/documents/"
                      + docPath
-                     + "?mask.fieldPaths=container_weight&mask.fieldPaths=measure_gr&mask.fieldPaths=rack";
+                     + "?mask.fieldPaths=container_weight&mask.fieldPaths=measure_gr"
+                       "&mask.fieldPaths=rack&mask.fieldPaths=twin_tag_uid";
         Serial.printf("[CONTAINER] GET %s\n", docPath.c_str());
         if (!http.begin(url)) {
             Serial.printf("[CONTAINER] http.begin failed\n");
@@ -6770,6 +6918,17 @@ float readInventoryContainerWeight(const String& uid, float* outMeasureGr) {
         Serial.printf("[CONTAINER] OK Found at root level: %.2f g\n", container);
     }
 
+    // The twin comes out of this same document. It used to be a second GET, on a
+    // second task, launched deliberately in parallel with this one — the same
+    // URL with a different field mask. Two concurrent TLS sessions is about
+    // 30 KB this board does not have, so one of the pair kept returning
+    // HTTP=-1: the twin lookup failed, the scan could not take its early exit,
+    // and every such session paid the full 8 s timeout.
+    if (outTwinUid != nullptr && fields.containsKey("twin_tag_uid")
+            && fields["twin_tag_uid"].containsKey("stringValue")) {
+        *outTwinUid = normalizeUidHex(fields["twin_tag_uid"]["stringValue"].as<String>());
+    }
+
     // Optional: extract measure_gr if caller wants it
     if (outMeasureGr != nullptr && fields.containsKey("measure_gr")) {
         JsonObject mg = fields["measure_gr"];
@@ -6790,17 +6949,17 @@ float readInventoryContainerWeight(const String& uid, float* outMeasureGr) {
     // Can be in two formats:
     // 1. Firestore REST API: fields.rack.objectValue.fields.{id, level, position}
     // 2. Direct format: rack.{id, level, position} OR fields.rack.{id, level, position}
-    extern String gLastRackId;
-    extern String gLastRackName;
-    extern int gLastLevel;
-    extern int gLastPosition;
-    extern String gLastRackPosition;
-
-    // Reset rack info
-    gLastRackId = "";
-    gLastRackName = "";
-    gLastLevel = -1;
-    gLastPosition = -1;
+    // Locals that deliberately shadow the globals of the same name for the rest
+    // of this function. Everything below builds into these and nothing reaches
+    // the display until the single publication at the end.
+    //
+    // They used to be `extern` declarations, so the whole block below wrote
+    // straight into the globals — clearing them first, then filling them field
+    // by field — while the weigh screen read them at 10 Hz from the other core.
+    // The screen therefore caught the intermediate states, and the rack name was
+    // seen going "Rack 1" -> blank -> a raw Firestore document ID -> "Rack 1".
+    String gLastRackId, gLastRackName, gLastRackPosition;
+    int    gLastLevel = -1, gLastPosition = -1;
 
 
     // Try to read rack from different possible locations
@@ -6885,10 +7044,9 @@ float readInventoryContainerWeight(const String& uid, float* outMeasureGr) {
             gLastRackName = readRackName(gLastRackId);
         }
 
-        // Last resort: use the rack ID itself as display name
-        if (gLastRackName.length() == 0 && gLastRackId.length() > 0) {
-            gLastRackName = gLastRackId;
-        }
+        // No "use the ID as the name" fallback. A Firestore document ID on the
+        // weigh screen tells the user nothing and reads as corruption; an empty
+        // field is honest.
 
         // Read level (0=A, 1=B, 2=C, ...)
         if (rackObj.containsKey("level")) {
@@ -7011,13 +7169,33 @@ float readInventoryContainerWeight(const String& uid, float* outMeasureGr) {
         gLastRackPosition = "";
     }
 
+    // Publish once, and only if this session has not already latched a position.
+    //
+    // The rack is read at the first UID and must not move until the spool comes
+    // off. The twin's inventory document is read moments later and may carry a
+    // rack entry with no resolvable name; letting it write blanked the panel and
+    // repainted it a moment later. §21 clears these on removal — and that is the
+    // only thing allowed to.
+    if (::gLastRackPosition.length() == 0 && ::gLastRackName.length() == 0) {
+        ::gLastRackId       = gLastRackId;
+        ::gLastRackName     = gLastRackName;
+        ::gLastLevel        = gLastLevel;
+        ::gLastPosition     = gLastPosition;
+        ::gLastRackPosition = gLastRackPosition;
+    } else {
+        Serial.println("[RACK] already latched this session, keeping it");
+    }
+
     return container;
 }
 
-// Compute weight_available per §5 contract:
-// weight_available = max(0, raw_grams - container_weight)
-// Then clamp to measure_gr if set, and [0, 100000] as sanity bound
-// Rounds to 1 decimal place
+// Compute weight_available:
+// weight_available = max(0, raw_grams - container_weight), bounded to
+// [0, 100000] for sanity and rounded to one decimal.
+//
+// Deliberately NOT clamped to measure_gr — see the note at the clamp site below
+// for what that clamp cost. A spool holding more than its label says is a real
+// measurement, not an error to be rounded away.
 float computeWeightAvailable(float raw_grams, const String& uid_a) {
     float measure_gr = 0.0f;
     float container;
@@ -7055,12 +7233,25 @@ float computeWeightAvailable(float raw_grams, const String& uid_a) {
     Serial.printf("[WEIGHT_CALC] uid=%s raw=%.2f container=%.2f net=%.2f",
                   uid_a.c_str(), raw_grams, container, net);
 
-    // If measure_gr is set, clamp to it (spool design capacity)
-    if (measure_gr > 0 && net > measure_gr) {
-        Serial.printf(" measure_gr=%.2f(clamped)", measure_gr);
-        net = measure_gr;
-    } else if (measure_gr > 0) {
-        Serial.printf(" measure_gr=%.2f(ok)", measure_gr);
+    // measure_gr is the manufacturer's nominal fill, and the net weight is
+    // deliberately NOT clamped to it. Spools routinely leave the factory holding
+    // a little more than the figure on the label, and this scale exists to
+    // report what is actually there — clamping would replace a real measurement
+    // with a marketing number.
+    //
+    // It used to clamp, and that produced a bug worth remembering: measure_gr is
+    // only read on the path that fetches the inventory record inline, never on
+    // the one that uses the value prefetched during SCANNING. So the clamp
+    // applied or not depending on whether that prefetch had finished before the
+    // weight settled — a race. The same spool at the same raw weight was sent as
+    // 524.8 g or 500.0 g depending on how quickly it stopped wobbling, and the
+    // faster the workflow got, the more often the clamped value won.
+    //
+    // Removing the clamp fixes the inconsistency at its root: measure_gr no
+    // longer takes part in the arithmetic, so both paths cannot disagree.
+    if (measure_gr > 0) {
+        Serial.printf(" measure_gr=%.2f(%s)", measure_gr,
+                      net > measure_gr ? "overfilled, kept" : "within");
     }
 
     // Sanity bounds [0, 100000]
@@ -7648,35 +7839,25 @@ static void cloudWorkerTask(void* /*param*/) {
 
         // -- Container fetch --------------------------------------------------
         if (gContainerFetchPending) {
+            // One request, one document, four fields. The container weight, the
+            // spool capacity, the rack and the twin all live in
+            // users/{uid}/inventory/{tag} — they used to be fetched by two
+            // concurrent GETs of that same URL with different field masks, and
+            // the second TLS session could not be allocated, so one of them
+            // returned HTTP=-1 every time.
             String uid_a = gContainerFetchUID;   // local copy
-            // Launch twin fetch in parallel BEFORE the container HTTP call.
-            // twinWorkerTask starts immediately and runs concurrently on core 0.
-            gTwinFetchUID     = uid_a;
-            gTwinFetchDone    = false;
-            gTwinFetchPending = true;             // twinWorkerTask picks this up now
-            // Container fetch — runs in parallel with twinWorkerTask's twin fetch.
-            float cw_a = readInventoryContainerWeight(uid_a);
+            String twin_a;
+            float cw_a = readInventoryContainerWeight(uid_a, nullptr, &twin_a);
             gContainerFetchResult  = cw_a;
             gContainerFetchPending = false;
-            gContainerFetchDone    = true;        // signal immediately, no waiting for twin
-        }
-        if (gAvatarRetryPending && millis() >= gAvatarRetryAtMs
-                && gUserAvatarUrl.length() > 0 && !gUserAvatarReady) {
-            gAvatarRetryPending = false;
-            Serial.println("[AVATAR] retry download");
-            if (downloadUserAvatar(gUserAvatarUrl)) {
-                gUserAvatarUid = firebaseUid;
-            } else {
-                // One more retry after 10 seconds
-                gAvatarRetryPending = true;
-                gAvatarRetryAtMs    = millis() + 10000;
-                Serial.println("[AVATAR] retry failed, trying again in 10s");
-            }
-        }
-        if (gImgDownloadPending) {
-            gImgDownloadPending = false;
-            uint32_t pid = gImgDownloadProductId;
-            downloadProductImage(pid);
+            gContainerFetchDone    = true;
+            gTwinFetchUID    = uid_a;
+            gTwinFetchResult = twin_a;
+            gTwinFetchDone   = true;             // arrived with the container, not after it
+            netLog("INV uid=" + uid_a + " container=" + String(cw_a,1)
+                   + "g twin=" + (twin_a.length() ? twin_a : String("none")));
+            // uid_b's container is still the twin worker's job (Case 2).
+            gTwinFetchPending = (gContainerBFetchUID.length() > 0);
         }
         if (gCloudSendPending) {
             Serial.printf("[CLOUD] send start w=%.1f uid=%s\n", gCloudSendWeight, lastUID.c_str());
@@ -7705,12 +7886,8 @@ static void twinWorkerTask(void* /*param*/) {
     for (;;) {
         if (gTwinFetchPending) {
             gTwinFetchPending = false;            // clear immediately (safe: written here only)
-            String uid_a = gTwinFetchUID;         // local copy
-            gTwinFetchResult = "";
-            readInventoryDocTwinTag(uid_a, gTwinFetchResult);
-            gTwinFetchDone = true;
-            netLog("TWIN prefetch=" + (gTwinFetchResult.length() > 0 ? gTwinFetchResult : "none") + " uid=" + uid_a);
-            // uid_b container fetch (Case 2: motor scanned both tags)
+            // The twin itself now arrives with the container fetch in
+            // cloudWorkerTask — this task is left with uid_b's container only.
             if (gContainerBFetchUID.length() > 0) {
                 gContainerBFetchResult = readInventoryContainerWeight(gContainerBFetchUID);
                 gContainerBFetchDone   = true;
@@ -9651,9 +9828,7 @@ void handleWeighWorkflow(float w) {
         bool noUidActive = (lastUID.length() == 0 && lastUID2.length() == 0
                             && lastUIDLeft.length() == 0 && lastUIDRight.length() == 0);
         if (noUidActive && w < MIN_WEIGHT_TO_SEND_G &&
-            (gProductImgReady || gLastManufacturer != "--" || gLastRackPosition.length() > 0 || gLastContainer > 0)) {
-            gProductImgReady = false;
-            gLastProductId = 0xFFFFFFFF;
+            (gLastManufacturer != "--" || gLastRackPosition.length() > 0 || gLastContainer > 0)) {
             gLastManufacturer = "--"; gLastMaterial = "--"; gLastColor = "--";
             gLastContainer = 0.0f;
             gLastRackPosition = ""; gLastRackName = ""; gLastLevel = -1; gLastPosition = -1; gLastRackId = "";
@@ -9754,7 +9929,6 @@ void handleWeighWorkflow(float w) {
             float peakAtReset  = wfPeakWeight;     // capture BEFORE clearing
             stopServoSearch();
             wfPhase = WF_IDLE; sendPhase = "idle"; sendCountdown = -1;
-            gProductImgReady = false; gLastProductId = 0xFFFFFFFF;
             gLastManufacturer = "--"; gLastMaterial = "--"; gLastColor = "--";
             gLastContainer = 0.0f;
             gLastRackPosition = ""; gLastRackName = ""; gLastLevel = -1; gLastPosition = -1; gLastRackId = "";
@@ -10392,6 +10566,108 @@ static bool initPN532Reader(PN532Reader &reader, uint8_t ssPin, uint8_t rstPin, 
     return true;
 }
 
+// RF self-test: one reader impersonates a card carrying three random bytes,
+// the other reads it with the ordinary tag path.
+//
+// This proves far more than the version query the boot screen relies on. That
+// query only shows the module answers on its serial link and says nothing about
+// the antenna — which is exactly why a working reader could be reported offline.
+// This drives one antenna's transmitter and the other's receiver, and carries
+// three bytes across the 75 mm gap that the firmware chose a moment earlier, so
+// a cached or stuck value cannot pass for a success.
+//
+// Run in both directions it isolates a fault. Right->left working while
+// left->right does not puts the trouble in the left transmitter or the right
+// receiver, which no single-ended probe can tell you.
+//
+// The frame is the library's own AsTarget() payload with NFCID1T replaced. The
+// response is deliberately never read: TgInitAsTarget only answers once an
+// initiator activates the module, so reading here would block the very poll
+// meant to do the activating.
+//
+// The platform must be empty. A spool between the antennas blocks the field and
+// fails the test for a reason that has nothing to do with the hardware.
+static bool rfidFieldTest(PN532Reader &tgt, uint8_t tgtSs, uint8_t tgtRst,
+                          const char *tgtLabel, PN532Reader &ini,
+                          uint8_t level, String &detail) {
+    uint8_t id[3];
+    for (int i = 0; i < 3; i++) id[i] = (uint8_t)(esp_random() & 0xFF);
+
+    uint8_t frame[] = {
+        0x8C, 0x00, 0x08, 0x00, id[0], id[1], id[2], 0x60,
+        0x01, 0xfe, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
+        0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7,
+        0xff, 0xff,
+        0xaa, 0x99, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x01, 0x00,
+        0x0d, 0x52, 0x46, 0x49, 0x44, 0x49, 0x4f, 0x74, 0x20, 0x50, 0x4e, 0x35, 0x33, 0x32
+    };
+
+    detail = "";
+    bool ok = false;
+
+    // Put the target in a known state first. Measured: without this the module
+    // does not even acknowledge TgInitAsTarget — the screen showed "no ack" in
+    // both directions, and that happens on the serial link before any RF
+    // exists, so it was never an antenna or a power question. A module that has
+    // just been running passive-target detection will not take the command.
+    initPN532Reader(tgt, tgtSs, tgtRst, tgtLabel);
+
+    // Both antennas at the test step the caller is trying, built here rather
+    // than through applyRfPower() so the self-test is not confined to the
+    // owner's narrow everyday range. Sent through the same raw path the rest of
+    // this function uses, so no new plumbing.
+    if (level >= PN532_RF_TEST_LEVEL_COUNT) level = PN532_RF_TEST_LEVEL_COUNT - 1;
+    const PN532RfLevel &lv = PN532_RF_TEST_LEVELS[level];
+    uint8_t rf[13] = {
+        PN532_COMMAND_RFCONFIGURATION,
+        0x0A,                       // analog settings, 106 kbps type A
+        0x79,                       // RxGain at maximum for the test
+        lv.gsNOn, lv.cwGsP, lv.modGsP,
+        0x4D,
+        (uint8_t)((lv.rxThresholdMinLevel << 4) | 0x5),
+        0x61, 0x6F, 0x26, 0x62, 0x87
+    };
+    delay(20);
+    tgt.sendRawNoReply(rf, sizeof(rf), 500);
+    delay(20);
+    ini.sendRawNoReply(rf, sizeof(rf), 500);
+    delay(20);
+
+    if (!tgt.sendRawNoReply(frame, sizeof(frame), 1000)) {
+        detail = String(tgtLabel) + " no ack";
+    } else {
+        delay(60);   // let the emulation come up before polling it
+        for (int attempt = 0; attempt < 6 && !ok; attempt++) {
+            if (ini.isNewCardPresent() && ini.readCardSerial()) {
+                uint8_t n = ini.uid.size;
+                // A 3-byte NFCID1T is presented as a 4-byte UID whose first byte
+                // marks it randomly generated, so compare the tail, not the whole.
+                if (n >= 3 && ini.uid.uidByte[n-3] == id[0]
+                           && ini.uid.uidByte[n-2] == id[1]
+                           && ini.uid.uidByte[n-1] == id[2]) {
+                    ok = true;
+                } else if (detail.length() == 0) {
+                    detail = "wrong id";
+                }
+            }
+            delay(40);
+        }
+        if (!ok && detail.length() == 0) detail = "no field";
+    }
+
+    Serial.printf("[RFID] field test -> %s sent %02X%02X%02X : %s %s\n",
+                  tgtLabel, id[0], id[1], id[2],
+                  ok ? "OK" : "FAIL", ok ? "" : detail.c_str());
+
+    // Always restore, pass or fail. A reader left emulating a card stops
+    // reading spools entirely, which would be a far worse bug than the one this
+    // test exists to find — and the power must go back to the owner's setting.
+    initPN532Reader(tgt, tgtSs, tgtRst, tgtLabel);
+    tgt.applyRfPower(gRfidPowerLevel);
+    ini.applyRfPower(gRfidPowerLevel);
+    return ok;
+}
+
 static void rfidSelectReader(uint8_t which) {
     if (FORCE_SINGLE_RFID_STABLE_MODE) {
         gRfidSelectedReader = which;
@@ -10637,28 +10913,27 @@ void setupRFID() {
         bootProgress(20, rfidStatus);
         delay(400);
     } else {
-        // Was raw-gfx displayMessage() here -- drawing straight to the
-        // display driver while the LVGL main screen is active corrupts it
-        // (LVGL's own redraw only repaints what it thinks is dirty, leaving
-        // stale pixels behind). Same centered badge/title/subtitle toast as
-        // the rest of the app, loaded over lvScreen and restored after.
-        lv_obj_t *col;
-        lv_obj_t *toast = lvglCenteredScreen(&col);
-        lvglAddStatusBadge(col, ok1 && ok2);
-        if (ok1 && ok2) {
-            lvglAddCenteredLabel(col, "RFID OK", LVCOL_GREEN, &lv_font_montserrat_20);
-            lvglAddCenteredLabel(col, "2x PN532 ready", LVCOL_MUTED, &lv_font_montserrat_14);
-        } else if (ok1 || ok2) {
-            lvglAddCenteredLabel(col, "RFID WARN", LVCOL_TEXT, &lv_font_montserrat_20);
-            lvglAddCenteredLabel(col, ok1 ? "PN532-2 offline" : "PN532-1 offline", LVCOL_MUTED, &lv_font_montserrat_14);
-        } else {
-            lvglAddCenteredLabel(col, "RFID FAIL", LVCOL_RED, &lv_font_montserrat_20);
-            lvglAddCenteredLabel(col, "Check wiring", LVCOL_MUTED, &lv_font_montserrat_14);
-        }
-        lv_scr_load(toast);
-        uint32_t t0 = millis(); while (millis() - t0 < 1000) { lv_timer_handler(); delay(20); }
-        lv_scr_load(lvScreen);
-        lv_obj_del(toast);
+        // No toast once the scale is running. This branch fires on the
+        // post-Firebase re-init a few seconds after boot, and it used to throw a
+        // full-screen badge over the weigh screen reading "RFID WARN" with a red
+        // cross whenever one of the two version queries happened to time out.
+        //
+        // That query is not a presence test. It hard-resets the module, waits
+        // 50 ms and asks for a firmware version over the UART — and a UART has
+        // no address ACK, so a module that is merely busy is indistinguishable
+        // from one that is absent. The comment in initPN532Reader() records the
+        // same flakiness from a previous session: two version queries in a row
+        // and the second one times out on hardware that is working perfectly.
+        //
+        // The honest health signal is gRfid1TimeoutStreak / gRfid2TimeoutStreak:
+        // maintained on every real poll, per reader, derived from work the scale
+        // does anyway, and it names which one is in trouble. A one-shot probe
+        // that interrupts the screen tells the owner less and worries them more.
+        //
+        // The full status is still shown at boot and in Settings -> RFID, which
+        // is where someone goes when they actually want to know.
+        Serial.printf("[RFID] re-init: PN532-1 %s, PN532-2 %s\n",
+                      ok1 ? "ok" : "no answer", ok2 ? "ok" : "no answer");
     }
 
 }
@@ -10813,234 +11088,9 @@ static String resolveMaterialNameOnlineFirst(uint32_t idMaterial) {
     return name;
 }
 
-// JPEGDEC pixel callback — assembles MCU blocks into s_jdecBuf
-static int jpegDecCallback(JPEGDRAW *pDraw) {
-    if (!s_jdecBuf) return 0;
-    uint16_t *dst = s_jdecBuf + (uint32_t)pDraw->y * s_jdecStride + pDraw->x;
-    uint16_t *src = pDraw->pPixels;
-    for (int r = 0; r < pDraw->iHeight; r++) {
-        memcpy(dst, src, pDraw->iWidthUsed * 2);
-        dst += s_jdecStride;
-        src += pDraw->iWidth;
-    }
-    return 1;
-}
 
 // Download product image from Firebase Storage and decode JPEG to RGB565 in PSRAM
-static bool downloadProductImage(uint32_t productId) {
-    if (!WiFi.isConnected()) return false;
 
-    // Direct Firebase Storage URL — avoids cross-domain HTTPS redirect issues
-    char url[220];
-    snprintf(url, sizeof(url),
-        "https://firebasestorage.googleapis.com/v0/b/tigertag-connect.firebasestorage.app"
-        "/o/filament%%2Flarge%%2F%u.jpg?alt=media&v=1", productId);
-    Serial.printf("[IMG] id=%u\n", productId);
-
-    WiFiClientSecure wcs;
-    wcs.setInsecure();
-    HTTPClient http;
-    http.setTimeout(15000);
-    if (!http.begin(wcs, String(url))) { Serial.println("[IMG] begin failed"); return false; }
-
-    int code = http.GET();
-    Serial.printf("[IMG] HTTP %d size=%d\n", code, http.getSize());
-    if (code != 200) { http.end(); return false; }
-
-    // Stream into PSRAM (server may use chunked encoding → size=-1)
-    const size_t MAX_JPEG = 512 * 1024;
-    uint8_t *jpegBuf = (uint8_t *)ps_malloc(MAX_JPEG);
-    if (!jpegBuf) { Serial.println("[IMG] input alloc failed"); http.end(); return false; }
-
-    WiFiClient *s = http.getStreamPtr();
-    int n = 0;
-    unsigned long t0 = millis();
-    while (n < (int)MAX_JPEG && millis() - t0 < 15000) {
-        int a = s->available();
-        if (a > 0) { n += s->readBytes(jpegBuf + n, min(a, (int)MAX_JPEG - n)); t0 = millis(); }
-        else if (!s->connected()) break;
-        else vTaskDelay(pdMS_TO_TICKS(5));
-    }
-    http.end();
-    Serial.printf("[IMG] read %d bytes\n", n);
-    if (n < 100) { free(jpegBuf); return false; }
-
-    // Decode with JPEGDEC — supports baseline + progressive JPEG
-    // Static: JPEGIMAGE is ~18KB — too large for cloudWorkerTask's stack
-    static JPEGDEC jpeg;
-    if (!jpeg.openRAM(jpegBuf, n, jpegDecCallback)) {
-        Serial.printf("[IMG] openRAM failed err=%d\n", jpeg.getLastError());
-        free(jpegBuf); return false;
-    }
-    int srcW = jpeg.getWidth();
-    int srcH = jpeg.getHeight();
-    Serial.printf("[IMG] JPEG %dx%d type=%d\n", srcW, srcH, jpeg.getJPEGType());
-
-    // Pick JPEGDEC scale: /4 for typical 512-1024px sources, /8 for very large
-    int scaleOpt = 0;
-    int dstW = srcW, dstH = srcH;
-    if (srcW > 1024 || srcH > 1024) {
-        scaleOpt = JPEG_SCALE_EIGHTH;  dstW = srcW / 8; dstH = srcH / 8;
-    } else if (srcW > 512 || srcH > 512) {
-        scaleOpt = JPEG_SCALE_QUARTER; dstW = srcW / 4; dstH = srcH / 4;
-    } else if (srcW > 256 || srcH > 256) {
-        scaleOpt = JPEG_SCALE_HALF;    dstW = srcW / 2; dstH = srcH / 2;
-    }
-
-    uint16_t *outBuf = (uint16_t *)ps_malloc((size_t)dstW * dstH * 2);
-    if (!outBuf) {
-        Serial.println("[IMG] outBuf alloc failed");
-        jpeg.close(); free(jpegBuf); return false;
-    }
-    memset(outBuf, 0, (size_t)dstW * dstH * 2);
-
-    jpeg.setPixelType(RGB565_LITTLE_ENDIAN);
-    s_jdecBuf    = outBuf;
-    s_jdecStride = (uint16_t)dstW;
-
-    jpeg.decode(0, 0, scaleOpt);
-    jpeg.close();
-    free(jpegBuf);
-    s_jdecBuf = nullptr;
-
-    // Fit-scale decoded image to panel, maintaining aspect ratio (no crop)
-    const int PANEL_W = 120, PANEL_H = 190;
-    int finalW, finalH;
-    float scaleX = (float)PANEL_W / dstW;
-    float scaleY = (float)PANEL_H / dstH;
-    float fitScale = (scaleX < scaleY) ? scaleX : scaleY;
-
-    uint16_t *finalBuf;
-    if (fitScale >= 1.0f) {
-        // image already fits within panel — use as-is
-        finalW = dstW; finalH = dstH;
-        finalBuf = outBuf;
-    } else {
-        finalW = (int)(dstW * fitScale);
-        finalH = (int)(dstH * fitScale);
-        if (finalW < 1) finalW = 1;
-        if (finalH < 1) finalH = 1;
-        uint16_t *scaled = (uint16_t*)ps_malloc((size_t)finalW * finalH * 2);
-        if (scaled) {
-            // Nearest-neighbor downscale
-            for (int y = 0; y < finalH; y++) {
-                int srcY = y * dstH / finalH;
-                for (int x = 0; x < finalW; x++) {
-                    scaled[y * finalW + x] = outBuf[srcY * dstW + (x * dstW / finalW)];
-                }
-            }
-            free(outBuf);
-            finalBuf = scaled;
-        } else {
-            finalW = dstW; finalH = dstH;
-            finalBuf = outBuf;
-        }
-    }
-
-    Serial.printf("[IMG] display %dx%d (src %dx%d)\n", finalW, finalH, dstW, dstH);
-
-    // Race condition guard: discard if product changed while downloading
-    if (gLastProductId != productId) {
-        free(finalBuf);
-        return false;
-    }
-
-    uint16_t *old = gProductImgBuf;
-    gProductImgW     = (uint16_t)finalW;
-    gProductImgH     = (uint16_t)finalH;
-    gProductImgBuf   = finalBuf;
-    gProductImgReady = true;
-    if (old) free(old);
-    return true;
-}
-
-// Download and decode user avatar JPEG, scale to target size, store in gUserAvatarBuf.
-static bool downloadUserAvatar(const String& avatarUrl) {
-    if (!WiFi.isConnected() || avatarUrl.length() == 0) return false;
-    Serial.printf("[AVATAR] downloading %s\n", avatarUrl.substring(0, 80).c_str());
-
-    WiFiClientSecure wcs;
-    wcs.setInsecure();
-    HTTPClient http;
-    http.setTimeout(10000);
-    http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
-    if (!http.begin(wcs, avatarUrl)) { Serial.println("[AVATAR] begin failed"); return false; }
-    int code = http.GET();
-    Serial.printf("[AVATAR] HTTP %d size=%d\n", code, http.getSize());
-    if (code != 200) { http.end(); return false; }
-
-    // Use PSRAM if available, fall back to regular heap
-    const size_t MAX_JPEG = 100 * 1024;
-    uint8_t *jpegBuf = (uint8_t *)heap_caps_malloc(MAX_JPEG, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!jpegBuf) jpegBuf = (uint8_t *)malloc(MAX_JPEG);
-    if (!jpegBuf) { Serial.println("[AVATAR] alloc jpegBuf failed"); http.end(); return false; }
-    WiFiClient *s = http.getStreamPtr();
-    int n = 0;
-    unsigned long t0 = millis();
-    while (n < (int)MAX_JPEG && millis() - t0 < 10000) {
-        int a = s->available();
-        if (a > 0) { n += s->readBytes(jpegBuf + n, min(a, (int)MAX_JPEG - n)); t0 = millis(); }
-        else if (!s->connected()) break;
-        else vTaskDelay(pdMS_TO_TICKS(5));
-    }
-    http.end();
-    Serial.printf("[AVATAR] read %d bytes\n", n);
-    if (n < 50) { free(jpegBuf); return false; }
-
-    static JPEGDEC jpeg;
-    if (!jpeg.openRAM(jpegBuf, n, jpegDecCallback)) {
-        Serial.println("[AVATAR] JPEG open failed");
-        free(jpegBuf); return false;
-    }
-    int srcW = jpeg.getWidth(), srcH = jpeg.getHeight();
-    Serial.printf("[AVATAR] JPEG %dx%d\n", srcW, srcH);
-    // Pick decode scale so decoded size is close to 128x128
-    int scaleOpt = 0;
-    int dstW = srcW, dstH = srcH;
-    if      (srcW > 512) { scaleOpt = JPEG_SCALE_EIGHTH;  dstW = srcW/8; dstH = srcH/8; }
-    else if (srcW > 256) { scaleOpt = JPEG_SCALE_QUARTER; dstW = srcW/4; dstH = srcH/4; }
-    else if (srcW > 128) { scaleOpt = JPEG_SCALE_HALF;    dstW = srcW/2; dstH = srcH/2; }
-
-    size_t decSize = (size_t)dstW * dstH * 2;
-    uint16_t *decBuf = (uint16_t *)heap_caps_malloc(decSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!decBuf) decBuf = (uint16_t *)malloc(decSize);
-    if (!decBuf) { Serial.println("[AVATAR] alloc decBuf failed"); jpeg.close(); free(jpegBuf); return false; }
-    memset(decBuf, 0, decSize);
-    jpeg.setPixelType(RGB565_LITTLE_ENDIAN);
-    s_jdecBuf = decBuf; s_jdecStride = (uint16_t)dstW;
-    int decResult = jpeg.decode(0, 0, scaleOpt);
-    jpeg.close();
-    free(jpegBuf);
-    s_jdecBuf = nullptr;
-    if (decResult != 1) {
-        Serial.printf("[AVATAR] JPEG decode failed (result=%d)\n", decResult);
-        free(decBuf); return false;
-    }
-
-    // Scale to TARGET x TARGET (nearest-neighbor, keep square)
-    const int TARGET = 40;
-    int side = min(dstW, dstH);    // crop to square (center)
-    int ox = (dstW - side) / 2, oy = (dstH - side) / 2;
-    uint16_t *finalBuf = (uint16_t *)malloc((size_t)TARGET * TARGET * 2);
-    if (!finalBuf) { Serial.println("[AVATAR] alloc finalBuf failed"); free(decBuf); return false; }
-    for (int y = 0; y < TARGET; y++) {
-        int sy = oy + y * side / TARGET;
-        for (int x = 0; x < TARGET; x++) {
-            int sx = ox + x * side / TARGET;
-            finalBuf[y * TARGET + x] = decBuf[sy * dstW + sx];
-        }
-    }
-    free(decBuf);
-
-    uint16_t *old = gUserAvatarBuf;
-    gUserAvatarBuf   = finalBuf;
-    gUserAvatarW     = TARGET;
-    gUserAvatarH     = TARGET;
-    gUserAvatarReady = true;
-    if (old) free(old);
-    Serial.printf("[AVATAR] ready %dx%d\n", TARGET, TARGET);
-    return true;
-}
 
 void dumpTigerTagPages(PN532Reader &reader, const String& uidHex) {
 #if DEBUG_RFID_DUMP
@@ -11085,8 +11135,12 @@ String readRFIDFromReader(PN532Reader &reader, String &uidHexOut, bool *outReadF
         return "";
     }
 
-    String hexStr; hexStr.reserve(reader.uid.size * 2);
-    for (uint8_t i = 0; i < reader.uid.size; i++) {
+    // Clamped to the array even though isNewCardPresent() already rejects a bad
+    // length: this loop is what actually reads past the end, so it carries its
+    // own bound rather than trusting a caller three layers up.
+    uint8_t uidLen = reader.uid.size > 10 ? 10 : reader.uid.size;
+    String hexStr; hexStr.reserve(uidLen * 2);
+    for (uint8_t i = 0; i < uidLen; i++) {
         uint8_t b = reader.uid.uidByte[i];
         if (b < 0x10) hexStr += '0';
         hexStr += String(b, HEX);
@@ -11117,8 +11171,9 @@ String readRFIDFromReaderTestStyle(PN532Reader &reader, String &uidHexOut, const
     }
 
     String hexStr;
-    hexStr.reserve(reader.uid.size * 2);
-    for (uint8_t i = 0; i < reader.uid.size; i++) {
+    uint8_t uidLen = reader.uid.size > 10 ? 10 : reader.uid.size;   // see note above
+    hexStr.reserve(uidLen * 2);
+    for (uint8_t i = 0; i < uidLen; i++) {
         uint8_t b = reader.uid.uidByte[i];
         if (b < 0x10) hexStr += '0';
         hexStr += String(b, HEX);
@@ -11157,8 +11212,9 @@ String readRFIDFromReaderStable(PN532Reader &reader, String &uidHexOut, const ch
     }
 
     String hexStr;
-    hexStr.reserve(reader.uid.size * 2);
-    for (uint8_t i = 0; i < reader.uid.size; i++) {
+    uint8_t uidLen = reader.uid.size > 10 ? 10 : reader.uid.size;   // see note above
+    hexStr.reserve(uidLen * 2);
+    for (uint8_t i = 0; i < uidLen; i++) {
         uint8_t b = reader.uid.uidByte[i];
         if (b < 0x10) hexStr += '0';
         hexStr += String(b, HEX);
@@ -11334,12 +11390,6 @@ static void readTigerTagMetadata(PN532Reader &reader, const String& uidHex) {
         saveMetaCacheToNVS(uidHex, gMetaCache[uidHex]);
         netLog("[META] OK uid=" + uidHex + " mfr=" + gLastManufacturer + " mat=" + gLastMaterial);
 
-        if (idProduct != 0xFFFFFFFF && idProduct != 0 && idProduct != gLastProductId) {
-            gLastProductId = idProduct;
-            gProductImgReady = false;
-            gImgDownloadProductId = idProduct;
-            gImgDownloadPending = true;
-        }
     } else {
         // Check in-memory cache → NVS → Firestore
         auto cIt = gMetaCache.find(uidHex);
@@ -11358,13 +11408,6 @@ static void readTigerTagMetadata(PN532Reader &reader, const String& uidHex) {
             gLastManufacturer = cIt->second.mfr;
             gLastMaterial     = cIt->second.mat;
             if (!cIt->second.col.isEmpty()) gLastColor = cIt->second.col;
-            if (cIt->second.productId != 0xFFFFFFFF && cIt->second.productId != 0
-                    && cIt->second.productId != gLastProductId) {
-                gLastProductId = cIt->second.productId;
-                gProductImgReady = false;
-                gImgDownloadProductId = cIt->second.productId;
-                gImgDownloadPending = true;
-            }
             netLog("[META] cache uid=" + uidHex + " mfr=" + gLastManufacturer);
         } else {
             // Don't overwrite valid metadata set by the other reader in this session.
@@ -11414,8 +11457,12 @@ String readRFIDUidOnly(PN532Reader &reader, String &uidHexOut) {
         Serial.println("[RFID TEST] readCardSerial failed");
         return "";
     }
-    String hexStr; hexStr.reserve(reader.uid.size * 2);
-    for (uint8_t i = 0; i < reader.uid.size; i++) {
+    // Clamped to the array even though isNewCardPresent() already rejects a bad
+    // length: this loop is what actually reads past the end, so it carries its
+    // own bound rather than trusting a caller three layers up.
+    uint8_t uidLen = reader.uid.size > 10 ? 10 : reader.uid.size;
+    String hexStr; hexStr.reserve(uidLen * 2);
+    for (uint8_t i = 0; i < uidLen; i++) {
         uint8_t b = reader.uid.uidByte[i];
         if (b < 0x10) hexStr += '0';
         hexStr += String(b, HEX);
@@ -12289,9 +12336,15 @@ static void lvglTestScreen() {
 // gfx/panel globals) so bootProgress()/runSettingsMenu() can use them too.
 
 static lv_obj_t *lvTopLeftLabel    = nullptr;
-static lv_obj_t *lvAvatarCircle    = nullptr;
-static lv_obj_t *lvAvatarInitials  = nullptr;
 static lv_obj_t *lvNameLabel       = nullptr;
+// Pairing badge: a filled blue disc with a chain-link glyph, top-left of the
+// main card. It answers "how many UIDs does this session hold, and how was the
+// second one found" at a glance. LVGL v8 ships no link symbol, so the glyph is
+// two rings joined by a bar — the same idiom the LAN card already uses.
+static lv_obj_t *lvPairBadge       = nullptr;
+static lv_obj_t *lvPairRingA       = nullptr;
+static lv_obj_t *lvPairRingB       = nullptr;
+static lv_obj_t *lvPairBar         = nullptr;
 static lv_obj_t *lvBrandCard       = nullptr;
 static lv_obj_t *lvBrandCircle     = nullptr;
 static lv_obj_t *lvBrandLabel      = nullptr;
@@ -12317,7 +12370,6 @@ static lv_obj_t *lvWifiLabel       = nullptr;
 static lv_obj_t *lvCloudDome1      = nullptr;
 static lv_obj_t *lvCloudDome2      = nullptr;
 static lv_obj_t *lvCloudBase       = nullptr;
-static lv_obj_t *lvVolumeLabel     = nullptr;
 
 // Same tare action as the legacy touch-zone handler in loop() -- see the
 // gUseLvglMainScreen guard there.
@@ -12370,15 +12422,6 @@ static void lvglBuildMainScreen() {
     lv_obj_align(topCenterRow, LV_ALIGN_TOP_MID, 0, 6);
     lv_obj_clear_flag(topCenterRow, LV_OBJ_FLAG_SCROLLABLE);
 
-    lvAvatarCircle = lv_obj_create(topCenterRow);
-    lv_obj_set_size(lvAvatarCircle, 30, 30);
-    lv_obj_set_style_radius(lvAvatarCircle, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_width(lvAvatarCircle, 0, 0);
-    lv_obj_clear_flag(lvAvatarCircle, LV_OBJ_FLAG_SCROLLABLE);
-    lvAvatarInitials = lv_label_create(lvAvatarCircle);
-    lv_obj_set_style_text_color(lvAvatarInitials, LVCOL_TEXT, 0);
-    lv_obj_center(lvAvatarInitials);
-
     lvNameLabel = lv_label_create(topCenterRow);
     lv_obj_set_style_text_color(lvNameLabel, LVCOL_TEXT, 0);
     lv_obj_set_style_text_font(lvNameLabel, &lv_font_montserrat_20, 0);
@@ -12393,8 +12436,8 @@ static void lvglBuildMainScreen() {
     lv_obj_align(statusRow, LV_ALIGN_TOP_RIGHT, -8, 10);
     lv_obj_clear_flag(statusRow, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Order: wifi, cloud, volume, battery (battery last -- rightmost -- per
-    // user request; it used to be first/leftmost).
+    // Order: wifi, cloud, battery (battery last -- rightmost -- per user
+    // request; it used to be first/leftmost).
     lvWifiLabel = lv_label_create(statusRow);
     lv_label_set_text(lvWifiLabel, LV_SYMBOL_WIFI);
 
@@ -12433,15 +12476,6 @@ static void lvglBuildMainScreen() {
     lv_obj_remove_style_all(lvCloudBase);
     lv_obj_set_size(lvCloudBase, 0, 0);
     lv_obj_clear_flag(lvCloudBase, LV_OBJ_FLAG_SCROLLABLE);
-
-    // Volume: text set in update() to LV_SYMBOL_MUTE / VOLUME_MID / VOLUME_MAX
-    // depending on gVolume, so the arcs actually reflect the configured level.
-    // No speaker here any more: it restated a setting that is changed two taps
-    // away and never needed watching. The object stays so the update code below
-    // keeps one code path, but it is never attached to the row.
-    lvVolumeLabel = lv_label_create(lvScreen);
-    lv_obj_add_flag(lvVolumeLabel, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_text_color(lvVolumeLabel, LVCOL_TEXT, 0);
 
     // Battery: outline body (no fill, like the SVG) + terminal nub + 3 bar
     // segments + a bolt line, all pre-created and toggled via HIDDEN in update.
@@ -12500,6 +12534,43 @@ static void lvglBuildMainScreen() {
     lv_obj_set_style_border_width(mainCard, 0, 0);
     lv_obj_set_style_radius(mainCard, 14, 0);
     lv_obj_clear_flag(mainCard, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Pairing badge — 26 px disc at the card's top-left corner.
+    lvPairBadge = lv_obj_create(mainCard);
+    lv_obj_remove_style_all(lvPairBadge);
+    lv_obj_set_size(lvPairBadge, 26, 26);
+    lv_obj_set_pos(lvPairBadge, 12, 10);
+    lv_obj_set_style_radius(lvPairBadge, 13, 0);
+    lv_obj_set_style_bg_opa(lvPairBadge, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(lvPairBadge, LVCOL_ACCENT, 0);
+    lv_obj_clear_flag(lvPairBadge, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    // The chain-link glyph: two rings and the bar between them.
+    lvPairRingA = lv_obj_create(lvPairBadge);
+    lv_obj_remove_style_all(lvPairRingA);
+    lv_obj_set_size(lvPairRingA, 9, 9);
+    lv_obj_set_pos(lvPairRingA, 3, 8);
+    lv_obj_set_style_radius(lvPairRingA, 5, 0);
+    lv_obj_set_style_border_width(lvPairRingA, 2, 0);
+    lv_obj_set_style_border_color(lvPairRingA, LVCOL_TEXT, 0);
+    lv_obj_clear_flag(lvPairRingA, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    lvPairRingB = lv_obj_create(lvPairBadge);
+    lv_obj_remove_style_all(lvPairRingB);
+    lv_obj_set_size(lvPairRingB, 9, 9);
+    lv_obj_set_pos(lvPairRingB, 12, 8);
+    lv_obj_set_style_radius(lvPairRingB, 5, 0);
+    lv_obj_set_style_border_width(lvPairRingB, 2, 0);
+    lv_obj_set_style_border_color(lvPairRingB, LVCOL_TEXT, 0);
+    lv_obj_clear_flag(lvPairRingB, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    lvPairBar = lv_obj_create(lvPairBadge);
+    lv_obj_remove_style_all(lvPairBar);
+    lv_obj_set_size(lvPairBar, 6, 2);
+    lv_obj_set_pos(lvPairBar, 10, 11);
+    lv_obj_set_style_bg_opa(lvPairBar, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(lvPairBar, LVCOL_TEXT, 0);
+    lv_obj_clear_flag(lvPairBar, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
     lvWeightLabel = lv_label_create(mainCard);
     lv_obj_set_style_text_color(lvWeightLabel, LVCOL_TEXT, 0);
@@ -12699,23 +12770,44 @@ static void lvglUpdateMainScreen(float weight, const String& uid, OledState stat
         lv_label_set_text(lvTopLeftLabel, statusLbl);
     }
 
-    // ---- Avatar (initials) + name ----
+    // ---- Pairing badge ----
+    //
+    // Three states, and the third is the one worth having. A blue *outline*
+    // means the second UID came from the twin_tag_uid field in Firestore rather
+    // than from the second reader — which is exactly the case where the scan
+    // cannot take its early exit and pays the full 8 s timeout. Seeing it
+    // happen often, on the scale itself, is the cheapest possible diagnostic
+    // for a spool that is not sitting across both antennas.
+    {
+        bool haveA   = lastUID.length() > 0;
+        bool haveB   = lastUID2.length() > 0;
+        bool fromCloud = !haveB && lastUIDTwin.length() > 0;
+
+        if (!haveA) {
+            lv_obj_add_flag(lvPairBadge, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_clear_flag(lvPairBadge, LV_OBJ_FLAG_HIDDEN);
+            lv_color_t glyph;
+            if (haveB) {                       // both chips read by the readers
+                lv_obj_set_style_bg_opa(lvPairBadge, LV_OPA_COVER, 0);
+                lv_obj_set_style_bg_color(lvPairBadge, LVCOL_ACCENT, 0);
+                lv_obj_set_style_border_width(lvPairBadge, 0, 0);
+                glyph = LVCOL_TEXT;
+            } else {                           // one chip; outline, colour says why
+                lv_obj_set_style_bg_opa(lvPairBadge, LV_OPA_TRANSP, 0);
+                lv_obj_set_style_border_width(lvPairBadge, 2, 0);
+                glyph = fromCloud ? LVCOL_ACCENT : LVCOL_FAINT;
+                lv_obj_set_style_border_color(lvPairBadge, glyph, 0);
+            }
+            lv_obj_set_style_border_color(lvPairRingA, glyph, 0);
+            lv_obj_set_style_border_color(lvPairRingB, glyph, 0);
+            lv_obj_set_style_bg_color(lvPairBar, glyph, 0);
+        }
+    }
+
+    // ---- Account name ----
     String scaleName = (firebaseAuth && firebaseDisplayName.length()) ? firebaseDisplayName : "Tiger Scale";
     lv_label_set_text(lvNameLabel, scaleName.c_str());
-    if (firebaseAuth) {
-        String src = firebaseDisplayName.length() ? firebaseDisplayName : firebaseEmail;
-        char ini = src.length() ? (char)toupper((unsigned char)src.charAt(0)) : '?';
-        static const uint32_t PALLETE[] = {
-            0x1F41E6, 0x1FA000, 0xE60000, 0xE6001F, 0x00E6E6, 0xE6E600, 0x6B1080, 0x102080
-        };
-        lv_obj_set_style_bg_color(lvAvatarCircle, lv_color_hex(PALLETE[(ini - 'A' + 26) % 8]), 0);
-        char iniStr[2] = { ini, 0 };
-        lv_label_set_text(lvAvatarInitials, iniStr);
-        lv_obj_clear_flag(lvAvatarCircle, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_set_style_bg_color(lvAvatarCircle, LVCOL_CARD, 0);
-        lv_label_set_text(lvAvatarInitials, "?");
-    }
 
     // ---- Brand/material card ----
     if (tagActive) {
@@ -12767,28 +12859,43 @@ static void lvglUpdateMainScreen(float weight, const String& uid, OledState stat
         // showing an empty icon. Used to only do this when a USB-serial
         // monitor happened to be attached ((bool)Serial), which doesn't hold
         // for plain USB power with no monitor open.
-        bool charging = (batPct == 255 || batPct == 254 || batVbus);
-        int  bars;      // 0-3 lit bars, left slot first -- they deplete right-to-left as % drops
-        lv_color_t barCol;
-        if (charging)              { bars = 0; barCol = LVCOL_YELLOW; }
-        else if (batPct > 66)      { bars = 3; barCol = LVCOL_YELLOW; }
-        else if (batPct > 33)      { bars = 2; barCol = LVCOL_YELLOW; }
-        else if (batPct > 10)      { bars = 1; barCol = LVCOL_YELLOW; }
-        else                       { bars = 1; barCol = LVCOL_RED; } // low-battery warning: 1 red bar, not an empty icon
+        // No battery wired: show nothing at all.
+        //
+        // axpBatteryPercent() returns 255 for "battery not present" and 254 for
+        // "AXP2101 unreadable", which on this hardware only happens when there
+        // is no battery either. Both used to be treated as "charging over USB",
+        // so a scale with no battery permanently displayed an outline and a
+        // charging bolt — an indicator for hardware it does not have.
+        bool hasBattery = (batPct <= 100);
+        if (hasBattery) {
+            lv_obj_clear_flag(lvBatteryBody, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(lvBatteryPctLabel, LV_OBJ_FLAG_HIDDEN);
 
-        // Outline always stays white regardless of charge state -- only the
-        // bar fill (and the low-battery red) carries the color signal now.
-        lv_obj_set_style_border_color(lvBatteryBody, LVCOL_TEXT, 0);
-        for (int i = 0; i < 3; i++) {
-            lv_obj_set_style_bg_color(lvBatteryBar[i], barCol, 0);
-            if (!charging && i < bars) lv_obj_clear_flag(lvBatteryBar[i], LV_OBJ_FLAG_HIDDEN);
-            else                       lv_obj_add_flag(lvBatteryBar[i], LV_OBJ_FLAG_HIDDEN);
+            bool charging = batVbus;   // only meaningful once a battery is there
+            int  bars;      // 0-3 lit bars, left slot first -- they deplete right-to-left as % drops
+            lv_color_t barCol;
+            if (charging)              { bars = 0; barCol = LVCOL_YELLOW; }
+            else if (batPct > 66)      { bars = 3; barCol = LVCOL_YELLOW; }
+            else if (batPct > 33)      { bars = 2; barCol = LVCOL_YELLOW; }
+            else if (batPct > 10)      { bars = 1; barCol = LVCOL_YELLOW; }
+            else                       { bars = 1; barCol = LVCOL_RED; } // low-battery warning: 1 red bar, not an empty icon
+
+            // Outline always stays white regardless of charge state -- only the
+            // bar fill (and the low-battery red) carries the color signal now.
+            lv_obj_set_style_border_color(lvBatteryBody, LVCOL_TEXT, 0);
+            for (int i = 0; i < 3; i++) {
+                lv_obj_set_style_bg_color(lvBatteryBar[i], barCol, 0);
+                if (!charging && i < bars) lv_obj_clear_flag(lvBatteryBar[i], LV_OBJ_FLAG_HIDDEN);
+                else                       lv_obj_add_flag(lvBatteryBar[i], LV_OBJ_FLAG_HIDDEN);
+            }
+            if (charging) lv_obj_clear_flag(lvBatteryBolt, LV_OBJ_FLAG_HIDDEN);
+            else          lv_obj_add_flag(lvBatteryBolt, LV_OBJ_FLAG_HIDDEN);
+
+            lv_label_set_text_fmt(lvBatteryPctLabel, "%u%%", batPct);
+        } else {
+            lv_obj_add_flag(lvBatteryBody, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(lvBatteryPctLabel, LV_OBJ_FLAG_HIDDEN);
         }
-        if (charging) lv_obj_clear_flag(lvBatteryBolt, LV_OBJ_FLAG_HIDDEN);
-        else          lv_obj_add_flag(lvBatteryBolt, LV_OBJ_FLAG_HIDDEN);
-
-        if (batPct <= 100) lv_label_set_text_fmt(lvBatteryPctLabel, "%u%%", batPct);
-        else               lv_label_set_text(lvBatteryPctLabel, "");
     }
     lv_obj_set_style_text_color(lvWifiLabel, wifiConnected ? LVCOL_GREEN : LVCOL_RED, 0);
     {
@@ -12796,15 +12903,6 @@ static void lvglUpdateMainScreen(float weight, const String& uid, OledState stat
         lv_obj_set_style_bg_color(lvCloudDome1, cloudCol, 0);
         lv_obj_set_style_bg_color(lvCloudDome2, cloudCol, 0);
         lv_obj_set_style_bg_color(lvCloudBase, cloudCol, 0);
-    }
-    if (gMute) {
-        lv_label_set_text(lvVolumeLabel, LV_SYMBOL_MUTE);
-        lv_obj_set_style_text_color(lvVolumeLabel, LVCOL_RED, 0);
-    } else {
-        // Fewer/more arcs depending on the configured level (gVolume 0-100),
-        // matching the two levels LVGL's built-in glyph actually offers.
-        lv_label_set_text(lvVolumeLabel, gVolume >= 50 ? LV_SYMBOL_VOLUME_MAX : LV_SYMBOL_VOLUME_MID);
-        lv_obj_set_style_text_color(lvVolumeLabel, LVCOL_TEXT, 0);
     }
 }
 
@@ -13640,6 +13738,22 @@ static void liveStart() {
 // §26 — SETUP & LOOP
 // ============================================================================
 
+// Where the internal RAM actually goes.
+//
+// Task stacks live in internal DRAM and are declared by hand at creation, so an
+// over-sized one is memory reserved forever and never used. This prints every
+// task's high-water mark — the least free stack it has ever had — next to the
+// heap, which turns "how much could we reclaim" from a guess into a number.
+//
+// It exists because the answer decides an architecture question: a permanently
+// held TLS connection costs roughly 40 KB with mbedTLS's default 16 KB in/out
+// buffers, and free internal heap on this board has been measured dipping into
+// single-digit kilobytes under load. Either the slack is in the stacks or a
+// real-time listener does not fit on this hardware — and that is not something
+// to decide by preference.
+//
+// On ESP-IDF `uxTaskGetStackHighWaterMark` reports **bytes**, unlike vanilla
+// FreeRTOS where it reports words.
 void setup() {
     Serial.begin(115200);
 #if ARDUINO_USB_CDC_ON_BOOT
@@ -13662,8 +13776,6 @@ void setup() {
     firebasePassword     = prefs.getString("fbPass",        "");
     firebaseRefreshToken = prefs.getString("fbRefresh",     "");
     firebaseUid          = prefs.getString("fbUid",         "");
-    gUserAvatarUrl       = prefs.getString("avatarUrl",     "");
-    gUserAvatarUid       = prefs.getString("avatarUid",     "");
     calibrationFactor    = prefs.getFloat("calFactor", calibrationFactor);
     gLanguage            = (Language)prefs.getUChar("language", LANG_EN);
     gVolume              = prefs.getUChar("volume",     75);
@@ -14506,7 +14618,6 @@ void loop() {
             wfPhase = WF_IDLE;
             wfContainerWeight = 0.0f; wfContainerFetched = false;
             currentOledState = OLED_STATE_IDLE;
-            gProductImgReady = false; gLastProductId = 0xFFFFFFFF;
             gLastManufacturer = "--"; gLastMaterial = "--"; gLastColor = "--";
             gLastContainer = 0.0f;
             gLastRackPosition = ""; gLastRackName = ""; gLastLevel = -1; gLastPosition = -1; gLastRackId = "";
@@ -14531,7 +14642,6 @@ void loop() {
         autoTareStableSinceMs = 0;          // Reset auto-tare timer
         autoTareStartedMs = 0;              // Reset auto-tare start time
         currentOledState = OLED_STATE_IDLE;
-        gProductImgReady = false; gLastProductId = 0xFFFFFFFF;
         // Only clear inventory display data when weight is truly low (spool removed).
         // If weight is still substantial, the spool is still on the scale — keep the info visible.
         if (weight < SPOOL_REMOVED_WEIGHT_G) {
@@ -14576,7 +14686,8 @@ void loop() {
         }
 
         // Screensaver: activates after 5 minutes of inactivity
-        if (millis() - gLastActivityMs > 300000UL) {
+        if (gSleepEnabled &&
+            millis() - gLastActivityMs > (uint32_t)gSleepDelayMin * 60000UL) {
             runScreensaver();
             // Screensaver draws directly on the canvas, bypassing LVGL -- same
             // fix as lvglSettingsBtnEvent(), otherwise LVGL has no "dirty" area

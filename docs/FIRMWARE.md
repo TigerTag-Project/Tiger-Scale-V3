@@ -274,13 +274,27 @@ bar and verifies a SHA-256.
 
 ## Keeping the tooling honest
 
+`bash scripts/verify.sh` is the entry point — it runs every guard (i18n, CJK
+font coverage, CODEMAP, TOC, emoji, mojibake, release notes) and then builds.
+Each guard is also runnable on its own:
+
 ```bash
-bash scripts/check-i18n.sh      # 88 keys present in all 8 language blocks
+bash scripts/check-i18n.sh      # every key present in all 8 language blocks, in enum order
 bash scripts/check-codemap.sh   # CODEMAP line numbers still accurate
 bash scripts/update_toc.sh      # regenerate the in-file table of contents
 ```
 
-CI runs all three. They were each broken on macOS before this repository's first
+CI runs them all.
+
+**On Windows**, two quirks: there may be no system `python3` — the scripts fall
+back to PlatformIO's own venv (`~/.platformio/penv/Scripts/python.exe`), or set
+`PYTHON=` explicitly — and the toolchain refuses to *build* under Git Bash/MSYS.
+So run the guards under Git Bash (`bash scripts/verify.sh --quick`) and build in
+PowerShell:
+
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -e esp32s3_hsu
+``` They were each broken on macOS before this repository's first
 commit — two used bash-4-only builtins and GNU-only grep flags, and
 `check-codemap.sh` printed `PASSED` while verifying nothing at all. If you
 rewrite them, keep the property that an empty input set is an error rather than a

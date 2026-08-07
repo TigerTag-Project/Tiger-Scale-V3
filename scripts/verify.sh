@@ -30,11 +30,21 @@ FAILED=0
 step() { printf "\n\033[1m==> %s\033[0m\n" "$1"; }
 fail() { echo "    FAILED: $1"; FAILED=$((FAILED+1)); }
 
+# Python: not every bench has a system python3 (the Windows one doesn't).
+# $PYTHON wins if set; otherwise fall back to PlatformIO's own venv, which is
+# guaranteed present on any machine that can build this project at all.
+if [ -n "${PYTHON:-}" ]; then PY="$PYTHON"
+elif command -v python3 >/dev/null 2>&1; then PY=python3
+elif [ -x "$HOME/.platformio/penv/bin/python" ]; then PY="$HOME/.platformio/penv/bin/python"
+elif [ -x "$HOME/.platformio/penv/Scripts/python.exe" ]; then PY="$HOME/.platformio/penv/Scripts/python.exe"
+else echo "No python3 found — set PYTHON=/path/to/python and re-run" >&2; exit 2
+fi
+
 if [ "$FIX" -eq 1 ]; then
   step "Regenerating the table of contents"
   bash scripts/update_toc.sh >/dev/null && echo "    ok"
   step "Regenerating CODEMAP line numbers"
-  python3 scripts/sync-codemap.py || fail "sync-codemap"
+  "$PY" scripts/sync-codemap.py || fail "sync-codemap"
 fi
 
 step "Table of contents is current"
@@ -53,19 +63,27 @@ step "CODEMAP anchors"
 bash scripts/check-codemap.sh 2>&1 | tail -1 | sed 's/^/    /'
 bash scripts/check-codemap.sh >/dev/null 2>&1 || {
   fail "check-codemap"
-  echo "    fix with: python3 scripts/sync-codemap.py"
+  echo "    fix with: $PY scripts/sync-codemap.py"
 }
 
 step "i18n — firmware table and web locales"
-python3 scripts/check-i18n.py 2>&1 | tail -1 | sed 's/^/    /'
-python3 scripts/check-i18n.py >/dev/null 2>&1 || {
+"$PY" scripts/check-i18n.py 2>&1 | tail -1 | sed 's/^/    /'
+"$PY" scripts/check-i18n.py >/dev/null 2>&1 || {
   fail "check-i18n"
-  python3 scripts/check-i18n.py 2>&1 | grep -E "missing|order|empty|invalid" | head -5 | sed 's/^/    /'
+  "$PY" scripts/check-i18n.py 2>&1 | grep -E "missing|order|empty|invalid" | head -5 | sed 's/^/    /'
+}
+
+step "CJK subset fonts cover every string"
+"$PY" scripts/check-cjk-font.py 2>&1 | tail -1 | sed 's/^/    /'
+"$PY" scripts/check-cjk-font.py >/dev/null 2>&1 || {
+  fail "check-cjk-font"
+  "$PY" scripts/check-cjk-font.py 2>&1 | grep -E "missing|MISSING|regenerate" | head -4 | sed 's/^/    /'
+  echo "    fix with: bash scripts/make-cjk-font.sh"
 }
 
 step "No emoji in documentation"
-python3 scripts/check-emoji.py 2>&1 | tail -1 | sed 's/^/    /'
-python3 scripts/check-emoji.py >/dev/null 2>&1 || fail "check-emoji"
+"$PY" scripts/check-emoji.py 2>&1 | tail -1 | sed 's/^/    /'
+"$PY" scripts/check-emoji.py >/dev/null 2>&1 || fail "check-emoji"
 
 step "No mojibake in code or data"
 bash scripts/check-mojibake.sh 2>&1 | tail -1 | sed 's/^/    /'

@@ -128,3 +128,4 @@ LOCAL.md
 # Per-machine Claude Code settings. The agent definitions next to it
 # (.claude/agents/) are shared and committed; this one is not.
 .claude/settings.local.json
+__pycache__/

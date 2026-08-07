@@ -19,30 +19,30 @@
 //   OTA CONFIGURATION                                      369-  391
 //   FORWARD DECLARATIONS                                   392-  542
 //   WEIGHT ROUNDING                                        543-  562
-//   GLOBAL OBJECTS                                         563- 1053
-//   CONFIGURATION VARIABLES                               1054- 1454
-//   OLED DISPLAY                                          1455- 2178
-//   CLOUD PARSING                                         2179- 2193
-//   WIFI SETUP                                            2194- 6008
-//   LITTLEFS                                              6009- 6308
-//   FIREBASE AUTHENTICATION                               6309- 7821
-//   WEBSOCKET                                             7822- 7848
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  7849- 7946
-//   UNIFIED WS FRAME BUILDER                              7947- 8037
-//   WEIGHT FILTER HELPERS                                 8038- 8052
-//   POST-SEND STATE RESET (shared by all send paths)      8053- 8073
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  8074- 8330
-//   WEB SERVER                                            8331- 9616
-//   CLOUD COMMUNICATION                                   9617- 9799
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  9800-10257
-//   mDNS                                                 10258-10295
-//   SCALE                                                10296-10462
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  10463-10580
-//   RFID                                                 10581-11599
-//   OTA — Over-the-air firmware + filesystem update    11600-12256
-//   LVGL bridge + main weigh screen                      12257-12970
-//   Remote live view: the screen out, taps back in       12971-13798
-//   SETUP & LOOP                                         13799-14840
+//   GLOBAL OBJECTS                                         563- 1065
+//   CONFIGURATION VARIABLES                               1066- 1466
+//   OLED DISPLAY                                          1467- 2190
+//   CLOUD PARSING                                         2191- 2205
+//   WIFI SETUP                                            2206- 6033
+//   LITTLEFS                                              6034- 6333
+//   FIREBASE AUTHENTICATION                               6334- 7846
+//   WEBSOCKET                                             7847- 7873
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  7874- 7971
+//   UNIFIED WS FRAME BUILDER                              7972- 8062
+//   WEIGHT FILTER HELPERS                                 8063- 8077
+//   POST-SEND STATE RESET (shared by all send paths)      8078- 8098
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  8099- 8355
+//   WEB SERVER                                            8356- 9641
+//   CLOUD COMMUNICATION                                   9642- 9824
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  9825-10282
+//   mDNS                                                 10283-10320
+//   SCALE                                                10321-10487
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  10488-10605
+//   RFID                                                 10606-11624
+//   OTA — Over-the-air firmware + filesystem update    11625-12281
+//   LVGL bridge + main weigh screen                      12282-13000
+//   Remote live view: the screen out, taps back in       13001-13828
+//   SETUP & LOOP                                         13829-14870
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -205,7 +205,7 @@ struct PairHttp {
 #define DARK_BG 0x0000
 
 Language gLanguage = LANG_EN;
-uint8_t  gVolume      = 75;   // 0–100
+uint8_t  gVolume      = 50;   // 0–100
 bool     gMute        = false;
 uint8_t  gSoundTheme  = 0;    // 0=Beep 1=Double 2=Chime 3=Click
 
@@ -613,10 +613,18 @@ extern "C" {
 }
 static lv_font_t gFont14, gFont16, gFont20;
 
+// What LV_FONT_DEFAULT resolves to. lv_conf.h points the macro here instead of
+// at &lv_font_montserrat_14 so that the labels which never name a font -- which
+// is nearly all of them -- get the fallback-carrying face too. Starts at the
+// plain Montserrat so that anything drawn before lvglInitFonts() still has a
+// font, rather than a null dereference.
+extern "C" const lv_font_t *lv_font_ui_default = &lv_font_montserrat_14;
+
 static void lvglInitFonts() {
     gFont14 = lv_font_montserrat_14; gFont14.fallback = &font_cjk_14;
     gFont16 = lv_font_montserrat_16; gFont16.fallback = &font_cjk_16;
     gFont20 = lv_font_montserrat_20; gFont20.fallback = &font_cjk_20;
+    lv_font_ui_default = &gFont14;
 }
 
 // One-shot check, reported over /api/logs because the USB console on this unit
@@ -628,6 +636,10 @@ static void lvglReportFontProbe() {
     struct { const char *name; const lv_font_t *f; } probes[] = {
         { "font14", &gFont14 }, { "font16", &gFont16 }, { "font20", &gFont20 },
         { "cjk14", &font_cjk_14 },
+        // The one that actually mattered: what a label inherits when it names no
+        // font. Probing only the three named faces is what made this look fixed
+        // for a whole session while the screen still showed boxes.
+        { "inherited", lv_font_default() },
     };
     for (auto &p : probes) {
         lv_font_glyph_dsc_t dsc;
@@ -2388,7 +2400,18 @@ static String tsPick_network() {
         sPickAction = PA_NONE;
 
         Serial.println("[WIFI] tsPick: starting scan");
-        int n = WiFi.scanNetworks();
+        WiFi.scanNetworks(true);  // async — lets the loading screen paint instead of freezing the UI
+
+        lv_obj_t *loadCol;
+        lv_obj_t *loadScr = lvglCenteredScreen(&loadCol);
+        lvglAddSpinner(loadCol);
+        lvglAddCenteredLabel(loadCol, t(I18N_WIFI_SCANNING), LVCOL_TEXT, &gFont20);
+        lv_scr_load(loadScr);
+        if (prevScr) { lv_obj_del(prevScr); prevScr = nullptr; }
+
+        int n;
+        while ((n = WiFi.scanComplete()) == WIFI_SCAN_RUNNING) { lv_timer_handler(); delay(30); }
+        if (n == WIFI_SCAN_FAILED) n = 0;
         Serial.printf("[WIFI] tsPick: scan done n=%d\n", n);
 
         lv_obj_t *scr = lv_obj_create(nullptr);
@@ -2541,7 +2564,7 @@ static String tsPick_network() {
         lv_obj_center(cancelIcon);
 
         lv_scr_load(scr);
-        if (prevScr) { lv_obj_del(prevScr); prevScr = nullptr; }
+        lv_obj_del(loadScr);
 
         while (sPickAction == PA_NONE) { lv_timer_handler(); delay(5); }
 
@@ -3628,8 +3651,8 @@ static void runVolumeSettings() {
         lv_obj_add_event_cb(minusBtn, actionCb, LV_EVENT_CLICKED, nullptr);
         lv_obj_t *minusLbl = lv_label_create(minusBtn);
         lv_label_set_text(minusLbl, "-");
-        lv_obj_set_style_text_color(minusLbl, LVCOL_RED, 0);
-        lv_obj_set_style_text_font(minusLbl, &gFont20, 0);
+        lv_obj_set_style_text_color(minusLbl, LVCOL_TEXT, 0);
+        lv_obj_set_style_text_font(minusLbl, &lv_font_montserrat_28, 0);
         lv_obj_center(minusLbl);
 
         lv_obj_t *plusBtn = lv_btn_create(scr);
@@ -3644,8 +3667,8 @@ static void runVolumeSettings() {
         lv_obj_add_event_cb(plusBtn, actionCb, LV_EVENT_CLICKED, nullptr);
         lv_obj_t *plusLbl = lv_label_create(plusBtn);
         lv_label_set_text(plusLbl, "+");
-        lv_obj_set_style_text_color(plusLbl, LVCOL_GREEN, 0);
-        lv_obj_set_style_text_font(plusLbl, &gFont20, 0);
+        lv_obj_set_style_text_color(plusLbl, LVCOL_TEXT, 0);
+        lv_obj_set_style_text_font(plusLbl, &lv_font_montserrat_28, 0);
         lv_obj_center(plusLbl);
 
         // Sound theme label + 4 square cards, side by side
@@ -3737,7 +3760,7 @@ static void runLanguageSettings() {
         { LANG_IT, "Italiano"  },
         { LANG_PL, "Polski"    },
         { LANG_PT, "Portugues" },
-        { LANG_ZH, "Zhongwen"  },
+        { LANG_ZH, "中文" },   // a language names itself in its own script
     };
     const int bx[8] = {X0,X1,X2,X3, X0,X1,X2,X3};
     const int by[8] = {Y0,Y0,Y0,Y0, Y1,Y1,Y1,Y1};
@@ -5846,8 +5869,10 @@ static void runSettingsMenu() {
         char calBuf[20]; snprintf(calBuf, sizeof(calBuf), "%.2f", calibrationFactor);
         makeCard(X0, Y1, CI_TARGET, nullptr, LVCOL_TEXT, String(calBuf), SA_CALIBRATE);
 
-        const char *langNames[6] = { "English", "Portugues", "Francais", "Espanol", "Deutsch", "Zhongwen" };
-        String langVal = langNames[(int)gLanguage < 6 ? (int)gLanguage : 0];
+        // Indexed by the Language enum — one entry per language, same order.
+        const char *langNames[8] = { "English", "Portugues", "Francais", "Espanol",
+                                     "Deutsch", "中文", "Italiano", "Polski" };
+        String langVal = langNames[(int)gLanguage < 8 ? (int)gLanguage : 0];
         makeCard(X1, Y1, CI_GLOBE, nullptr, LVCOL_TEXT, langVal, SA_LANGUAGE);
 
         makeCard(X2, Y1, CI_CHIP, nullptr, LVCOL_TEXT, String("RFID"), SA_HARDWARE);
@@ -12752,7 +12777,11 @@ static void lvglBuildMainScreen() {
     lv_obj_set_style_text_font(tareValueLabel, &lv_font_montserrat_28, 0);
     lvTareCaption = lv_label_create(tareCol);
     lv_label_set_text(lvTareCaption, t(I18N_TARE));
-    lv_obj_set_style_text_color(lvTareCaption, LVCOL_MUTED, 0);
+    // White at 16 rather than muted grey at 14. A Han character carries several
+    // strokes in the space a Latin letter uses for one, so the grey that read
+    // fine under "TARE" turns into a smudge under a translated caption.
+    lv_obj_set_style_text_color(lvTareCaption, LVCOL_TEXT, 0);
+    lv_obj_set_style_text_font(lvTareCaption, &gFont16, 0);
 
     lv_obj_t *settingsBtn = lv_btn_create(lvScreen);
     lv_obj_set_size(settingsBtn, SETTINGS_W, BTN_H);
@@ -12777,7 +12806,8 @@ static void lvglBuildMainScreen() {
     lv_obj_set_style_text_font(gearLabel, &lv_font_montserrat_28, 0);
     lvSettingsCaption = lv_label_create(settingsCol);
     lv_label_set_text(lvSettingsCaption, t(I18N_SETTINGS));
-    lv_obj_set_style_text_color(lvSettingsCaption, LVCOL_MUTED, 0);
+    lv_obj_set_style_text_color(lvSettingsCaption, LVCOL_TEXT, 0);
+    lv_obj_set_style_text_font(lvSettingsCaption, &gFont16, 0);
 
     lv_scr_load(lvScreen);
 }
@@ -13840,7 +13870,7 @@ void setup() {
     firebaseUid          = prefs.getString("fbUid",         "");
     calibrationFactor    = prefs.getFloat("calFactor", calibrationFactor);
     gLanguage            = (Language)prefs.getUChar("language", LANG_EN);
-    gVolume              = prefs.getUChar("volume",     75);
+    gVolume              = prefs.getUChar("volume",     50);
     gMute                = prefs.getBool ("mute",       false);
     gSoundTheme          = prefs.getUChar("soundTheme", 0);
     servoEnabled         = prefs.getBool("servoEnabled",   false);

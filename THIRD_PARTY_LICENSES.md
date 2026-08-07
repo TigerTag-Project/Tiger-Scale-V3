@@ -38,7 +38,7 @@ straightforward. This is a pointer, not legal advice.
 | Icons in `svg/` | Project-created, MIT, alongside items sourced from [SVG Repo](https://www.svgrepo.com/) under their respective licenses (see the file names) |
 | Brand logos in `data/www/img/` | Trademarks of their respective owners (eSun, SUNLU, Rosa3D, Landu, Jamghe, R3D), included for identification of the material a tag describes. Not an endorsement, in either direction. |
 | Fonts | Montserrat, bundled inside LVGL under the SIL Open Font License 1.1 |
-| Chinese glyphs | `TigerTagSplashESP32/font_cjk_*.c`, generated from [Noto Sans SC](https://github.com/google/fonts/tree/main/ofl/notosanssc) under the SIL Open Font License 1.1. Only the 173 characters our own translations use are included, not the face. Regenerate with `bash scripts/make-cjk-font.sh`. |
+| Chinese glyphs | `TigerTagSplashESP32/font_cjk_*.c`, generated from [Noto Sans SC](https://github.com/notofonts/noto-cjk) Medium (static weight, release tag `Sans2.004`) under the SIL Open Font License 1.1. Only the characters our own translations use are included, not the face. Regenerate with `bash scripts/make-cjk-font.sh`; `scripts/check-cjk-font.py` verifies coverage. |
 | `lv_font_conv` | MIT. Used at build time to produce the file above; fetched on demand, never committed. |
 
 ## Vendor documentation

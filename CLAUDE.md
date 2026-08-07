@@ -80,6 +80,7 @@ bash scripts/bump-version.sh X.Y.Z   # version + scaffold release notes + change
 | `check-codemap` reports drift | `python3 scripts/sync-codemap.py` |
 | CI says the TOC is out of date | `bash scripts/update_toc.sh`, commit the .ino |
 | i18n check fails | it names the language and the missing key, or the position where the order diverges |
+| CJK font check fails | a Chinese string uses a character the subset fonts don't carry — `bash scripts/make-cjk-font.sh` |
 | release workflow refuses to publish | `docs/release-notes/v<version>.md` is missing or still holds the scaffold text |
 
 **Pushing needs the right GitHub account.** The repository belongs to the

@@ -235,10 +235,23 @@
 #define LV_FONT_UNSCII_8  0
 #define LV_FONT_UNSCII_16 0
 
-#define LV_FONT_CUSTOM_DECLARE
+#define LV_FONT_CUSTOM_DECLARE  extern const lv_font_t *lv_font_ui_default;
 
 /*Always set a default font*/
-#define LV_FONT_DEFAULT &lv_font_montserrat_14
+/* A variable, not the address of a constant. Almost no label in this UI calls
+ * lv_obj_set_style_text_font, so almost every one resolves its font through this
+ * macro — and pinning it to &lv_font_montserrat_14 pinned them to a face that is
+ * const in flash and therefore cannot carry a .fallback, which is why Chinese
+ * rendered as empty boxes everywhere except the handful of labels naming a font.
+ * Handing the font to lv_theme_default_init() does not help: the default theme
+ * sets text_font on nothing but the checkbox marker.
+ *
+ * The firmware repoints this at a RAM copy carrying the CJK fallback, in
+ * lvglInitFonts(), before any object exists. Every use of LV_FONT_DEFAULT in the
+ * library is a runtime expression inside a function -- lv_style.c, lv_theme.c,
+ * lv_hal_disp.c, lv_draw_rect.c, lv_draw_label.c, lv_font.h -- and none is a
+ * static initialiser, so a variable substitutes for the constant. */
+#define LV_FONT_DEFAULT lv_font_ui_default
 
 #define LV_FONT_FMT_TXT_LARGE 0
 #define LV_USE_FONT_COMPRESSED 0

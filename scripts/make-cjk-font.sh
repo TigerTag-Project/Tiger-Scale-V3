@@ -10,14 +10,22 @@
 #
 # That subsetting is what makes this affordable. A full GB2312 face is 6763
 # glyphs and several megabytes; the strings on this device need under 200, which
-# costs about 76 KB of flash across the three sizes. Re-run this after adding or
+# costs about 80 KB of flash across the three sizes. Re-run this after adding or
 # changing any Chinese string — a character that is not in the subset renders as
-# a blank box, and nothing else will tell you.
+# a blank box, and `scripts/check-cjk-font.py` (run by verify.sh) is what turns
+# that into a build failure instead of a surprise on the panel.
 #
 # Sizes 14, 16 and 20 only: 28 and 40 are used for the weight and the tare
 # readout, which are digits.
 #
-# Font: Noto Sans SC, SIL Open Font License 1.1 (see THIRD_PARTY_LICENSES.md).
+# Font: Noto Sans SC **Medium**, SIL Open Font License 1.1 (see
+# THIRD_PARTY_LICENSES.md). Medium, not Regular: a Han glyph packs several
+# strokes into the space a Latin letter uses for one, so at 14-16 px on this
+# panel the Regular reads thinner than the Montserrat Regular it sits beside.
+# Medium restores the match; SemiBold and up clog the counters at these sizes.
+# Google Fonts only carries the variable [wght] file — the static weights live
+# in the notofonts/noto-cjk repository, pinned here to a release tag so the
+# same command regenerates the same font next year.
 # Tool: lv_font_conv, MIT. Both are fetched on demand and neither is committed —
 # only the generated .c files are, so a normal build needs no network.
 
@@ -26,40 +34,38 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 WORK="${TMPDIR:-/tmp}/tigerscale-cjk"
-TTF="$WORK/NotoSansSC.ttf"
-FONT_URL="https://raw.githubusercontent.com/google/fonts/main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf"
+OTF="$WORK/NotoSansSC-Medium.otf"
+FONT_URL="https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/SubsetOTF/SC/NotoSansSC-Medium.otf"
 
 command -v npx >/dev/null || { echo "npx not found — Node.js is required" >&2; exit 1; }
+
+# Same Python fallback as verify.sh: the Windows bench has no system python3,
+# but PlatformIO's venv is present on anything that builds this project.
+if [ -n "${PYTHON:-}" ]; then PY="$PYTHON"
+elif command -v python3 >/dev/null 2>&1; then PY=python3
+elif [ -x "$HOME/.platformio/penv/bin/python" ]; then PY="$HOME/.platformio/penv/bin/python"
+elif [ -x "$HOME/.platformio/penv/Scripts/python.exe" ]; then PY="$HOME/.platformio/penv/Scripts/python.exe"
+else echo "No python3 found — set PYTHON=/path/to/python and re-run" >&2; exit 2
+fi
 mkdir -p "$WORK"
 
-if [ ! -f "$TTF" ]; then
-  echo "==> fetching Noto Sans SC"
-  curl -sL --fail -o "$TTF" "$FONT_URL"
+if [ ! -f "$OTF" ]; then
+  echo "==> fetching Noto Sans SC Medium"
+  curl -sL --fail --retry 3 -o "$OTF" "$FONT_URL"
 fi
 
-echo "==> collecting the characters i18n.h actually uses"
-CHARS=$(python3 - <<'PY'
-import re
-s = open('TigerTagSplashESP32/i18n.h', encoding='utf-8').read()
-i = s.index('    // ZH ')
-j = s.index('\n    },', i)
-# String literals only. Reading the whole block would sweep in the em dash from
-# the comment above it, and an argument starting with a non-ASCII dash makes npx
-# treat it as a flag.
-lits = re.findall(r'/\* \w+\s*\*/ "([^"]*)"', s[i:j])
-print(''.join(sorted({c for lit in lits for c in lit if ord(c) > 127})), end='')
-PY
-)
-echo "    ${#CHARS} distinct glyphs"
+echo "==> collecting the characters the firmware actually uses"
+CHARS=$("$PY" scripts/cjk-chars.py)
 
 for SZ in 14 16 20; do
   OUT="TigerTagSplashESP32/font_cjk_$SZ.c"
   npx --yes lv_font_conv \
-      --font "$TTF" --symbols "$CHARS" \
+      --font "$OTF" --symbols "$CHARS" \
       --size "$SZ" --bpp 4 --format lvgl --no-compress \
       --lv-include lvgl.h -o "$OUT"
   echo "    $OUT"
 done
 
 echo
+"$PY" scripts/check-cjk-font.py
 echo "Done. Rebuild to pick them up:  pio run -e esp32s3_hsu"

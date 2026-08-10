@@ -399,7 +399,7 @@ patience — testing on real hardware, catching what a compiler cannot, and tell
 us plainly when something did not work.
 
 - **[OpenMaker](https://github.com/BenGlut)** (BenGlut)
-- **Rui RP3D**
+- **[Rui RP3D](https://github.com/RP3D-S)**
 - **[Ptitlouis6012](https://github.com/Ptitlouis6012)**
 
 And thank you to everyone supporting the project through Buy Me a Coffee. You know

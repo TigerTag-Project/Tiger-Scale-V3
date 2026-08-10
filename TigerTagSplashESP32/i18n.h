@@ -172,6 +172,8 @@ enum LangKey : uint8_t {
     I18N_CAL_PROMPT_SUB,
     I18N_CAL_WIZARD,
     I18N_MAX_G,
+    I18N_ACC_PROMPT_Q,
+    I18N_ACC_CONNECT,
     I18N_COUNT,
 };
 
@@ -324,6 +326,8 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* CAL_PROMPT_SUB */ "Weighings are not reliable until the first calibration",
           /* CAL_WIZARD     */ "Calibration Wizard",
           /* MAX_G          */ "max. %d g",
+          /* ACC_PROMPT_Q   */ "Connect your account",
+          /* ACC_CONNECT    */ "Sign in",
     },
     // PT (Brazilian Portuguese — Studio's "pt")
     {
@@ -470,6 +474,8 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* CAL_PROMPT_SUB  */ "As pesagens nao sao confiaveis antes da primeira calibracao",
           /* CAL_WIZARD     */ "Assistente de calibracao",
           /* MAX_G          */ "max. %d g",
+          /* ACC_PROMPT_Q   */ "Conecte sua conta",
+          /* ACC_CONNECT    */ "Conectar",
     },
     // FR
     {
@@ -616,6 +622,8 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* CAL_PROMPT_SUB */ "Les pesees ne seront pas fiables avant la premiere calibration",
           /* CAL_WIZARD     */ "Calibration magique",
           /* MAX_G          */ "max. %d g",
+          /* ACC_PROMPT_Q   */ "Connectez votre compte",
+          /* ACC_CONNECT    */ "Connexion",
     },
     // ES
     {
@@ -762,6 +770,8 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* CAL_PROMPT_SUB */ "Los pesajes no son fiables antes de la primera calibracion",
           /* CAL_WIZARD     */ "Asistente de calibracion",
           /* MAX_G          */ "max. %d g",
+          /* ACC_PROMPT_Q   */ "Conecte su cuenta",
+          /* ACC_CONNECT    */ "Conectar",
     },
     // DE
     {
@@ -908,6 +918,8 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* CAL_PROMPT_SUB */ "Wiegungen sind vor der ersten Kalibrierung unzuverlaessig",
           /* CAL_WIZARD     */ "Kalibrier-Assistent",
           /* MAX_G          */ "max. %d g",
+          /* ACC_PROMPT_Q   */ "Konto verbinden",
+          /* ACC_CONNECT    */ "Verbinden",
     },
     // ZH (Han characters, not pinyin)
     // The glyphs come from a generated subset font — scripts/make-cjk-font.sh —
@@ -1060,6 +1072,8 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* CAL_PROMPT_SUB */ "首次校准前称重不可靠",
         /* CAL_WIZARD     */ "校准向导",
         /* MAX_G          */ "最多 %d g",
+        /* ACC_PROMPT_Q   */ "连接您的账户",
+        /* ACC_CONNECT    */ "连接",
     },
     // IT
     {
@@ -1206,6 +1220,8 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* CAL_PROMPT_SUB */ "Le pesate non sono affidabili prima della prima calibrazione",
           /* CAL_WIZARD     */ "Assistente calibrazione",
           /* MAX_G          */ "max. %d g",
+          /* ACC_PROMPT_Q   */ "Collega il tuo account",
+          /* ACC_CONNECT    */ "Connetti",
     },
     // PL
     {
@@ -1352,6 +1368,8 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* CAL_PROMPT_SUB */ "Wazenia nie sa wiarygodne przed pierwsza kalibracja",
           /* CAL_WIZARD     */ "Kreator kalibracji",
           /* MAX_G          */ "max. %d g",
+          /* ACC_PROMPT_Q   */ "Polacz swoje konto",
+          /* ACC_CONNECT    */ "Polacz",
     },
     // PT-PT (European Portuguese — Studio's "pt-pt")
     {
@@ -1498,6 +1516,8 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* CAL_PROMPT_SUB  */ "As pesagens nao sao fiaveis antes da primeira calibracao",
         /* CAL_WIZARD      */ "Assistente de calibracao",
         /* MAX_G           */ "max. %d g",
+        /* ACC_PROMPT_Q   */ "Ligue a sua conta",
+        /* ACC_CONNECT    */ "Ligar",
     },
 };
 

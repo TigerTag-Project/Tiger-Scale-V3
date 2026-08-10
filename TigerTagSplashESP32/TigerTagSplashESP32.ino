@@ -23,26 +23,26 @@
 //   CONFIGURATION VARIABLES                               1076- 1479
 //   OLED DISPLAY                                          1480- 2219
 //   CLOUD PARSING                                         2220- 2234
-//   WIFI SETUP                                            2235- 6605
-//   LITTLEFS                                              6606- 6905
-//   FIREBASE AUTHENTICATION                               6906- 8528
-//   WEBSOCKET                                             8529- 8555
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  8556- 8690
-//   UNIFIED WS FRAME BUILDER                              8691- 8781
-//   WEIGHT FILTER HELPERS                                 8782- 8796
-//   POST-SEND STATE RESET (shared by all send paths)      8797- 8817
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  8818- 9074
-//   WEB SERVER                                            9075-10360
-//   CLOUD COMMUNICATION                                  10361-10543
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10544-11050
-//   mDNS                                                 11051-11088
-//   SCALE                                                11089-11259
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11260-11377
-//   RFID                                                 11378-12314
-//   OTA — Over-the-air firmware + filesystem update    12315-12971
-//   LVGL bridge + main weigh screen                      12972-13792
-//   Remote live view: the screen out, taps back in       13793-14637
-//   SETUP & LOOP                                         14638-15786
+//   WIFI SETUP                                            2235- 6606
+//   LITTLEFS                                              6607- 6906
+//   FIREBASE AUTHENTICATION                               6907- 8529
+//   WEBSOCKET                                             8530- 8556
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  8557- 8691
+//   UNIFIED WS FRAME BUILDER                              8692- 8782
+//   WEIGHT FILTER HELPERS                                 8783- 8797
+//   POST-SEND STATE RESET (shared by all send paths)      8798- 8818
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  8819- 9075
+//   WEB SERVER                                            9076-10361
+//   CLOUD COMMUNICATION                                  10362-10544
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10545-11051
+//   mDNS                                                 11052-11089
+//   SCALE                                                11090-11260
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11261-11378
+//   RFID                                                 11379-12315
+//   OTA — Over-the-air firmware + filesystem update    12316-12972
+//   LVGL bridge + main weigh screen                      12973-13793
+//   Remote live view: the screen out, taps back in       13794-14638
+//   SETUP & LOOP                                         14639-15787
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -5398,8 +5398,9 @@ static bool obPrompt(int iconKind, const char *title, const char *sub, const cha
     }
 
     lv_obj_t *titleLbl = lvglAddCenteredLabel(col, title, LVCOL_TEXT, &gFont20);
-    lv_obj_t *subLbl   = lvglAddCenteredLabel(col, sub, LVCOL_MUTED, &gFont14);
-    if (asModal) { lv_obj_set_width(titleLbl, 260); lv_obj_set_width(subLbl, 260); }
+    lv_obj_t *subLbl = (sub && sub[0])
+        ? lvglAddCenteredLabel(col, sub, LVCOL_MUTED, &gFont14) : nullptr;
+    if (asModal) { lv_obj_set_width(titleLbl, 260); if (subLbl) lv_obj_set_width(subLbl, 260); }
 
     lv_obj_t *btnRow = lv_obj_create(col);
     lv_obj_remove_style_all(btnRow);
@@ -14874,7 +14875,7 @@ void loop() {
             && wfPhase == WF_IDLE && WiFi.isConnected()
             && !firebaseAuth && firebaseRefreshToken.length() == 0
             && lvScreen != nullptr && lv_scr_act() == lvScreen) {
-            if (obPrompt(OB_ICON_ACCOUNT, t(I18N_OB_ACCOUNT_Q), t(I18N_OB_ACCOUNT_SUB), t(I18N_LINK_NOW), true)) {
+            if (obPrompt(OB_ICON_ACCOUNT, t(I18N_ACC_PROMPT_Q), "", t(I18N_ACC_CONNECT), true)) {
                 if (runSignInForm()) firebaseAuth = true;
             }
             if (lvScreen) lv_obj_invalidate(lvScreen);

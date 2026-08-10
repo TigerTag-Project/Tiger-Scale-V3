@@ -23,7 +23,10 @@ implying a hardware behaviour was confirmed when only the build was is not.
       numbers if it reported drift)
 - [ ] `bash scripts/check-i18n.sh` passes (if I touched `i18n.h`)
 - [ ] `bash scripts/update_toc.sh` run (if I added or moved a `// §N — ` banner)
-- [ ] `WORKLOG.md` updated
+- [ ] `WORKLOG.md` updated — **maintainers only**. Contributing from a fork?
+      Leave WORKLOG.md alone: it is the maintainers' since-last-commit log,
+      reset at every checkpoint, so a fork PR that writes into it will always
+      end up conflicting.
 - [ ] Comments I touched are still true of the code around them
 - [ ] Smallest diff that does the job — no unrelated reformatting
 

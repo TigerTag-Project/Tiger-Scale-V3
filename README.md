@@ -246,6 +246,7 @@ Full terms: **[TRADEMARK.md](TRADEMARK.md)**.
 
 | Document | For |
 |----------|-----|
+| **[WHATSNEW.md](WHATSNEW.md)** | What each release changes, in one scroll |
 | **[docs/INSTALLATION.md](docs/INSTALLATION.md)** | Building, flashing, first boot |
 | **[docs/HARDWARE.md](docs/HARDWARE.md)** | Pinout, buses, wiring per transport |
 | **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** | When something doesn't work |

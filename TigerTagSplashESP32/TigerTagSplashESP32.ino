@@ -42,7 +42,7 @@
 //   OTA — Over-the-air firmware + filesystem update    12315-12971
 //   LVGL bridge + main weigh screen                      12972-13792
 //   Remote live view: the screen out, taps back in       13793-14637
-//   SETUP & LOOP                                         14638-15767
+//   SETUP & LOOP                                         14638-15786
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -14860,6 +14860,25 @@ void loop() {
                 if (lvScreen) lv_obj_invalidate(lvScreen);
             }
             sCalPromptAt = millis() + 300000UL;
+        }
+    }
+    {
+        // Account side panel, gentler cadence than the calibration one:
+        // linking is OPTIONAL by design (the scale works offline, the README
+        // promises it), so this reminds rather than harasses — 10 s after
+        // Home, then every 30 minutes, and only while WiFi is up, no account
+        // exists, and no saved account is mid-sign-in.
+        static uint32_t sAccPromptAt = 0;
+        if (gBootComplete && sAccPromptAt == 0) sAccPromptAt = millis() + 10000;
+        if (gBootComplete && sAccPromptAt != 0 && millis() >= sAccPromptAt
+            && wfPhase == WF_IDLE && WiFi.isConnected()
+            && !firebaseAuth && firebaseRefreshToken.length() == 0
+            && lvScreen != nullptr && lv_scr_act() == lvScreen) {
+            if (obPrompt(OB_ICON_ACCOUNT, t(I18N_OB_ACCOUNT_Q), t(I18N_OB_ACCOUNT_SUB), t(I18N_LINK_NOW), true)) {
+                if (runSignInForm()) firebaseAuth = true;
+            }
+            if (lvScreen) lv_obj_invalidate(lvScreen);
+            sAccPromptAt = millis() + 1800000UL;
         }
     }
     if (gSettingsRequested) {

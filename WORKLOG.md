@@ -17,3 +17,13 @@ Reset this file to the header above at each checkpoint. Nothing is lost: the raw
 log lives in git history and the synthesised entry lives in the changelog.
 
 ---
+
+## Added
+
+- A no-account side panel: while the scale has no linked account (and none
+  is mid-sign-in), the account prompt card slides in over Home — same
+  right-side panel as the calibration one, existing "Link a TigerTag
+  account?" texts — 10 s after Home and then only every 30 minutes, WiFi
+  present, never during a weigh session: linking is optional by design, so
+  it reminds rather than harasses. "Link now" opens the sign-in options —
+  `loop()` (§26)

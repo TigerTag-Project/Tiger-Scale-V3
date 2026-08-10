@@ -36,10 +36,11 @@ import sys
 I18N_H = "TigerTagSplashESP32/i18n.h"
 LOCALE_GLOB = "data/www/locales/*.json"
 
-# A language block opens with "    // XX" — exactly two uppercase letters, then
+# A language block opens with "    // XX" or "    // XX-YY" (regional variant,
 # end of line or a parenthesised note. Ordinary section comments inside the table,
-# such as "    // OTA update screen", must not be mistaken for a language.
-LANG_MARKER = re.compile(r"^    // ([A-Z]{2})(?:[ \t]*$|[ \t]+\()")
+# e.g. PT-PT); a plain comment such as "    // OTA update screen" must not be
+# mistaken for a language.
+LANG_MARKER = re.compile(r"^    // ([A-Z]{2}(?:-[A-Z]{2})?)(?:[ \t]*$|[ \t]+\()")
 ENTRY = re.compile(r"/\*\s*([A-Za-z0-9_]+)\s*\*/\s*(\"(?:[^\"\\]|\\.)*\")")
 
 

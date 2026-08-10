@@ -231,14 +231,14 @@ refuses to do to the heap.
 
 ## i18n
 
-`TigerTagSplashESP32/i18n.h` — **103 keys × 8 languages** (EN/PT/FR/ES/DE/ZH/IT/PL).
+`TigerTagSplashESP32/i18n.h` — **143 keys × 9 languages** (EN/PT/FR/ES/DE/ZH/IT/PL/PT-PT — Studio Manager's exact list).
 
 1. Add the key to the enum, before `I18N_COUNT`.
 2. Add one entry to **every** language block, in the same order as the enum.
 3. `bash scripts/check-i18n.sh` must exit 0 before you compile.
 
-The web UI's translations are a separate set: `data/www/locales/*.json` (9 files,
-including `pt-pt`, which the firmware table does not have).
+The web UI's translations are a separate set: `data/www/locales/*.json` (9 files, same
+language set as the firmware since PT-PT joined it).
 
 ## Repository conventions
 

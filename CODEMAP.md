@@ -72,63 +72,63 @@ Two gaps and two oddities in that numbering, all deliberate:
 
 | Function | Line | Section |
 |----------|------|---------|
-| `axpRead` | 483 | §3 |
-| `axpBatteryPercent` | 492 | §3 |
-| `roundWeight` | 546 | §4 |
-| `applyPN532RfTuning` | 727 | §5 |
-| `runScreensaver` | 1497 | §7 |
-| `displayWeightWithState` | 1905 | §7 |
-| `tsPollLoop` | 2324 | §9 |
-| `tsBtn` | 2361 | §9 |
-| `tsKeyboard` | 2632 | §9 |
-| `wifiTouchConfigure` | 2832 | §9 |
-| `tsNumericInput` | 2982 | §9 |
-| `runCalibrationWizard` | 3134 | §9 |
-| `runLanguageSettings` | 3750 | §9 |
-| `runHardwareTest` | 4118 | §9 |
-| `lvglAskYesNo` | 4494 | §9 |
-| `runOtaMenu` | 5349 | §9 |
-| `runSettingsMenu` | 5661 | §9 |
-| `setupWiFi` | 5969 | §9 |
-| `setupFileSystem` | 6146 | §10 |
-| `firebaseSignIn` | 6343 | §11 |
-| `fetchApiKeyFromFirestore` | 6429 | §11 |
-| `syncClockFromFirestore` | 6587 | §11 |
-| `readInventoryContainerWeight` | 6890 | §11 |
-| `pushLatestEventToFirestore` | 7531 | §11 |
-| `buildWsFrame` | 7977 | §15 |
-| `resetWeightFilters` | 8064 | §16 |
-| `resetAfterSuccessfulSend` | 8079 | §17 |
-| `handleWeightPushBody` | 8100 | §18 |
-| `setupWebServer` | 8357 | §19 |
-| `sendSingleUidToCloud` | 9643 | §20 |
-| `parseCloudSpoolMeta` | 9699 | §20 |
-| `pushWeightToCloud` | 9749 | §20 |
-| `fetchMetaFromApiByUid` | 9787 | §20 |
-| `handleWeighWorkflow` | 9876 | §21 |
-| `startMDNS` | 10284 | §22 |
-| `setupScale` | 10322 | §23 |
-| `isRapidChange` | 10353 | §23 |
-| `readWeight` | 10389 | §23 |
-| `playSoundTheme` | 10565 | §AUDIO |
-| `rfidSelectReader` | 10742 | §24 |
-| `normalizeRfidHwConfig` | 10796 | §24 |
-| `setupRFID` | 10806 | §24 |
-| `setupServo` | 11012 | §24 |
-| `processAutoTare` | 11026 | §24 |
-| `fetchMetaFromFirestore` | 11333 | §24 |
-| `readTigerTagMetadata` | 11427 | §24 |
-| `pollRFIDReader` | 11498 | §24 |
-| `recoverRFIDReaderIfNeeded` | 11581 | §24 |
-| `isDuplicateRecentUid` | 11601 | §24 |
-| `isUidLatched` | 11605 | §24 |
-| `finishRfidSession` | 11617 | §24 |
-| `otaApply` | 11810 | §25 |
-| `otaFetchLatest` | 11952 | §25 |
-| `lvglBuildMainScreen` | 12485 | §LVGL |
-| `lvglUpdateMainScreen` | 12816 | §LVGL |
-| `setup` | 13846 | §26 |
-| `loop` | 14003 | §26 |
+| `axpRead` | 503 | §3 |
+| `axpBatteryPercent` | 512 | §3 |
+| `roundWeight` | 566 | §4 |
+| `applyPN532RfTuning` | 737 | §5 |
+| `runScreensaver` | 1525 | §7 |
+| `displayWeightWithState` | 1926 | §7 |
+| `tsPollLoop` | 2365 | §9 |
+| `tsBtn` | 2402 | §9 |
+| `tsKeyboard` | 2720 | §9 |
+| `wifiTouchConfigure` | 3067 | §9 |
+| `tsNumericInput` | 3222 | §9 |
+| `runCalibrationWizard` | 3394 | §9 |
+| `runLanguageSettings` | 3896 | §9 |
+| `runHardwareTest` | 4320 | §9 |
+| `lvglAskYesNo` | 4610 | §9 |
+| `runOtaMenu` | 5838 | §9 |
+| `runSettingsMenu` | 6125 | §9 |
+| `setupWiFi` | 6543 | §9 |
+| `setupFileSystem` | 6720 | §10 |
+| `firebaseSignIn` | 6917 | §11 |
+| `fetchApiKeyFromFirestore` | 7003 | §11 |
+| `syncClockFromFirestore` | 7161 | §11 |
+| `readInventoryContainerWeight` | 7574 | §11 |
+| `pushLatestEventToFirestore` | 8215 | §11 |
+| `buildWsFrame` | 8698 | §15 |
+| `resetWeightFilters` | 8785 | §16 |
+| `resetAfterSuccessfulSend` | 8800 | §17 |
+| `handleWeightPushBody` | 8821 | §18 |
+| `setupWebServer` | 9078 | §19 |
+| `sendSingleUidToCloud` | 10364 | §20 |
+| `parseCloudSpoolMeta` | 10420 | §20 |
+| `pushWeightToCloud` | 10470 | §20 |
+| `fetchMetaFromApiByUid` | 10508 | §20 |
+| `handleWeighWorkflow` | 10597 | §21 |
+| `startMDNS` | 11054 | §22 |
+| `setupScale` | 11092 | §23 |
+| `isRapidChange` | 11123 | §23 |
+| `readWeight` | 11159 | §23 |
+| `playSoundTheme` | 11339 | §AUDIO |
+| `rfidSelectReader` | 11433 | §24 |
+| `normalizeRfidHwConfig` | 11487 | §24 |
+| `setupRFID` | 11497 | §24 |
+| `setupServo` | 11703 | §24 |
+| `processAutoTare` | 11717 | §24 |
+| `fetchMetaFromFirestore` | 12025 | §24 |
+| `readTigerTagMetadata` | 12119 | §24 |
+| `pollRFIDReader` | 12190 | §24 |
+| `recoverRFIDReaderIfNeeded` | 12273 | §24 |
+| `isDuplicateRecentUid` | 12293 | §24 |
+| `isUidLatched` | 12297 | §24 |
+| `finishRfidSession` | 12309 | §24 |
+| `otaApply` | 12502 | §25 |
+| `otaFetchLatest` | 12644 | §25 |
+| `lvglBuildMainScreen` | 13191 | §LVGL |
+| `lvglUpdateMainScreen` | 13570 | §LVGL |
+| `setup` | 14657 | §26 |
+| `loop` | 14819 | §26 |
 
 ## Landmines — read the note before editing these
 
@@ -157,14 +157,15 @@ a debugging session at least once.
 
 ## Parallel-file pattern — i18n
 
-`TigerTagSplashESP32/i18n.h` holds **103 keys × 8 language blocks**
-(EN/PT/FR/ES/DE/ZH/IT/PL). Adding one key means editing **all 8 blocks**, in the
+`TigerTagSplashESP32/i18n.h` holds **143 keys × 9 language blocks**
+(EN/PT/FR/ES/DE/ZH/IT/PL/PT-PT — Studio Manager's exact list). Adding one key
+means editing **all 9 blocks**, in the
 same order as the enum. `bash scripts/check-i18n.sh` must exit 0 before you
 compile — it discovers the language list from the file itself, so a 9th language
 cannot leave the check behind.
 
 The web UI's translations are a separate set: `data/www/locales/*.json`
-(9 files, ~143 keys each, includes `pt-pt` which the firmware table does not).
+(9 files, ~143 keys each, same language set as the firmware since PT-PT joined it).
 
 ## Keeping this file honest
 

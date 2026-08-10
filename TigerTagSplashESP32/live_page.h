@@ -139,7 +139,8 @@ cv.onpointerdown=async e=>{
 };
 $('go').onclick=()=>run($('code').value.trim());
 $('code').onkeydown=e=>{if(e.key==='Enter')$('go').click()};
-const q=new URLSearchParams(location.search).get('c')||localStorage.tsLive;
+const pc=(location.pathname.slice(1).match(/^[A-Za-z0-9]{6}$/)||[])[0];
+const q=new URLSearchParams(location.search).get('c')||pc||localStorage.tsLive;
 if(q){$('code').value=q;run(q)}
 </script>
 )HTML";

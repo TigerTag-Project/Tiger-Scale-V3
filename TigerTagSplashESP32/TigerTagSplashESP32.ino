@@ -15,34 +15,34 @@
 //
 //   TABLE OF CONTENTS                                     line range
 //   ---------------------------------------------------- -----------
-//   HARDWARE CONFIGURATION                                 213-  368
-//   OTA CONFIGURATION                                      369-  391
-//   FORWARD DECLARATIONS                                   392-  542
-//   WEIGHT ROUNDING                                        543-  562
-//   GLOBAL OBJECTS                                         563- 1065
-//   CONFIGURATION VARIABLES                               1066- 1466
-//   OLED DISPLAY                                          1467- 2190
-//   CLOUD PARSING                                         2191- 2205
-//   WIFI SETUP                                            2206- 6033
-//   LITTLEFS                                              6034- 6333
-//   FIREBASE AUTHENTICATION                               6334- 7846
-//   WEBSOCKET                                             7847- 7873
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  7874- 7971
-//   UNIFIED WS FRAME BUILDER                              7972- 8062
-//   WEIGHT FILTER HELPERS                                 8063- 8077
-//   POST-SEND STATE RESET (shared by all send paths)      8078- 8098
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  8099- 8355
-//   WEB SERVER                                            8356- 9641
-//   CLOUD COMMUNICATION                                   9642- 9824
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING)  9825-10282
-//   mDNS                                                 10283-10320
-//   SCALE                                                10321-10487
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  10488-10605
-//   RFID                                                 10606-11624
-//   OTA — Over-the-air firmware + filesystem update    11625-12281
-//   LVGL bridge + main weigh screen                      12282-13000
-//   Remote live view: the screen out, taps back in       13001-13828
-//   SETUP & LOOP                                         13829-14870
+//   HARDWARE CONFIGURATION                                 231-  386
+//   OTA CONFIGURATION                                      387-  409
+//   FORWARD DECLARATIONS                                   410-  562
+//   WEIGHT ROUNDING                                        563-  582
+//   GLOBAL OBJECTS                                         583- 1075
+//   CONFIGURATION VARIABLES                               1076- 1479
+//   OLED DISPLAY                                          1480- 2219
+//   CLOUD PARSING                                         2220- 2234
+//   WIFI SETUP                                            2235- 6605
+//   LITTLEFS                                              6606- 6905
+//   FIREBASE AUTHENTICATION                               6906- 8528
+//   WEBSOCKET                                             8529- 8555
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  8556- 8690
+//   UNIFIED WS FRAME BUILDER                              8691- 8781
+//   WEIGHT FILTER HELPERS                                 8782- 8796
+//   POST-SEND STATE RESET (shared by all send paths)      8797- 8817
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  8818- 9074
+//   WEB SERVER                                            9075-10360
+//   CLOUD COMMUNICATION                                  10361-10543
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10544-11050
+//   mDNS                                                 11051-11088
+//   SCALE                                                11089-11259
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11260-11377
+//   RFID                                                 11378-12314
+//   OTA — Over-the-air firmware + filesystem update    12315-12971
+//   LVGL bridge + main weigh screen                      12972-13792
+//   Remote live view: the screen out, taps back in       13793-14637
+//   SETUP & LOOP                                         14638-15767
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -51,7 +51,11 @@
 #include <Arduino.h>
 enum OledState : uint8_t {
     OLED_STATE_IDLE, OLED_STATE_WEIGHING, OLED_STATE_UID_DETECTED,
-    OLED_STATE_SENDING, OLED_STATE_SUCCESS, OLED_STATE_ERROR
+    OLED_STATE_SENDING, OLED_STATE_SUCCESS, OLED_STATE_ERROR,
+    OLED_STATE_NO_TAG,     // weight present, scan ended, no TigerTag found
+    OLED_STATE_CANCELLED,  // spool lifted mid-session — weight NOT sent
+    OLED_STATE_AUTOTARE,   // the scale just re-zeroed itself — say so
+    OLED_STATE_WEIGH_ERROR // gross < container: impossible measure, NOT sent
 };
 #define ESP32QSPI_SPI_HOST SPI3_HOST
 #include <Arduino_GFX_Library.h>
@@ -68,6 +72,8 @@ enum OledState : uint8_t {
 #include <Preferences.h>
 #include <Wire.h>
 #include <HX711.h>
+#include <mbedtls/base64.h>       // decoding the idToken JWT payload (§9 pairing)
+#include <nvs_flash.h>            // factory reset erases the whole NVS partition
 // PN532 transport is a BUILD-TIME choice, set by the platformio.ini env --
 // never a runtime one. Building the env that does not match your wiring gives
 // firmware that silently finds no reader at all: no error, just "no readers".
@@ -143,6 +149,11 @@ static uint8_t gSleepDelayMin = 5;
 // never sample a half-drawn screen. That is the whole trick behind "a page
 // change arrives as one image, not as bands filling in".
 static volatile uint32_t gLiveFrameSeq = 0;
+// Runtime pause, distinct from the gLanLiveView *setting*: the pairing screen
+// raises it so its TLS calls get the ~40 KB of internal heap the live view's
+// viewers would otherwise be sitting on. The live task treats it like the
+// switch being off and shuts every viewer down within one tick.
+static volatile bool gLivePaused = false;
 
 // The geometry and the viewer record live up here, not with the rest of §LIVE,
 // for the reason spelled out just above `struct PairHttp` below: the .ino
@@ -201,11 +212,18 @@ struct PairHttp {
     volatile int  code;
     volatile bool done;
 };
+// Hand-off slot: the pairing screen parks a request here and the long-lived
+// cloud worker (core 0) runs it. Spawning a fresh 12 KB-stack task per
+// request carved that stack out of the last big free block right before the
+// TLS handshake asked for its two 16 KB buffers — free=68K/largest=31.7K on
+// the bench, HTTP -1 every single time.
+static PairHttp* volatile gPairHttpReq = nullptr;
 
 #define DARK_BG 0x0000
 
 Language gLanguage = LANG_EN;
 uint8_t  gVolume      = 50;   // 0–100
+uint8_t  gBrightness  = 100;  // 10–100, backlight PWM percent — floor lives in the UI
 bool     gMute        = false;
 uint8_t  gSoundTheme  = 0;    // 0=Beep 1=Double 2=Chime 3=Click
 
@@ -448,23 +466,25 @@ static String resolveMaterialNameOnlineFirst(uint32_t idMaterial);
 void dumpTigerTagPages(PN532Reader &reader, const String& uidDec);
 void displayWeightWithState(float weight, const String& uid, OledState state);
 static void lvglUpdateMainScreen(float weight, const String& uid, OledState state);
-static bool tsNumericInput(const char* prompt, String &val);
-static void runCalibrationWizard();
-static void runLanguageSettings();
+static bool tsNumericInput(const char* prompt, String &val, int minVal = 0, int maxVal = 0);
+static bool runCalibrationWizard();   // true = a calibration was saved
+static void runLanguageSettings(bool firstBoot = false);
+static void lvglBuildMainScreen();
+static void runFirstBootOnboarding();
 static void runVolumeSettings();
 static void drawCalibrateIcon(int16_t cx, int16_t cy, int16_t r, uint16_t color, uint16_t bg);
 static void drawLanguageIcon(int16_t cx, int16_t cy, uint16_t color, uint16_t bg);
 static void runFirebaseAccountMenu();
 static void runHardwareTest();
 // RF self-test, defined in §24 next to the reader init it has to undo.
-static bool rfidFieldTest(PN532Reader &tgt, uint8_t tgtSs, uint8_t tgtRst,
-                          const char *tgtLabel, PN532Reader &ini,
-                          uint8_t level, String &detail);
+// (the RF self-test and its rfidFieldTest() were removed: never passed on
+// the bench, see docs/reviews/2026-08-08-ui-ux-tactile.md)
 static void runOtaMenu();
 static bool runAccountPairing(bool* wantsEmail);
 static bool runSignInForm();
 static void runLanSettings();
-static void runSleepSettings();
+static bool lvglConfirm(const char *question);
+static void runScreenSettings();
 static bool otaFetchLatestPumping();
 static bool firebaseSignInWithCustomToken(const String& customToken);
 static void runSettingsMenu();
@@ -613,6 +633,13 @@ extern "C" {
 }
 static lv_font_t gFont14, gFont16, gFont20;
 
+// Icon glyphs the CJK subset fonts carry beyond LVGL's built-in symbol set —
+// FontAwesome codepoints riding in font_cjk_* (see scripts/make-cjk-font.sh),
+// so they draw through any gFont* like ordinary text.
+#define TT_SYMBOL_LOCK "\xEF\x80\xA3"   /* U+F023, padlock */
+#define TT_SYMBOL_SUN  "\xEF\x86\x85"   /* U+F185, sun — the brightness row */
+#define TT_SYMBOL_GOOGLE "\xEF\x86\xA0" /* U+F1A0, Google G — the sign-in button */
+
 // What LV_FONT_DEFAULT resolves to. lv_conf.h points the macro here instead of
 // at &lv_font_montserrat_14 so that the labels which never name a font -- which
 // is nearly all of them -- get the fallback-carrying face too. Starts at the
@@ -699,23 +726,6 @@ static const PN532RfLevel PN532_RF_LEVELS[] = {
 };
 static const uint8_t PN532_RF_LEVEL_COUNT = sizeof(PN532_RF_LEVELS) / sizeof(PN532_RF_LEVELS[0]);
 
-// Power steps for the self-test only, deliberately a different scale.
-//
-// PN532_RF_LEVELS above is the owner's everyday range and stops at
-// gsNOn=0x40 / cwGsP=0x10 — a narrow band near the bottom of what the chip can
-// drive, chosen because these two antennas sit 75 mm apart facing each other
-// and cross-talk. The self-test wants the opposite: enough field to cross that
-// gap on purpose. So it starts where the everyday range ends and climbs to the
-// datasheet maximum, reporting the first step that carries the bytes — which is
-// the coupling margin, not just a pass or a fail.
-static const PN532RfLevel PN532_RF_TEST_LEVELS[] = {
-    { 0x40, 0x10, 0x04, 0xB },  // where the everyday range ends
-    { 0x80, 0x20, 0x10, 0x8 },
-    { 0xC0, 0x30, 0x20, 0x5 },
-    { 0xF8, 0x3F, 0x3F, 0x2 },  // maximum drive, most sensitive receiver
-};
-static const uint8_t PN532_RF_TEST_LEVEL_COUNT =
-    sizeof(PN532_RF_TEST_LEVELS) / sizeof(PN532_RF_TEST_LEVELS[0]);
 uint8_t gRfidPowerLevel = 3; // index into PN532_RF_LEVELS, adjustable live from the Hardware/RFID Test screen
 
 // Sent through Adafruit_PN532's public sendCommandCheckAck(), no library
@@ -1284,6 +1294,7 @@ static uint32_t gSessionCounter = 0;
 static uint32_t gSuccessfulSendCount = 0;
 static uint32_t gFailedSendCount = 0;
 static uint32_t gAutoTareCount = 0;
+static uint32_t gLastCloudSendOkMs = 0;   // uptime of the last successful cloud send ("Last sync" on the Account page)
 static uint32_t gRfidReadOkCount = 0;
 static uint32_t gRfidReadFailCount = 0;
 static uint32_t gWorkflowResetCount = 0;
@@ -1409,6 +1420,8 @@ static volatile bool  gCloudSendOk           = false;
 static float          gCloudSendWeight       = 0.0f;
 static volatile bool  gTokenRenewPending     = false;
 static volatile bool  gFirestoreSyncNeeded   = false; // set on explicit login → force initScaleFirestoreSync
+static volatile bool  gLangPushPending       = false; // scale-side language change → write users/{uid}/prefs/app.lang
+static bool           gFirstRunPending       = false; // factory-fresh NVS: run the first-boot onboarding once
 static volatile bool  gHeartbeatPending      = false;
 static volatile bool  gOtaPollPending        = false;
 static volatile bool  gWebServerStartPending = false;
@@ -1494,36 +1507,44 @@ static void drawSplash() {
 // tsRead is forward-declared further down; we declare it here too.
 static bool tsRead(int16_t& tx, int16_t& ty);
 
+// Backlight brightness: 8-bit LEDC PWM on LCD_BL at 5 kHz — far above flicker
+// fusion, so dimming is invisible as modulation. 0 is deliberate (screen
+// sleep); the 10% floor lives in the brightness UI, where it belongs.
+// (Defined here, not beside the LCD_BL define: an early function definition
+// moves the Arduino preprocessor's auto-prototype insertion point above the
+// class declarations, and the whole file stops compiling.)
+static void applyBrightness(uint8_t pct) {
+    ledcWrite(LCD_BL, (uint32_t)pct * 255 / 100);
+}
+
+// Screen sleep is a real power-down, not a bouncing logo: panel black,
+// backlight off, and the scale wakes it itself. Wake sources: a touch, or the
+// weight moving (a spool arriving or leaving) — so starting a weighing never
+// needs a tap first. The weight is polled here directly because this loop
+// blocks loop(); everything else (WiFi, cloud tasks on core 0) keeps running.
 static void runScreensaver() {
     if (!gDisplayReady || gfx == nullptr) return;
-    Serial.println("[SS] Screensaver bounce start");
+    Serial.println("[SS] Screen sleep: backlight off");
     { int16_t tx, ty; while (tsRead(tx, ty)) delay(10); } // drain any lingering touch
 
-    const int16_t SW = (int16_t)gfx->width();
-    const int16_t SH = (int16_t)gfx->height();
-    const int16_t LW = TIGERTAG_LOGO_W;
-    const int16_t LH = TIGERTAG_LOGO_H;
+    gfx->fillScreen(0x0000);
+    gfx->flush();
+    ledcWrite(LCD_BL, 0);
 
-    int16_t x = (SW - LW) / 2;
-    int16_t y = (SH - LH) / 2;
-    int16_t dx = 2, dy = 2;
+    const float SS_WAKE_DELTA_G = 10.0f;
+    const float sleepW = readWeight();
 
-    bool touched = false;
-    while (!touched) {
-        { int16_t tx, ty; if (tsRead(tx, ty)) { while (tsRead(tx, ty)) delay(5); touched = true; break; } }
-
-        gfx->fillScreen(DARK_BG);
-        x += dx; y += dy;
-        if (x <= 0)       { x = 0;       dx =  abs(dx); }
-        if (x >= SW - LW) { x = SW - LW; dx = -abs(dx); }
-        if (y <= 0)       { y = 0;       dy =  abs(dy); }
-        if (y >= SH - LH) { y = SH - LH; dy = -abs(dy); }
-        gfx->draw16bitRGBBitmap(x, y, (uint16_t*)gTigerTagLogo, LW, LH);
-        gfx->flush();
-
-        { int16_t tx, ty; if (tsRead(tx, ty)) { while (tsRead(tx, ty)) delay(5); touched = true; } }
+    for (;;) {
+        { int16_t tx, ty; if (tsRead(tx, ty)) { while (tsRead(tx, ty)) delay(5);
+              Serial.println("[SS] wake: touch"); break; } }
+        if (fabs(readWeight() - sleepW) > SS_WAKE_DELTA_G) {
+            Serial.println("[SS] wake: weight change");
+            break;
+        }
+        delay(30);
     }
-    Serial.println("[SS] Screensaver exit by touch");
+    applyBrightness(gBrightness);
+    Serial.println("[SS] Screen wake");
 }
 
 static bool gBootComplete = false;
@@ -1950,6 +1971,14 @@ void displayWeightWithState(float weight, const String& uid, OledState state) {
             case OLED_STATE_ERROR:
                 statusLbl = t(I18N_ERROR);
                 statusBg  = 0xF800; statusFg = 0xFFFF; break;
+            case OLED_STATE_NO_TAG:
+            case OLED_STATE_CANCELLED:
+                statusLbl = t(state == OLED_STATE_NO_TAG ? I18N_NO_TAG_DETECTED
+                                                         : I18N_WEIGH_CANCELLED);
+                statusBg  = 0xFD20; statusFg = 0x0000; break;
+            case OLED_STATE_AUTOTARE:
+                statusLbl = t(I18N_AUTO_TARE);
+                statusBg  = 0x031F; statusFg = 0xFFFF; break;
             default:
                 statusLbl = t(I18N_READY);
                 statusBg  = 0x07E0; statusFg = 0x0000;
@@ -2279,6 +2308,7 @@ static bool tsRead(int16_t &tx, int16_t &ty) {
         if (gLiveTapReads <= 2 || millis() - gLiveTapAtMs < 30) {
             tx = gLiveTapX;
             ty = gLiveTapY;
+            gLastActivityMs = millis();   // a remote tap is activity too
             return true;
         }
         gLiveTapPhase = LIVE_TAP_IDLE;
@@ -2312,12 +2342,23 @@ static bool tsRead(int16_t &tx, int16_t &ty) {
     int16_t px = ((int16_t)(d[2] & 0x0F) << 8) | d[3];
     int16_t py = ((int16_t)(d[4] & 0x0F) << 8) | d[5];
 
-    Serial.printf("[TS] TOUCH cnt=%d px=%d py=%d\n", cnt, px, py);
+    (void)cnt;
 
     // Canvas rotation=3 (270° CW): portrait(px,py) → landscape(tx,ty)
     tx = 479 - py;
     ty = px;
-    return (tx >= 0 && tx < 480 && ty >= 0 && ty < 320);
+    if (tx >= 0 && tx < 480 && ty >= 0 && ty < 320) {
+        // Every touch consumer funnels through here (LVGL indev, raw-poll
+        // screens, remote taps), so this is the ONE place the sleep countdown
+        // can see all activity. It used to be reset only in the pre-LVGL
+        // button path of loop(), which no longer runs — so minutes spent in a
+        // modal screen (which blocks loop() and its sleep check) left the
+        // counter stale, and the first return to the main screen blacked out
+        // instantly: "back from Settings = instant sleep".
+        gLastActivityMs = millis();
+        return true;
+    }
+    return false;
 }
 
 // Continuous touch polling task — runs in loop() every 50ms
@@ -2378,7 +2419,7 @@ static void tsBtn(int16_t x, int16_t y, int16_t w, int16_t h,
 // scrollable column (swipe to see all networks) instead of the earlier
 // fixed 6-row window with up/down paging buttons.
 static String tsPick_network() {
-    const int RH = 34, RGAP = 3, LX = 6, LW = 468, LY0 = 44, LISTH = 190;
+    const int RH = 48, RGAP = 5;
     const int barH[5] = {4, 6, 8, 10, 12};
     enum PickAction { PA_NONE, PA_SELECT, PA_SCAN, PA_CANCEL };
     static PickAction sPickAction;
@@ -2399,121 +2440,143 @@ static String tsPick_network() {
     for (;;) {
         sPickAction = PA_NONE;
 
-        Serial.println("[WIFI] tsPick: starting scan");
-        WiFi.scanNetworks(true);  // async — lets the loading screen paint instead of freezing the UI
-
-        lv_obj_t *loadCol;
-        lv_obj_t *loadScr = lvglCenteredScreen(&loadCol);
-        lvglAddSpinner(loadCol);
-        lvglAddCenteredLabel(loadCol, t(I18N_WIFI_SCANNING), LVCOL_TEXT, &gFont20);
-        lv_scr_load(loadScr);
-        if (prevScr) { lv_obj_del(prevScr); prevScr = nullptr; }
-
-        int n;
-        while ((n = WiFi.scanComplete()) == WIFI_SCAN_RUNNING) { lv_timer_handler(); delay(30); }
-        if (n == WIFI_SCAN_FAILED) n = 0;
-        Serial.printf("[WIFI] tsPick: scan done n=%d\n", n);
-
+        // One screen, Bambu-shaped: the header (whole bar = back, rescan
+        // arrow top-right) and the scroll rail never move; scanning and
+        // results are two states of the list zone between them.
         lv_obj_t *scr = lv_obj_create(nullptr);
         lv_obj_set_style_bg_color(scr, LVCOL_BG, 0);
         lv_obj_set_style_border_width(scr, 0, 0);
         lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-        lv_obj_t *title = lv_label_create(scr);
-        lv_label_set_text(title, t(I18N_WIFI_SELECT));
-        lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
-        lv_obj_set_style_text_font(title, &gFont20, 0);
-        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+        // Literal on purpose, like "RFID" and "TEST": "Wi-Fi (2.4G)" reads the
+        // same in all eight languages, and the band matters — the S3's radio
+        // is 2.4 GHz only, so a missing network is usually a 5 GHz-only one.
+        lv_obj_t *header = lvglAddHeader(scr, "Wi-Fi (2.4G)", actionCb,
+                                          nullptr, (intptr_t)PA_CANCEL);
 
-        lv_obj_t *div = lv_obj_create(scr);
-        lv_obj_remove_style_all(div);
-        lv_obj_set_size(div, 480, 1);
-        lv_obj_set_style_bg_color(div, LVCOL_BORDER, 0);
-        lv_obj_set_style_bg_opa(div, LV_OPA_COVER, 0);
-        lv_obj_set_pos(div, 0, 36);
-        lv_obj_clear_flag(div, LV_OBJ_FLAG_SCROLLABLE);
+        // Rescan lives on the bar, like the reference UI. A button child of
+        // the header wins the tap over the header itself, so back stays
+        // everywhere else on the band.
+        lv_obj_t *rescanBtn = lv_btn_create(header);
+        lv_obj_set_size(rescanBtn, 44, 40);
+        lv_obj_align(rescanBtn, LV_ALIGN_RIGHT_MID, -6, 0);
+        lv_obj_set_style_bg_opa(rescanBtn, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(rescanBtn, 0, 0);
+        lv_obj_set_style_shadow_width(rescanBtn, 0, 0);
+        lv_obj_set_user_data(rescanBtn, (void *)(intptr_t)PA_SCAN);
+        lv_obj_add_event_cb(rescanBtn, actionCb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t *rescanIcon = lv_label_create(rescanBtn);
+        lv_label_set_text(rescanIcon, LV_SYMBOL_REFRESH);
+        lv_obj_set_style_text_color(rescanIcon, LVCOL_TEXT, 0);
+        lv_obj_set_style_text_font(rescanIcon, &lv_font_montserrat_20, 0);
+        lv_obj_center(rescanIcon);
+
+        lv_obj_t *list = lv_obj_create(scr);
+        lv_obj_remove_style_all(list);
+        lv_obj_set_size(list, 428, 320 - 49);   // 428: clears the scroll rail
+        lv_obj_set_pos(list, 0, 49);
+        lv_obj_set_style_pad_top(list, 8, 0);
+        lv_obj_set_style_pad_bottom(list, 8, 0);
+        lv_obj_set_style_pad_left(list, 10, 0);
+        lv_obj_set_style_pad_right(list, 6, 0);
+        lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(list, RGAP, 0);
+        lv_obj_set_scroll_dir(list, LV_DIR_VER);
+        lvglStyleScrollbar(list);
+        lvglAddScrollRail(scr, list, 57, 312, 4 * (RH + RGAP));
+
+        lv_scr_load(scr);
+        if (prevScr) { lv_obj_del(prevScr); prevScr = nullptr; }
+
+        // Scanning state, drawn inside the list zone — header and rail stay.
+        lv_obj_t *holder = lv_obj_create(list);
+        lv_obj_remove_style_all(holder);
+        lv_obj_set_size(holder, LV_PCT(100), 230);
+        lv_obj_set_flex_flow(holder, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(holder, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_row(holder, 14, 0);
+        lv_obj_clear_flag(holder, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(holder, LV_OBJ_FLAG_CLICKABLE);
+        lvglAddSpinner(holder);
+        lv_obj_t *scanMsg = lv_label_create(holder);
+        lv_label_set_text(scanMsg, t(I18N_WIFI_SCANNING));
+        lv_obj_set_style_text_color(scanMsg, LVCOL_TEXT, 0);
+        lv_obj_set_style_text_font(scanMsg, &gFont20, 0);
+
+        Serial.println("[WIFI] tsPick: starting scan");
+        WiFi.scanNetworks(true);  // async — the spinner animates instead of the UI freezing
+        int n;
+        while ((n = WiFi.scanComplete()) == WIFI_SCAN_RUNNING && sPickAction == PA_NONE) { lv_timer_handler(); delay(30); }
+        if (sPickAction == PA_CANCEL) { prevScr = scr; break; }     // back cancels a running scan too
+        if (sPickAction == PA_SCAN)   { prevScr = scr; continue; }  // rescan tapped mid-scan: restart clean
+        if (n == WIFI_SCAN_FAILED) n = 0;
+        Serial.printf("[WIFI] tsPick: scan done n=%d\n", n);
+
+        lv_obj_clean(list);   // spinner out, results in
 
         if (n <= 0) {
-            lv_obj_t *msg = lv_label_create(scr);
+            // The list zone's empty state, where the spinner just was —
+            // not a screen of its own.
+            lv_obj_t *msgHolder = lv_obj_create(list);
+            lv_obj_remove_style_all(msgHolder);
+            lv_obj_set_size(msgHolder, LV_PCT(100), 230);
+            lv_obj_set_flex_flow(msgHolder, LV_FLEX_FLOW_COLUMN);
+            lv_obj_set_flex_align(msgHolder, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+            lv_obj_clear_flag(msgHolder, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_clear_flag(msgHolder, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_t *msg = lv_label_create(msgHolder);
             lv_label_set_text(msg, t(I18N_WIFI_NO_NETS));
             lv_obj_set_style_text_color(msg, LVCOL_RED, 0);
-            lv_obj_align(msg, LV_ALIGN_TOP_MID, 0, 90);
+            lv_obj_set_style_text_font(msg, &gFont16, 0);
         } else {
-            lv_obj_t *list = lv_obj_create(scr);
-            lv_obj_remove_style_all(list);
-            lv_obj_set_size(list, LW, LISTH);
-            lv_obj_set_pos(list, LX, LY0);
-            lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
-            lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
-            lv_obj_set_style_pad_row(list, RGAP, 0);
-            lv_obj_set_scroll_dir(list, LV_DIR_VER);
-            lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
+            String connectedSsid = WiFi.isConnected() ? WiFi.SSID() : String("");
 
-            for (int idx = 0; idx < n; idx++) {
+            auto makeNetRow = [&](int idx, bool current) {
                 lv_obj_t *row = lv_obj_create(list);
                 lv_obj_remove_style_all(row);
-                lv_obj_set_size(row, LW, RH);
+                lv_obj_set_size(row, LV_PCT(100), RH);
                 lv_obj_set_style_bg_color(row, LVCOL_CARD, 0);
                 lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
-                lv_obj_set_style_border_color(row, LVCOL_BORDER, 0);
-                lv_obj_set_style_border_width(row, 1, 0);
-                lv_obj_set_style_radius(row, 8, 0);
+                // The connected network wears the language picker's "you are
+                // here" pattern: accent border + green check, pinned on top.
+                lv_obj_set_style_border_color(row, current ? LVCOL_ACCENT : LVCOL_BORDER, 0);
+                lv_obj_set_style_border_width(row, current ? 2 : 1, 0);
+                lv_obj_set_style_radius(row, 9, 0);
                 lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
                 lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
                 lv_obj_set_user_data(row, (void *)(intptr_t)idx);
                 lv_obj_add_event_cb(row, selectCb, LV_EVENT_CLICKED, nullptr);
 
+                int nameX = 10;
+                if (current) {
+                    lv_obj_t *chk = lv_label_create(row);
+                    lv_label_set_text(chk, LV_SYMBOL_OK);
+                    lv_obj_set_style_text_color(chk, LVCOL_GREEN, 0);
+                    lv_obj_align(chk, LV_ALIGN_LEFT_MID, 10, 0);
+                    lv_obj_clear_flag(chk, LV_OBJ_FLAG_CLICKABLE);
+                    nameX = 34;
+                }
+
                 bool enc = (WiFi.encryptionType(idx) != WIFI_AUTH_OPEN);
-                int textX = 10;
                 if (enc) {
-                    // Small padlock built from primitives (LVGL v8's built-in
-                    // symbol set has no lock glyph) — body + two-post shackle.
-                    lv_obj_t *body = lv_obj_create(row);
-                    lv_obj_remove_style_all(body);
-                    lv_obj_set_size(body, 12, 8);
-                    lv_obj_set_style_bg_color(body, LVCOL_MUTED, 0);
-                    lv_obj_set_style_bg_opa(body, LV_OPA_COVER, 0);
-                    lv_obj_set_style_radius(body, 2, 0);
-                    lv_obj_align(body, LV_ALIGN_LEFT_MID, 8, 5);
-                    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
-                    lv_obj_clear_flag(body, LV_OBJ_FLAG_CLICKABLE);
-
-                    lv_obj_t *shL = lv_obj_create(row);
-                    lv_obj_remove_style_all(shL);
-                    lv_obj_set_size(shL, 2, 6);
-                    lv_obj_set_style_bg_color(shL, LVCOL_MUTED, 0);
-                    lv_obj_set_style_bg_opa(shL, LV_OPA_COVER, 0);
-                    lv_obj_align(shL, LV_ALIGN_LEFT_MID, 10, -5);
-                    lv_obj_clear_flag(shL, LV_OBJ_FLAG_SCROLLABLE);
-                    lv_obj_clear_flag(shL, LV_OBJ_FLAG_CLICKABLE);
-
-                    lv_obj_t *shR = lv_obj_create(row);
-                    lv_obj_remove_style_all(shR);
-                    lv_obj_set_size(shR, 2, 6);
-                    lv_obj_set_style_bg_color(shR, LVCOL_MUTED, 0);
-                    lv_obj_set_style_bg_opa(shR, LV_OPA_COVER, 0);
-                    lv_obj_align(shR, LV_ALIGN_LEFT_MID, 16, -5);
-                    lv_obj_clear_flag(shR, LV_OBJ_FLAG_SCROLLABLE);
-                    lv_obj_clear_flag(shR, LV_OBJ_FLAG_CLICKABLE);
-
-                    lv_obj_t *shTop = lv_obj_create(row);
-                    lv_obj_remove_style_all(shTop);
-                    lv_obj_set_size(shTop, 8, 2);
-                    lv_obj_set_style_bg_color(shTop, LVCOL_MUTED, 0);
-                    lv_obj_set_style_bg_opa(shTop, LV_OPA_COVER, 0);
-                    lv_obj_align(shTop, LV_ALIGN_LEFT_MID, 10, -8);
-                    lv_obj_clear_flag(shTop, LV_OBJ_FLAG_SCROLLABLE);
-                    lv_obj_clear_flag(shTop, LV_OBJ_FLAG_CLICKABLE);
-
-                    textX = 28;
+                    // The real FontAwesome padlock, carried by the CJK subset
+                    // fonts — the hand-drawn primitive version it replaces
+                    // never looked like a lock. Sits just left of the signal
+                    // bars: name ......... [lock] [signal].
+                    lv_obj_t *lock = lv_label_create(row);
+                    lv_label_set_text(lock, TT_SYMBOL_LOCK);
+                    lv_obj_set_style_text_color(lock, LVCOL_MUTED, 0);
+                    lv_obj_set_style_text_font(lock, &gFont16, 0);
+                    lv_obj_align(lock, LV_ALIGN_RIGHT_MID, -40, 0);
+                    lv_obj_clear_flag(lock, LV_OBJ_FLAG_CLICKABLE);
                 }
 
                 lv_obj_t *lbl = lv_label_create(row);
                 lv_label_set_text(lbl, WiFi.SSID(idx).c_str());
                 lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
-                lv_obj_set_width(lbl, LW - textX - 44);
+                lv_obj_set_width(lbl, 330 - (nameX - 10));
                 lv_obj_set_style_text_color(lbl, LVCOL_TEXT, 0);
-                lv_obj_align(lbl, LV_ALIGN_LEFT_MID, textX, 0);
+                lv_obj_align(lbl, LV_ALIGN_LEFT_MID, nameX, 0);
                 lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
 
                 int bars = map(constrain(WiFi.RSSI(idx), -100, -40), -100, -40, 0, 5);
@@ -2529,42 +2592,65 @@ static String tsPick_network() {
                     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
                     lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
                 }
+            };
+
+            // The connected network first (its strongest instance), so the
+            // answer to "which one am I on?" never depends on scan order.
+            int curIdx = -1;
+            for (int idx = 0; idx < n; idx++) {
+                if (connectedSsid.length() == 0 || WiFi.SSID(idx) != connectedSsid) continue;
+                if (curIdx < 0 || WiFi.RSSI(idx) > WiFi.RSSI(curIdx)) curIdx = idx;
+            }
+            if (curIdx >= 0) makeNetRow(curIdx, true);
+
+            for (int idx = 0; idx < n; idx++) {
+                if (curIdx >= 0 && WiFi.SSID(idx) == connectedSsid) continue;
+                // Mesh nodes and dual-band APs broadcast the same SSID several
+                // times. Joining goes by name, so one row per name: keep the
+                // strongest signal — the one a connection would use anyway.
+                bool best = true;
+                for (int j = 0; j < n && best; j++) {
+                    if (j == idx || WiFi.SSID(j) != WiFi.SSID(idx)) continue;
+                    if (WiFi.RSSI(j) > WiFi.RSSI(idx) ||
+                        (WiFi.RSSI(j) == WiFi.RSSI(idx) && j < idx)) best = false;
+                }
+                if (!best) continue;
+                makeNetRow(idx, false);
             }
         }
 
-        // Same size/shape/radius as the Hardware Test Scan button, instead of
-        // the old full-width thin bar.
-        lv_obj_t *scanBtn = lv_btn_create(scr);
-        lv_obj_set_size(scanBtn, 280, 70);
-        lv_obj_align(scanBtn, LV_ALIGN_BOTTOM_MID, 0, -8);
-        lv_obj_set_style_bg_color(scanBtn, LVCOL_CARD, 0);
-        lv_obj_set_style_border_color(scanBtn, LVCOL_BORDER, 0);
-        lv_obj_set_style_border_width(scanBtn, 1, 0);
-        lv_obj_set_style_radius(scanBtn, 12, 0);
-        lv_obj_set_style_shadow_width(scanBtn, 0, 0);
-        lv_obj_set_user_data(scanBtn, (void *)(intptr_t)PA_SCAN);
-        lv_obj_add_event_cb(scanBtn, actionCb, LV_EVENT_CLICKED, nullptr);
-        lv_obj_t *scanLbl = lv_label_create(scanBtn);
-        lv_label_set_text(scanLbl, t(I18N_WIFI_SCAN));
-        lv_obj_set_style_text_color(scanLbl, LVCOL_TEXT, 0);
-        lv_obj_center(scanLbl);
+        // The scale's own identity, Bambu-style, at the very end of the
+        // scroll: who am I on this network. Informational, not clickable.
+        auto infoRow = [&](const char *name, const String &v) {
+            lv_obj_t *row = lv_obj_create(list);
+            lv_obj_remove_style_all(row);
+            lv_obj_set_size(row, LV_PCT(100), RH);
+            lv_obj_set_style_bg_color(row, LVCOL_CARD, 0);
+            lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_color(row, LVCOL_BORDER, 0);
+            lv_obj_set_style_border_width(row, 1, 0);
+            lv_obj_set_style_radius(row, 9, 0);
+            lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_t *k = lv_label_create(row);
+            lv_label_set_text(k, name);
+            lv_obj_set_style_text_color(k, LVCOL_TEXT, 0);
+            lv_obj_align(k, LV_ALIGN_LEFT_MID, 10, 0);
+            lv_obj_t *val = lv_label_create(row);
+            lv_label_set_text(val, v.c_str());
+            lv_obj_set_style_text_color(val, LVCOL_MUTED, 0);
+            lv_obj_align(val, LV_ALIGN_RIGHT_MID, -10, 0);
+        };
+        lv_obj_t *secTitle = lv_label_create(list);
+        lv_label_set_text(secTitle, t(I18N_IP_MAC));
+        lv_obj_set_style_text_color(secTitle, LVCOL_MUTED, 0);
+        lv_obj_set_style_text_font(secTitle, &gFont14, 0);
+        lv_obj_set_style_pad_top(secTitle, 6, 0);
+        lv_obj_set_style_pad_left(secTitle, 4, 0);
 
-        // Cancel — top-left arrow, matching the keyboard screen's back button
-        lv_obj_t *cancelBtn = lv_btn_create(scr);
-        lv_obj_set_size(cancelBtn, 34, 36);
-        lv_obj_set_pos(cancelBtn, 0, 0);
-        lv_obj_set_style_bg_opa(cancelBtn, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(cancelBtn, 0, 0);
-        lv_obj_set_style_shadow_width(cancelBtn, 0, 0);
-        lv_obj_set_user_data(cancelBtn, (void *)(intptr_t)PA_CANCEL);
-        lv_obj_add_event_cb(cancelBtn, actionCb, LV_EVENT_CLICKED, nullptr);
-        lv_obj_t *cancelIcon = lv_label_create(cancelBtn);
-        lv_label_set_text(cancelIcon, LV_SYMBOL_LEFT);
-        lv_obj_set_style_text_color(cancelIcon, LVCOL_MUTED, 0);
-        lv_obj_center(cancelIcon);
-
-        lv_scr_load(scr);
-        lv_obj_del(loadScr);
+        infoRow("IP",  WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : String("--"));
+        infoRow("MAC", WiFi.macAddress());
+        lvglRailRefresh(list);
 
         while (sPickAction == PA_NONE) { lv_timer_handler(); delay(5); }
 
@@ -2580,44 +2666,46 @@ static String tsPick_network() {
     return result;
 }
 
-// Custom 3-row keymap (letters only — no top digit row) matching the
-// reference layout: ABC/shift + backspace on their own row, 1#/space on the
-// last row. LVGL's keyboard widget special-cases the literal strings "abc",
-// "ABC", "1#" and LV_SYMBOL_BACKSPACE to auto-handle case/mode switching and
-// delete, so those exact strings must be used for this to work. No OK/Close
-// keys in the grid — Connect/back (header buttons below) drive those instead.
-// lv_keyboard_set_map() patches LVGL's process-wide default-map table for the
-// given mode, which is fine here since this is the only lv_keyboard instance
-// in the app and it's rebuilt fresh on every call.
+// Four-row keymaps modelled on the reference printer UI: every printable
+// ASCII character is reachable across three modes (lower / ABC upper /
+// &123 symbols), with cursor arrows around the space bar and a check key
+// that validates. LVGL's keyboard widget special-cases the literal strings
+// "abc"/"ABC" (case switch), LV_SYMBOL_BACKSPACE (delete), LV_SYMBOL_LEFT/
+// RIGHT (cursor move) and LV_SYMBOL_OK (fires LV_EVENT_READY); "&123" is
+// ours and is handled by a callback in tsKeyboard(). @ sits in the letter
+// rows because this is an e-mail keyboard as much as a password one.
+// lv_keyboard_set_map() patches LVGL's process-wide default-map table for
+// the given mode, which is fine here since this is the only lv_keyboard
+// instance in the app and it's rebuilt fresh on every call.
 static const char *kbMapLower[] = {
-    "q","w","e","r","t","y","u","i","o","p","\n",
-    "a","s","d","f","g","h","j","k","l","\n",
-    "ABC","z","x","c","v","b","n","m",LV_SYMBOL_BACKSPACE,"\n",
-    "1#"," ",""
+    "&123","q","w","e","r","t","y","u","i","o","p",LV_SYMBOL_BACKSPACE,"\n",
+    "ABC","a","s","d","f","g","h","j","k","l","@","\n",
+    "_","-","z","x","c","v","b","n","m",".",",",":","\n",
+    LV_SYMBOL_LEFT," ",LV_SYMBOL_RIGHT,LV_SYMBOL_OK,""
 };
 static const lv_btnmatrix_ctrl_t kbCtrlLower[] = {
-    1,1,1,1,1,1,1,1,1,1,
-    1,1,1,1,1,1,1,1,1,
-    (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 2), 1,1,1,1,1,1,1, (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 2),
-    (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 2), 9
+    (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 3), 2,2,2,2,2,2,2,2,2,2, (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 3),
+    (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 3), 2,2,2,2,2,2,2,2,2, 3,
+    2,2,2,2,2,2,2,2,2,2,2,2,
+    (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 3), 10, (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 3), (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 4)
 };
 static const char *kbMapUpper[] = {
-    "Q","W","E","R","T","Y","U","I","O","P","\n",
-    "A","S","D","F","G","H","J","K","L","\n",
-    "abc","Z","X","C","V","B","N","M",LV_SYMBOL_BACKSPACE,"\n",
-    "1#"," ",""
+    "&123","Q","W","E","R","T","Y","U","I","O","P",LV_SYMBOL_BACKSPACE,"\n",
+    "abc","A","S","D","F","G","H","J","K","L","@","\n",
+    "_","-","Z","X","C","V","B","N","M",".",",",":","\n",
+    LV_SYMBOL_LEFT," ",LV_SYMBOL_RIGHT,LV_SYMBOL_OK,""
 };
 static const char *kbMapSpec[] = {
-    "1","2","3","4","5","6","7","8","9","0","\n",
-    "@",".","-","_","#","$","%","&","*","\n",
-    "abc","!","?","+","=",":",";",LV_SYMBOL_BACKSPACE,"\n",
-    " ",""
+    "abc","1","2","3","4","5","6","7","8","9","0",LV_SYMBOL_BACKSPACE,"\n",
+    "~","!","@","#","$","%","^","&","*","(",")","=","\n",
+    "/","\\","{","}","[","]","<",">","?",";","\"","'","\n",
+    "|","`","+",LV_SYMBOL_LEFT," ",LV_SYMBOL_RIGHT,LV_SYMBOL_OK,""
 };
 static const lv_btnmatrix_ctrl_t kbCtrlSpec[] = {
-    1,1,1,1,1,1,1,1,1,1,
-    1,1,1,1,1,1,1,1,1,
-    (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 2), 1,1,1,1,1,1, (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 2),
-    1
+    (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 3), 2,2,2,2,2,2,2,2,2,2, (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 3),
+    2,2,2,2,2,2,2,2,2,2,2,2,
+    2,2,2,2,2,2,2,2,2,2,2,2,
+    2,2,2, (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 3), 7, (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 3), (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 3)
 };
 
 // On-screen keyboard, rebuilt around LVGL's native lv_keyboard + lv_textarea
@@ -2629,7 +2717,7 @@ static const lv_btnmatrix_ctrl_t kbCtrlSpec[] = {
 // text, or the single-byte 0x01 sentinel on cancel (see kbCancelled()). Safe
 // to pump its own lv_timer_handler() loop for the same reason as
 // tsPick_network()/runLanguageSettings() above.
-static String tsKeyboard(const String& header) {
+static String tsKeyboard(const String& header, bool password) {
     enum KbAction { KB_NONE, KB_READY, KB_CANCEL };
     static KbAction sKbAction;
 
@@ -2650,14 +2738,25 @@ static String tsKeyboard(const String& header) {
     // shared with the other control keys. Index 19 is the ABC/abc button
     // in all three maps (kbMapLower, kbMapUpper, kbMapSpec share the same
     // row layout up to that point).
-    auto shiftHighlightCb = [](lv_event_t *e) {
+    // Paints the mode-return key ("abc") accent while a non-default mode is
+    // active — index 12 in the letter maps (row 2 first key), index 0 in the
+    // symbols map (row 1 first key). Draw-time painting, not the shared
+    // CHECKED style: see the note in git history for why CHECKED can't
+    // single out one control key.
+    auto modeHighlightCb = [](lv_event_t *e) {
         lv_obj_draw_part_dsc_t *dsc = (lv_obj_draw_part_dsc_t *)lv_event_get_param(e);
-        if (dsc == nullptr || dsc->part != LV_PART_ITEMS || dsc->id != 19) return;
+        if (dsc == nullptr || dsc->part != LV_PART_ITEMS) return;
         lv_obj_t *kbObj = lv_event_get_target(e);
-        if (lv_keyboard_get_mode(kbObj) == LV_KEYBOARD_MODE_TEXT_UPPER) {
-            if (dsc->rect_dsc)  dsc->rect_dsc->bg_color = LVCOL_ACCENT;
-            if (dsc->label_dsc) dsc->label_dsc->color   = LVCOL_TEXT;
-        }
+        lv_keyboard_mode_t m = lv_keyboard_get_mode(kbObj);
+        lv_keyboard_mode_t sp = LV_KEYBOARD_MODE_SPECIAL;
+        uint16_t hot = (m == LV_KEYBOARD_MODE_TEXT_UPPER) ? 12
+                     : (m == sp)                          ? 0 : 0xFFFF;
+        // The check key is accent at all times — it is the "important button"
+        // of the whole screen, twinned with the Valider pill on the band.
+        uint16_t ok  = (m == sp) ? 42 : 38;
+        if (dsc->id != hot && dsc->id != ok) return;
+        if (dsc->rect_dsc)  dsc->rect_dsc->bg_color = LVCOL_ACCENT;
+        if (dsc->label_dsc) dsc->label_dsc->color   = LVCOL_TEXT;
     };
 
     sKbAction = KB_NONE;
@@ -2667,50 +2766,29 @@ static String tsKeyboard(const String& header) {
     lv_obj_set_style_border_width(scr, 0, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *backBtn = lv_btn_create(scr);
-    lv_obj_set_size(backBtn, 34, 30);
-    lv_obj_set_pos(backBtn, 6, 6);
-    lv_obj_set_style_bg_opa(backBtn, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(backBtn, 0, 0);
-    lv_obj_set_style_shadow_width(backBtn, 0, 0);
-    lv_obj_add_event_cb(backBtn, cancelCb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *backIcon = lv_label_create(backBtn);
-    lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
-    lv_obj_set_style_text_color(backIcon, LVCOL_MUTED, 0);
-    lv_obj_center(backIcon);
+    lv_obj_t *hdr = lvglAddHeader(scr, header.c_str(), cancelCb, nullptr, 0);
 
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, header.c_str());
-    lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
-    lv_obj_set_style_text_font(title, &gFont16, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 44, 12);
-
-    lv_obj_t *connectBtn = lv_btn_create(scr);
-    lv_obj_set_size(connectBtn, 108, 30);
-    lv_obj_align(connectBtn, LV_ALIGN_TOP_RIGHT, -6, 6);
+    // OK rides on the band, like the WiFi picker's rescan arrow — a clickable
+    // child wins the tap, the rest of the band stays the cancel.
+    lv_obj_t *connectBtn = lv_btn_create(hdr);
+    lv_obj_set_size(connectBtn, 108, 36);
+    lv_obj_align(connectBtn, LV_ALIGN_RIGHT_MID, -6, 0);
     lv_obj_set_style_bg_color(connectBtn, LVCOL_ACCENT, 0);
     lv_obj_set_style_border_width(connectBtn, 0, 0);
-    lv_obj_set_style_radius(connectBtn, 15, 0);
+    lv_obj_set_style_radius(connectBtn, 18, 0);
     lv_obj_set_style_shadow_width(connectBtn, 0, 0);
     lv_obj_add_event_cb(connectBtn, readyCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *connectLbl = lv_label_create(connectBtn);
-    lv_label_set_text(connectLbl, "OK");
+    lv_label_set_text(connectLbl, t(I18N_VALIDATE));
     lv_obj_set_style_text_color(connectLbl, LVCOL_TEXT, 0);
     lv_obj_center(connectLbl);
 
-    lv_obj_t *div = lv_obj_create(scr);
-    lv_obj_remove_style_all(div);
-    lv_obj_set_size(div, 480, 1);
-    lv_obj_set_style_bg_color(div, LVCOL_BORDER, 0);
-    lv_obj_set_style_bg_opa(div, LV_OPA_COVER, 0);
-    lv_obj_set_pos(div, 0, 40);
-    lv_obj_clear_flag(div, LV_OBJ_FLAG_SCROLLABLE);
-
     lv_obj_t *ta = lv_textarea_create(scr);
-    lv_obj_set_size(ta, 468, 38);
-    lv_obj_set_pos(ta, 6, 48);
+    lv_obj_set_size(ta, password ? 420 : 468, 38);
+    lv_obj_set_pos(ta, 6, 52);
     lv_textarea_set_one_line(ta, true);
-    lv_textarea_set_password_mode(ta, false); // unchanged: text was always shown in the raw-gfx version too
+    lv_textarea_set_password_mode(ta, password);
+    if (password) lv_textarea_set_password_show_time(ta, 900);
     lv_obj_set_style_bg_color(ta, LVCOL_CARD, 0);
     lv_obj_set_style_border_color(ta, LVCOL_BORDER, 0);
     lv_obj_set_style_border_width(ta, 1, 0);
@@ -2718,15 +2796,39 @@ static String tsKeyboard(const String& header) {
     lv_obj_set_style_text_color(ta, LVCOL_TEXT, 0);
     lv_obj_set_style_text_font(ta, &gFont16, 0);
 
+    if (password) {
+        // The eye: show/hide toggle beside the field, like every password
+        // field people already know.
+        lv_obj_t *eyeBtn = lv_btn_create(scr);
+        lv_obj_set_size(eyeBtn, 42, 38);
+        lv_obj_set_pos(eyeBtn, 432, 52);
+        lv_obj_set_style_bg_color(eyeBtn, LVCOL_CARD, 0);
+        lv_obj_set_style_border_color(eyeBtn, LVCOL_BORDER, 0);
+        lv_obj_set_style_border_width(eyeBtn, 1, 0);
+        lv_obj_set_style_radius(eyeBtn, 8, 0);
+        lv_obj_set_style_shadow_width(eyeBtn, 0, 0);
+        lv_obj_t *eyeIcon = lv_label_create(eyeBtn);
+        lv_label_set_text(eyeIcon, LV_SYMBOL_EYE_CLOSE);
+        lv_obj_set_style_text_color(eyeIcon, LVCOL_MUTED, 0);
+        lv_obj_center(eyeIcon);
+        lv_obj_add_event_cb(eyeBtn, [](lv_event_t *e) {
+            lv_obj_t *field = (lv_obj_t *)lv_event_get_user_data(e);
+            bool hidden = lv_textarea_get_password_mode(field);
+            lv_textarea_set_password_mode(field, !hidden);
+            lv_obj_t *icon = lv_obj_get_child((lv_obj_t *)lv_event_get_target(e), 0);
+            if (icon) lv_label_set_text(icon, hidden ? LV_SYMBOL_EYE_OPEN : LV_SYMBOL_EYE_CLOSE);
+        }, LV_EVENT_CLICKED, ta);
+    }
+
     lv_obj_t *kb = lv_keyboard_create(scr);
-    lv_obj_set_size(kb, 472, 226);
+    lv_obj_set_size(kb, 472, 222);
     // lv_keyboard_create()'s constructor internally does
     // lv_obj_align(obj, LV_ALIGN_BOTTOM_MID, 0, 0) — that's a persistent style
     // property in LVGL v8, not a one-shot calculation, so a plain
     // lv_obj_set_pos() afterwards is silently reinterpreted as an offset from
     // the bottom-mid anchor instead of an absolute position. Must explicitly
     // re-align to TOP_LEFT to get true absolute placement.
-    lv_obj_align(kb, LV_ALIGN_TOP_LEFT, 4, 90);
+    lv_obj_align(kb, LV_ALIGN_TOP_LEFT, 4, 94);
     lv_obj_clear_flag(kb, LV_OBJ_FLAG_SCROLLABLE);
     lv_keyboard_set_textarea(kb, ta);
     lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_LOWER, kbMapLower, kbCtrlLower);
@@ -2749,7 +2851,26 @@ static String tsKeyboard(const String& header) {
     lv_obj_set_style_bg_color(kb, LVCOL_BG, LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_set_style_text_color(kb, LVCOL_MUTED, LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_set_style_bg_color(kb, LVCOL_ACCENT, LV_PART_ITEMS | LV_STATE_PRESSED);
-    lv_obj_add_event_cb(kb, shiftHighlightCb, LV_EVENT_DRAW_PART_BEGIN, nullptr);
+    lv_obj_add_event_cb(kb, modeHighlightCb, LV_EVENT_DRAW_PART_BEGIN, nullptr);
+
+    // "&123" is our label, not one of the strings the widget special-cases,
+    // so the stock handler would type it into the field. Callbacks fire in
+    // registration order: pull the stock one off, register the switcher,
+    // put the stock one back — lv_event_stop_processing() then keeps &123
+    // taps away from it entirely.
+    lv_obj_remove_event_cb(kb, lv_keyboard_def_event_cb);
+    lv_obj_add_event_cb(kb, [](lv_event_t *e) {
+        lv_obj_t *kbObj = (lv_obj_t *)lv_event_get_target(e);
+        uint16_t id = lv_btnmatrix_get_selected_btn(kbObj);
+        if (id == LV_BTNMATRIX_BTN_NONE) return;
+        const char *txt = lv_btnmatrix_get_btn_text(kbObj, id);
+        if (txt && strcmp(txt, "&123") == 0) {
+            lv_keyboard_set_mode(kbObj, LV_KEYBOARD_MODE_SPECIAL);
+            lv_event_stop_processing(e);
+        }
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(kb, lv_keyboard_def_event_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(kb, readyCb, LV_EVENT_READY, nullptr);  // the check key
 
     lv_scr_load(scr);
 
@@ -2809,6 +2930,120 @@ static lv_obj_t* lvglAddSpinner(lv_obj_t *col) {
     return spin;
 }
 
+// The one header every page shares: a 48 px band where the WHOLE band is the
+// back button (finger-first — the hardest tap on the old screens was a 34 px
+// corner arrow), a 28 px chevron, and the title left-aligned beside it like
+// the reference UI. Draws the divider under itself. Returns the band so a
+// caller can drop an extra button on its right end (e.g. the WiFi picker's
+// rescan arrow) — a clickable child wins the tap over the band.
+static lv_obj_t* lvglAddHeader(lv_obj_t *scr, const char *titleText,
+                               lv_event_cb_t backCb, void *cbUserData, intptr_t backAction) {
+    lv_obj_t *header = lv_btn_create(scr);
+    lv_obj_set_size(header, 480, 48);
+    lv_obj_set_pos(header, 0, 0);
+    lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(header, 0, 0);
+    lv_obj_set_style_shadow_width(header, 0, 0);
+    lv_obj_set_style_radius(header, 0, 0);
+    lv_obj_set_style_pad_all(header, 0, 0);
+    lv_obj_set_user_data(header, (void *)backAction);
+    lv_obj_add_event_cb(header, backCb, LV_EVENT_CLICKED, cbUserData);
+
+    lv_obj_t *backIcon = lv_label_create(header);
+    lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
+    lv_obj_set_style_text_color(backIcon, LVCOL_TEXT, 0);
+    lv_obj_set_style_text_font(backIcon, &lv_font_montserrat_28, 0);
+    lv_obj_align(backIcon, LV_ALIGN_LEFT_MID, 16, 0);
+
+    lv_obj_t *title = lv_label_create(header);
+    lv_label_set_text(title, titleText);
+    lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
+    lv_obj_set_style_text_font(title, &gFont20, 0);
+    lv_obj_align(title, LV_ALIGN_LEFT_MID, 56, 0);
+
+    // The divider is a child of the band, not of the screen, so hiding the
+    // header (the OTA install flow does) takes the line with it.
+    lv_obj_t *div = lv_obj_create(header);
+    lv_obj_remove_style_all(div);
+    lv_obj_set_size(div, 480, 1);
+    lv_obj_set_style_bg_color(div, LVCOL_BORDER, 0);
+    lv_obj_set_style_bg_opa(div, LV_OPA_COVER, 0);
+    lv_obj_set_pos(div, 0, 47);
+    lv_obj_clear_flag(div, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(div, LV_OBJ_FLAG_CLICKABLE);
+    return header;
+}
+
+// Bambu-style scroll rail: page-up / page-down buttons at the screen's right
+// edge, driving an LVGL-scrollable container. The container's own always-on
+// scrollbar sits between the content and the rail. The buttons exist because
+// a drag-scroll on a 3.5" resistive-feeling panel is easy to miss and a
+// finger-sized button is not — both work.
+static void lvglScrollRailCb(lv_event_t *e) {
+    lv_obj_t *lst = (lv_obj_t *)lv_event_get_user_data(e);
+    int step = (int)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_target(e));
+    lv_obj_scroll_to_y(lst, lv_obj_get_scroll_y(lst) + step, LV_ANIM_ON);
+}
+
+// Grays a rail button out at its end of travel — a tap that will do nothing
+// should look like it will do nothing. One listener per button, registered on
+// the list's scroll events; direction comes from the button's own ±step.
+static void lvglScrollRailEndCb(lv_event_t *e) {
+    lv_obj_t *lst = (lv_obj_t *)lv_event_get_target(e);
+    lv_obj_t *b   = (lv_obj_t *)lv_event_get_user_data(e);
+    bool isUp  = ((int)(intptr_t)lv_obj_get_user_data(b)) < 0;
+    bool atEnd = isUp ? (lv_obj_get_scroll_top(lst) <= 0)
+                      : (lv_obj_get_scroll_bottom(lst) <= 0);
+    lv_obj_t *ic = lv_obj_get_child(b, 0);
+    if (ic) lv_obj_set_style_text_color(ic, atEnd ? LVCOL_BORDER : LVCOL_TEXT, 0);
+}
+
+static void lvglAddScrollRail(lv_obj_t *scr, lv_obj_t *list, int y0, int y1, int step) {
+    const int h = (y1 - y0 - 6) / 2;
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t *b = lv_btn_create(scr);
+        lv_obj_set_size(b, 44, h);   // full finger target
+        lv_obj_set_pos(b, 432, i == 0 ? y0 : y0 + h + 6);
+        lv_obj_set_style_bg_color(b, LVCOL_CARD, 0);
+        lv_obj_set_style_border_color(b, LVCOL_BORDER, 0);
+        lv_obj_set_style_border_width(b, 1, 0);
+        lv_obj_set_style_radius(b, 10, 0);
+        lv_obj_set_style_shadow_width(b, 0, 0);
+        lv_obj_set_user_data(b, (void *)(intptr_t)(i == 0 ? -step : step));
+        lv_obj_add_event_cb(b, lvglScrollRailCb, LV_EVENT_CLICKED, list);
+        lv_obj_t *ic = lv_label_create(b);
+        lv_label_set_text(ic, i == 0 ? LV_SYMBOL_UP : LV_SYMBOL_DOWN);
+        lv_obj_set_style_text_color(ic, LVCOL_TEXT, 0);
+        lv_obj_set_style_text_font(ic, &lv_font_montserrat_20, 0);
+        lv_obj_center(ic);
+        lv_obj_add_event_cb(list, lvglScrollRailEndCb, LV_EVENT_SCROLL, b);
+        lv_obj_add_event_cb(list, lvglScrollRailEndCb, LV_EVENT_SCROLL_END, b);
+    }
+    // Paint the initial end states (a list at the top starts with ▲ grayed).
+    lv_obj_update_layout(list);
+    lv_event_send(list, LV_EVENT_SCROLL, nullptr);
+}
+
+// Repaint the rail's end-states after the list's CONTENT changed. The rail is
+// usually created before the rows exist, so its creation-time paint saw an
+// empty, unscrollable list — and grayed both arrows on a page you can scroll.
+static void lvglRailRefresh(lv_obj_t *list) {
+    lv_obj_update_layout(list);
+    lv_event_send(list, LV_EVENT_SCROLL, nullptr);
+}
+
+// A scrollable column that plays well with the rail: always-on scrollbar with
+// its own styles (remove_style_all strips LV_PART_SCROLLBAR too — an unstyled
+// scrollbar draws nothing, which read as "no scrollbar" on the bench).
+static void lvglStyleScrollbar(lv_obj_t *list) {
+    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_ON);
+    lv_obj_set_style_bg_color(list, LVCOL_MUTED, LV_PART_SCROLLBAR);
+    lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_SCROLLBAR);
+    lv_obj_set_style_width(list, 6, LV_PART_SCROLLBAR);
+    lv_obj_set_style_radius(list, 3, LV_PART_SCROLLBAR);
+    lv_obj_set_style_pad_right(list, 2, LV_PART_SCROLLBAR);
+}
+
 static void lvglAddStatusBadge(lv_obj_t *col, bool ok) {
     lv_color_t c = ok ? LVCOL_GREEN : LVCOL_RED;
     lv_obj_t *badge = lv_obj_create(col);
@@ -2834,7 +3069,7 @@ static bool wifiTouchConfigure() {
         String ssid = tsPick_network();
         if (ssid.length() == 0) return false;
 
-        String pass = tsKeyboard("WiFi: " + ssid);
+        String pass = tsKeyboard(ssid, true);
         if (kbCancelled(pass)) return false;
 
         lv_obj_t *col;
@@ -2915,11 +3150,11 @@ static bool wifiTouchConfigure() {
 // password on failure) unchanged.
 static bool firebaseTouchLogin() {
     // --- Email ---
-    String email = tsKeyboard(t(I18N_FB_EMAIL));
+    String email = tsKeyboard(t(I18N_FB_EMAIL), false);
     if (email.length() == 0 || kbCancelled(email)) return false;
 
     // --- Password ---
-    String pass = tsKeyboard(t(I18N_FB_PASSWORD));
+    String pass = tsKeyboard(t(I18N_FB_PASSWORD), true);
     if (pass.length() == 0 || kbCancelled(pass)) return false;
 
     // Show connecting message
@@ -2979,7 +3214,12 @@ static bool firebaseTouchLogin() {
 // value label, not rebuilt per keypress) matching the app's card style —
 // top-left back arrow (Cancel), the passed-in prompt as the title, and a
 // full-width OK button at the bottom. Digit/backspace logic unchanged.
-static bool tsNumericInput(const char* prompt, String &val) {
+// Integer keypad. Starts empty (no pre-fill: the placeholder is a hint, a
+// pre-filled value is a wrong answer one distracted OK away). No decimal key
+// — every current use is whole grams. With minVal > 0, OK stays gray and
+// inert until the typed value reaches it; the field says the rule ("min. N
+// g") until it is met, then shows a green check.
+static bool tsNumericInput(const char* prompt, String &val, int minVal, int maxVal) {
     enum NumAction { NA_NONE, NA_CANCEL, NA_OK };
     static NumAction sNumAction;
     static char      sNumKey; // 0 = none pending; '\b' = backspace sentinel
@@ -2987,7 +3227,7 @@ static bool tsNumericInput(const char* prompt, String &val) {
         {"7","8","9"},
         {"4","5","6"},
         {"1","2","3"},
-        {".","0","\b"}
+        {"", "0", ""}
     };
 
     auto digitCb = [](lv_event_t *e) {
@@ -3004,88 +3244,109 @@ static bool tsNumericInput(const char* prompt, String &val) {
     lv_obj_set_style_border_width(scr, 0, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *backBtn = lv_btn_create(scr);
-    lv_obj_set_size(backBtn, 34, 36);
-    lv_obj_set_pos(backBtn, 0, 0);
-    lv_obj_set_style_bg_opa(backBtn, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(backBtn, 0, 0);
-    lv_obj_set_style_shadow_width(backBtn, 0, 0);
-    lv_obj_set_user_data(backBtn, (void *)(intptr_t)NA_CANCEL);
-    lv_obj_add_event_cb(backBtn, actionCb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *backIcon = lv_label_create(backBtn);
-    lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
-    lv_obj_set_style_text_color(backIcon, LVCOL_MUTED, 0);
-    lv_obj_center(backIcon);
+    lvglAddHeader(scr, prompt, actionCb, nullptr, (intptr_t)NA_CANCEL);
 
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, prompt);
-    lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
-    lv_obj_set_style_text_font(title, &gFont16, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
-
-    lv_obj_t *div = lv_obj_create(scr);
-    lv_obj_remove_style_all(div);
-    lv_obj_set_size(div, 480, 1);
-    lv_obj_set_style_bg_color(div, LVCOL_BORDER, 0);
-    lv_obj_set_style_bg_opa(div, LV_OPA_COVER, 0);
-    lv_obj_set_pos(div, 0, 36);
-    lv_obj_clear_flag(div, LV_OBJ_FLAG_SCROLLABLE);
-
+    // Value field, left column — the action column sits to its right.
     lv_obj_t *field = lv_obj_create(scr);
     lv_obj_remove_style_all(field);
-    lv_obj_set_size(field, 468, 38);
-    lv_obj_set_pos(field, 6, 44);
+    lv_obj_set_size(field, 330, 52);
+    lv_obj_set_pos(field, 10, 52);
     lv_obj_set_style_bg_color(field, LVCOL_CARD, 0);
     lv_obj_set_style_bg_opa(field, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(field, LVCOL_BORDER, 0);
     lv_obj_set_style_border_width(field, 1, 0);
-    lv_obj_set_style_radius(field, 8, 0);
+    lv_obj_set_style_radius(field, 10, 0);
     lv_obj_clear_flag(field, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t *valLbl = lv_label_create(field);
-    lv_obj_set_style_text_color(valLbl, LVCOL_TEXT, 0);
     lv_obj_set_style_text_font(valLbl, &gFont20, 0);
-    lv_obj_align(valLbl, LV_ALIGN_LEFT_MID, 12, 0);
+    lv_obj_align(valLbl, LV_ALIGN_LEFT_MID, 14, 0);
+    lv_obj_t *hintLbl = lv_label_create(field);
+    lv_obj_set_style_text_font(hintLbl, &gFont14, 0);
+    lv_obj_align(hintLbl, LV_ALIGN_RIGHT_MID, -12, 0);
 
-    const int KW = 152, KH = 40, KGAP = 6, KGAPY = 4, PAD_X = 6, PAD_Y = 88;
+    // Digit grid, 3 x 4 under the field.
+    const int KW = 105, KH = 47, KG = 7;
     for (int r = 0; r < 4; r++) {
         for (int c = 0; c < 3; c++) {
+            if (keys[r][c][0] == '\0') continue;   // the two blanks around 0
             lv_obj_t *key = lv_btn_create(scr);
             lv_obj_set_size(key, KW, KH);
-            lv_obj_set_pos(key, PAD_X + c * (KW + KGAP), PAD_Y + r * (KH + KGAPY));
-            bool isBs = (keys[r][c][0] == '\b');
+            lv_obj_set_pos(key, 10 + c * (KW + KG), 110 + r * (KH + KG));
             lv_obj_set_style_bg_color(key, LVCOL_CARD, 0);
             lv_obj_set_style_border_color(key, LVCOL_BORDER, 0);
             lv_obj_set_style_border_width(key, 1, 0);
-            lv_obj_set_style_radius(key, 8, 0);
+            lv_obj_set_style_radius(key, 10, 0);
             lv_obj_set_style_shadow_width(key, 0, 0);
             lv_obj_set_user_data(key, (void *)(intptr_t)keys[r][c][0]);
             lv_obj_add_event_cb(key, digitCb, LV_EVENT_CLICKED, nullptr);
             lv_obj_t *keyLbl = lv_label_create(key);
-            lv_label_set_text(keyLbl, isBs ? LV_SYMBOL_BACKSPACE : keys[r][c]);
+            lv_label_set_text(keyLbl, keys[r][c]);
             lv_obj_set_style_text_color(keyLbl, LVCOL_TEXT, 0);
             lv_obj_set_style_text_font(keyLbl, &gFont20, 0);
             lv_obj_center(keyLbl);
         }
     }
 
+    // Action column: backspace aligned with the field, OK filling the rest —
+    // full height, impossible to miss, blue only when the value is valid.
+    lv_obj_t *bsBtn = lv_btn_create(scr);
+    lv_obj_set_size(bsBtn, 120, 52);
+    lv_obj_set_pos(bsBtn, 350, 52);
+    lv_obj_set_style_bg_color(bsBtn, LVCOL_CARD, 0);
+    lv_obj_set_style_border_color(bsBtn, LVCOL_BORDER, 0);
+    lv_obj_set_style_border_width(bsBtn, 1, 0);
+    lv_obj_set_style_radius(bsBtn, 10, 0);
+    lv_obj_set_style_shadow_width(bsBtn, 0, 0);
+    lv_obj_set_user_data(bsBtn, (void *)(intptr_t)'\b');
+    lv_obj_add_event_cb(bsBtn, digitCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *bsLbl = lv_label_create(bsBtn);
+    lv_label_set_text(bsLbl, LV_SYMBOL_BACKSPACE);
+    lv_obj_set_style_text_color(bsLbl, LVCOL_TEXT, 0);
+    lv_obj_set_style_text_font(bsLbl, &gFont20, 0);
+    lv_obj_center(bsLbl);
+
     lv_obj_t *okBtn = lv_btn_create(scr);
-    lv_obj_set_size(okBtn, 468, 44);
-    lv_obj_set_pos(okBtn, 6, 320 - 6 - 44);
-    lv_obj_set_style_bg_color(okBtn, LVCOL_CARD, 0);
-    lv_obj_set_style_border_color(okBtn, LVCOL_BORDER, 0);
-    lv_obj_set_style_border_width(okBtn, 1, 0);
-    lv_obj_set_style_radius(okBtn, 10, 0);
+    lv_obj_set_size(okBtn, 120, 201);
+    lv_obj_set_pos(okBtn, 350, 111);
+    lv_obj_set_style_radius(okBtn, 12, 0);
     lv_obj_set_style_shadow_width(okBtn, 0, 0);
     lv_obj_set_user_data(okBtn, (void *)(intptr_t)NA_OK);
     lv_obj_add_event_cb(okBtn, actionCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *okLbl = lv_label_create(okBtn);
     lv_label_set_text(okLbl, "OK");
-    lv_obj_set_style_text_color(okLbl, LVCOL_ACCENT, 0);
+    lv_obj_set_style_text_font(okLbl, &gFont20, 0);
     lv_obj_center(okLbl);
 
+    char minHint[24], maxHint[24];
+    snprintf(minHint, sizeof(minHint), t(I18N_MIN_G), minVal);
+    snprintf(maxHint, sizeof(maxHint), t(I18N_MAX_G), maxVal);
+
+    bool valid = false;
     auto updateVal = [&]() {
-        String disp = val.length() ? val + "_" : "_";
-        lv_label_set_text(valLbl, disp.c_str());
+        long v = val.toInt();
+        bool overMax = (maxVal > 0 && val.length() > 0 && v > maxVal);
+        valid = val.length() > 0 && (minVal <= 0 || v >= minVal) && !overMax;
+        if (val.length()) {
+            lv_label_set_text(valLbl, val.c_str());
+            lv_obj_set_style_text_color(valLbl, LVCOL_TEXT, 0);
+        } else {
+            lv_label_set_text(valLbl, "0");
+            lv_obj_set_style_text_color(valLbl, LVCOL_FAINT, 0);
+        }
+        if (overMax) {
+            lv_label_set_text(hintLbl, maxHint);
+            lv_obj_set_style_text_color(hintLbl, LVCOL_RED, 0);
+        } else if (minVal > 0) {
+            lv_label_set_text(hintLbl, valid ? LV_SYMBOL_OK : minHint);
+            lv_obj_set_style_text_color(hintLbl, valid ? LVCOL_GREEN : LVCOL_FAINT, 0);
+        } else {
+            lv_label_set_text(hintLbl, "");
+        }
+        lv_obj_set_style_border_color(field, valid ? LVCOL_ACCENT : LVCOL_BORDER, 0);
+        lv_obj_set_style_bg_color(okBtn, valid ? LVCOL_ACCENT : LVCOL_CARD, 0);
+        lv_obj_set_style_border_color(okBtn, LVCOL_BORDER, 0);
+        lv_obj_set_style_border_width(okBtn, valid ? 0 : 1, 0);
+        lv_obj_set_style_text_color(okLbl, valid ? LVCOL_TEXT : LVCOL_FAINT, 0);
     };
     updateVal();
 
@@ -3099,16 +3360,15 @@ static bool tsNumericInput(const char* prompt, String &val) {
 
         if (sNumAction == NA_CANCEL) { result = false; break; }
         if (sNumAction == NA_OK) {
-            if (val.length() == 0) val = "0";
+            if (!valid) continue;              // gray OK is a dead OK
             result = true;
             break;
         }
         if (sNumKey == '\b') {
             if (val.length() > 0) val = val.substring(0, val.length()-1);
-        } else if (sNumKey == '.') {
-            if (val.indexOf('.') < 0) val += ".";
-        } else {
-            if (val.length() < 8) val += sNumKey;
+        } else if (sNumKey >= '0' && sNumKey <= '9') {
+            if (!(val.length() == 0 && sNumKey == '0') && val.length() < 5)
+                val += sNumKey;                // no leading zero, 5 digits max
         }
         updateVal();
     }
@@ -3131,7 +3391,7 @@ static bool tsNumericInput(const char* prompt, String &val) {
 // already did. Data/logic (tare, spool presets, tsNumericInput() custom
 // weight entry, measurement math, factor/offset restore on cancel, prefs
 // save) is unchanged.
-static void runCalibrationWizard() {
+static bool runCalibrationWizard() {
     // Save current HX711 state so we can fully restore on cancel
     float savedFactor = calibrationFactor;
     long  savedOffset = (long)scale.get_offset();
@@ -3148,30 +3408,39 @@ static void runCalibrationWizard() {
         if (prevScr) lv_obj_del(prevScr);
         prevScr = scr;
     };
-    // stepNum kept as a parameter (unused now that the progress dots are
-    // gone) so call sites don't need touching if a step indicator comes back.
-    // The Cancel arrow itself is added separately by each step (it needs
-    // that step's own click callback/action enum), right after this call.
-    auto buildHeader = [&](lv_obj_t *scr, int stepNum, const char *titleText) {
-        (void)stepNum;
-        lv_obj_t *title = lv_label_create(scr);
-        lv_label_set_text(title, titleText);
-        lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
-        lv_obj_set_style_text_font(title, &gFont20, 0);
-        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
-
-        lv_obj_t *div = lv_obj_create(scr);
-        lv_obj_remove_style_all(div);
-        lv_obj_set_size(div, 480, 1);
-        lv_obj_set_style_bg_color(div, LVCOL_BORDER, 0);
-        lv_obj_set_style_bg_opa(div, LV_OPA_COVER, 0);
-        lv_obj_set_pos(div, 0, 36);
-        lv_obj_clear_flag(div, LV_OBJ_FLAG_SCROLLABLE);
+    // Header: title + the three step dots (filled = where you are) that
+    // replaced the "(n/3)" suffix. The band itself is BACK: it cancels the
+    // wizard only from step 1, and otherwise returns to the previous step —
+    // the wizard is a loop over `step`, not a one-way corridor.
+    auto buildHeader = [&](lv_obj_t *scr, int stepNum, const char *titleText,
+                            lv_event_cb_t backCb, intptr_t backAction) {
+        lvglAddHeader(scr, titleText, backCb, nullptr, backAction);
+        for (int i = 0; i < 3; i++) {
+            lv_obj_t *d = lv_obj_create(scr);
+            lv_obj_remove_style_all(d);
+            lv_obj_set_size(d, 10, 10);
+            lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_bg_opa(d, LV_OPA_COVER, 0);
+            lv_obj_set_style_bg_color(d, i == stepNum - 1 ? LVCOL_ACCENT : LVCOL_FAINT, 0);
+            lv_obj_set_pos(d, 418 + i * 18, 19);
+            lv_obj_clear_flag(d, LV_OBJ_FLAG_CLICKABLE);
+        }
     };
 
-    // ---- STEP 1: Empty scale → tare ----
-    {
-        enum S1Action { S1_NONE, S1_CANCEL, S1_NEXT };
+    int step = 1;
+    while (step >= 1 && step <= 3) {
+
+    // ---- STEP 1: empty the platform, press TARE — that is the whole step ----
+    // The user MUST tare (the button is the only way forward), and a held
+    // zero advances to step 2 by itself: no readout, no "at zero" caption,
+    // no NEXT. If the pan will not hold a zero after taring (something
+    // still on it, vibration), the screen simply comes back for another try.
+    if (step == 1) {
+        // Re-entry from step 2 arrives in raw-counts mode: restore the saved
+        // factor so the stability check below speaks grams again.
+        scale.set_scale(savedFactor);
+
+        enum S1Action { S1_NONE, S1_CANCEL, S1_TARE };
         static S1Action sS1;
         auto cb = [](lv_event_t *e) {
             sS1 = (S1Action)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_target(e));
@@ -3182,58 +3451,44 @@ static void runCalibrationWizard() {
         lv_obj_set_style_bg_color(scr, LVCOL_BG, 0);
         lv_obj_set_style_border_width(scr, 0, 0);
         lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
-        buildHeader(scr, 1, t(I18N_CAL_STEP1));
+        buildHeader(scr, 1, t(I18N_CALIBRATE), cb, (intptr_t)S1_CANCEL);
 
-        String msgText = String(t(I18N_CAL_STEP1A)) + "\n" + t(I18N_CAL_STEP1B) + "\n" + t(I18N_CAL_STEP1C);
-        lv_obj_t *msg = lv_label_create(scr);
-        lv_label_set_text(msg, msgText.c_str());
-        lv_obj_set_style_text_color(msg, LVCOL_TEXT, 0);
-        lv_obj_set_style_text_font(msg, &gFont20, 0);
-        lv_obj_set_style_text_line_space(msg, 8, 0);
-        lv_label_set_long_mode(msg, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(msg, 468);
-        lv_obj_set_pos(msg, 6, 50);
+        lv_obj_t *hint = lv_label_create(scr);
+        lv_label_set_text(hint, t(I18N_CAL_EMPTY_TARE));
+        lv_obj_set_style_text_color(hint, LVCOL_TEXT, 0);
+        lv_obj_set_style_text_font(hint, &gFont20, 0);
+        lv_obj_set_size(hint, 480, LV_SIZE_CONTENT);
+        lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_pos(hint, 0, 118);
 
-        char facBuf[44]; snprintf(facBuf, sizeof(facBuf), "Facteur actuel : %.4f", calibrationFactor);
-        lv_obj_t *facLbl = lv_label_create(scr);
-        lv_label_set_text(facLbl, facBuf);
-        lv_obj_set_style_text_color(facLbl, LVCOL_FAINT, 0);
-        lv_obj_set_pos(facLbl, 6, 168);
-
-        // Cancel — top-left arrow, matching the keyboard screen's back button
-        lv_obj_t *cancelBtn = lv_btn_create(scr);
-        lv_obj_set_size(cancelBtn, 34, 36);
-        lv_obj_set_pos(cancelBtn, 0, 0);
-        lv_obj_set_style_bg_opa(cancelBtn, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(cancelBtn, 0, 0);
-        lv_obj_set_style_shadow_width(cancelBtn, 0, 0);
-        lv_obj_set_user_data(cancelBtn, (void *)(intptr_t)S1_CANCEL);
-        lv_obj_add_event_cb(cancelBtn, cb, LV_EVENT_CLICKED, nullptr);
-        lv_obj_t *cancelIcon = lv_label_create(cancelBtn);
-        lv_label_set_text(cancelIcon, LV_SYMBOL_LEFT);
-        lv_obj_set_style_text_color(cancelIcon, LVCOL_MUTED, 0);
-        lv_obj_center(cancelIcon);
-
-        lv_obj_t *nextBtn = lv_btn_create(scr);
-        lv_obj_set_size(nextBtn, 280, 70);
-        lv_obj_align(nextBtn, LV_ALIGN_BOTTOM_MID, 0, -8);
-        lv_obj_set_style_bg_color(nextBtn, LVCOL_CARD, 0);
-        lv_obj_set_style_border_color(nextBtn, LVCOL_BORDER, 0);
-        lv_obj_set_style_border_width(nextBtn, 1, 0);
-        lv_obj_set_style_radius(nextBtn, 12, 0);
-        lv_obj_set_style_shadow_width(nextBtn, 0, 0);
-        lv_obj_set_user_data(nextBtn, (void *)(intptr_t)S1_NEXT);
-        lv_obj_add_event_cb(nextBtn, cb, LV_EVENT_CLICKED, nullptr);
-        lv_obj_t *nextLbl = lv_label_create(nextBtn);
-        lv_label_set_text(nextLbl, t(I18N_NEXT));
-        lv_obj_set_style_text_color(nextLbl, LVCOL_TEXT, 0);
-        lv_obj_center(nextLbl);
+        // The kitchen-scale TARE button, promoted to THE action: blue,
+        // centered, alone.
+        lv_obj_t *tareBtn = lv_btn_create(scr);
+        lv_obj_set_size(tareBtn, 220, 64);
+        lv_obj_align(tareBtn, LV_ALIGN_BOTTOM_MID, 0, -12);
+        lv_obj_set_style_bg_color(tareBtn, LVCOL_ACCENT, 0);
+        lv_obj_set_style_radius(tareBtn, 12, 0);
+        lv_obj_set_style_shadow_width(tareBtn, 0, 0);
+        lv_obj_set_user_data(tareBtn, (void *)(intptr_t)S1_TARE);
+        lv_obj_add_event_cb(tareBtn, cb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t *tareZero = lv_label_create(tareBtn);
+        lv_label_set_text(tareZero, "0.0");
+        lv_obj_set_style_text_color(tareZero, LVCOL_TEXT, 0);
+        lv_obj_set_style_text_font(tareZero, &gFont20, 0);
+        lv_obj_align(tareZero, LV_ALIGN_CENTER, 0, -11);
+        lv_obj_t *tareCap = lv_label_create(tareBtn);
+        lv_label_set_text(tareCap, t(I18N_TARE));
+        lv_obj_set_style_text_color(tareCap, LVCOL_TEXT, 0);
+        lv_obj_set_style_text_font(tareCap, &gFont14, 0);
+        lv_obj_align(tareCap, LV_ALIGN_CENTER, 0, 13);
 
         loadScreen(scr);
         while (sS1 == S1_NONE) { lv_timer_handler(); delay(5); }
         if (sS1 == S1_CANCEL) goto wizard_cancel;
 
-        scale.set_scale(1.0f);
+        // TARE pressed: spinner, 20-sample tare, then require the pan to
+        // HOLD that zero (4 quarter-second reads within ±1 g) before moving
+        // on by itself. A pan that will not hold zero re-asks.
         {
             lv_obj_t *busyCol;
             lv_obj_t *busyScr = lvglCenteredScreen(&busyCol);
@@ -3243,10 +3498,20 @@ static void runCalibrationWizard() {
             lv_timer_handler();
         }
         scale.tare(20);
+        bool zeroHeld = true;
+        for (int i = 0; i < 4; i++) {
+            uint32_t t0 = millis(); while (millis() - t0 < 250) { lv_timer_handler(); delay(10); }
+            if (fabs(scale.get_units(1)) >= 1.0f) { zeroHeld = false; break; }
+        }
+        if (!zeroHeld) continue;      // rebuild step 1, ask for another tare
+
+        scale.set_scale(1.0f);        // raw-counts mode for the measurement
+        step = 2;
+        continue;
     }
 
-    // ---- STEP 2: Select spool preset or enter custom weight ----
-    {
+    // ---- STEP 2: pick the reference weight (presets or custom) ----
+    if (step == 2) {
         struct SpoolPreset { const char *name; float weight; };
         static const SpoolPreset presets[] = {
             {"BambuLab Grey",  210.0f},
@@ -3255,164 +3520,108 @@ static void runCalibrationWizard() {
         };
         const int NP = 3;
 
-        enum S2Action { S2_NONE, S2_P0, S2_P1, S2_P2, S2_CUSTOM, S2_CANCEL };
+        enum S2Action { S2_NONE, S2_P0, S2_P1, S2_P2, S2_CUSTOM, S2_BACK };
         static S2Action sS2;
         auto cb = [](lv_event_t *e) {
             sS2 = (S2Action)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_target(e));
         };
-
-        bool spoolChosen = false;
-        while (!spoolChosen) {
-            sS2 = S2_NONE;
-
-            lv_obj_t *scr = lv_obj_create(nullptr);
-            lv_obj_set_style_bg_color(scr, LVCOL_BG, 0);
-            lv_obj_set_style_border_width(scr, 0, 0);
-            lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
-            buildHeader(scr, 2, t(I18N_CAL_STEP2));
-
-            lv_obj_t *prompt = lv_label_create(scr);
-            lv_label_set_text(prompt, t(I18N_CAL_SEL_SPOOL));
-            lv_obj_set_style_text_color(prompt, LVCOL_MUTED, 0);
-            lv_obj_set_style_text_font(prompt, &gFont14, 0);
-            lv_obj_set_pos(prompt, 6, 42);
-
-            // 2x2 grid of cards, same style as the Settings menu — 2 per
-            // row (3 presets + Custom), instead of a stacked list.
-            const int GW = 231, GH = 100, GGAP = 6;
-            const int GX0 = 6, GX1 = GX0 + GW + GGAP;
-            const int GY0 = 66, GY1 = GY0 + GH + 8;
-            const int gx[4] = { GX0, GX1, GX0, GX1 };
-            const int gy[4] = { GY0, GY0, GY1, GY1 };
-            S2Action btnActions[4] = { S2_P0, S2_P1, S2_P2, S2_CUSTOM };
-
-            for (int i = 0; i < NP; i++) {
-                lv_obj_t *btn = lv_btn_create(scr);
-                lv_obj_set_size(btn, GW, GH);
-                lv_obj_set_pos(btn, gx[i], gy[i]);
-                lv_obj_set_style_bg_color(btn, LVCOL_CARD, 0);
-                lv_obj_set_style_border_color(btn, LVCOL_BORDER, 0);
-                lv_obj_set_style_border_width(btn, 1, 0);
-                lv_obj_set_style_radius(btn, 12, 0);
-                lv_obj_set_style_shadow_width(btn, 0, 0);
-                lv_obj_set_user_data(btn, (void *)(intptr_t)btnActions[i]);
-                lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
-
-                lv_obj_t *nameLbl = lv_label_create(btn);
-                lv_label_set_text(nameLbl, presets[i].name);
-                lv_obj_set_style_text_color(nameLbl, LVCOL_TEXT, 0);
-                lv_obj_align(nameLbl, LV_ALIGN_CENTER, 0, -14);
-
-                char wbuf[16]; snprintf(wbuf, sizeof(wbuf), "%.0f g", presets[i].weight);
-                lv_obj_t *wLbl = lv_label_create(btn);
-                lv_label_set_text(wLbl, wbuf);
-                lv_obj_set_style_text_color(wLbl, LVCOL_GREEN, 0);
-                lv_obj_set_style_text_font(wLbl, &gFont16, 0);
-                lv_obj_align(wLbl, LV_ALIGN_CENTER, 0, 12);
-            }
-
-            lv_obj_t *custBtn = lv_btn_create(scr);
-            lv_obj_set_size(custBtn, GW, GH);
-            lv_obj_set_pos(custBtn, gx[3], gy[3]);
-            lv_obj_set_style_bg_color(custBtn, LVCOL_CARD, 0);
-            lv_obj_set_style_border_color(custBtn, LVCOL_BORDER, 0);
-            lv_obj_set_style_border_width(custBtn, 1, 0);
-            lv_obj_set_style_radius(custBtn, 12, 0);
-            lv_obj_set_style_shadow_width(custBtn, 0, 0);
-            lv_obj_set_user_data(custBtn, (void *)(intptr_t)S2_CUSTOM);
-            lv_obj_add_event_cb(custBtn, cb, LV_EVENT_CLICKED, nullptr);
-            lv_obj_t *custLbl = lv_label_create(custBtn);
-            lv_label_set_text(custLbl, t(I18N_CUSTOM));
-            lv_obj_set_style_text_color(custLbl, LVCOL_TEXT, 0);
-            lv_obj_center(custLbl);
-
-            // Cancel — top-left arrow, matching the keyboard screen's back button
-            lv_obj_t *cancelBtn = lv_btn_create(scr);
-            lv_obj_set_size(cancelBtn, 34, 36);
-            lv_obj_set_pos(cancelBtn, 0, 0);
-            lv_obj_set_style_bg_opa(cancelBtn, LV_OPA_TRANSP, 0);
-            lv_obj_set_style_border_width(cancelBtn, 0, 0);
-            lv_obj_set_style_shadow_width(cancelBtn, 0, 0);
-            lv_obj_set_user_data(cancelBtn, (void *)(intptr_t)S2_CANCEL);
-            lv_obj_add_event_cb(cancelBtn, cb, LV_EVENT_CLICKED, nullptr);
-            lv_obj_t *cancelIcon = lv_label_create(cancelBtn);
-            lv_label_set_text(cancelIcon, LV_SYMBOL_LEFT);
-            lv_obj_set_style_text_color(cancelIcon, LVCOL_MUTED, 0);
-            lv_obj_center(cancelIcon);
-
-            loadScreen(scr);
-            while (sS2 == S2_NONE) { lv_timer_handler(); delay(5); }
-
-            if (sS2 == S2_CANCEL) goto wizard_cancel;
-
-            if (sS2 == S2_P0 || sS2 == S2_P1 || sS2 == S2_P2) {
-                int idx = (int)sS2 - (int)S2_P0;
-                knownWeight = presets[idx].weight;
-                weightStr   = String((int)knownWeight);
-                spoolChosen = true;
-            } else if (sS2 == S2_CUSTOM) {
-                weightStr = "500";
-                if (!tsNumericInput(t(I18N_CAL_SEL_SPOOL), weightStr)) goto wizard_cancel;
-                knownWeight = weightStr.toFloat();
-                if (knownWeight <= 0.0f) {
-                    lv_obj_t *errCol;
-                    lv_obj_t *errScr = lvglCenteredScreen(&errCol);
-                    lvglAddStatusBadge(errCol, false);
-                    lvglAddCenteredLabel(errCol, t(I18N_ERROR), LVCOL_RED, &gFont20);
-                    lvglAddCenteredLabel(errCol, t(I18N_CAL_ERR_WEIGHT), LVCOL_MUTED, &gFont14);
-                    loadScreen(errScr);
-                    uint32_t t0 = millis(); while (millis() - t0 < 1500) { lv_timer_handler(); delay(20); }
-                    goto wizard_cancel;
-                }
-                spoolChosen = true;
-            }
-        }
-    }
-
-    // ---- STEP 3: Place weight → MEASURE ----
-    {
-        enum S3Action { S3_NONE, S3_CANCEL, S3_MEASURE };
-        static S3Action sS3;
-        auto cb = [](lv_event_t *e) {
-            sS3 = (S3Action)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_target(e));
-        };
-        sS3 = S3_NONE;
+        sS2 = S2_NONE;
 
         lv_obj_t *scr = lv_obj_create(nullptr);
         lv_obj_set_style_bg_color(scr, LVCOL_BG, 0);
         lv_obj_set_style_border_width(scr, 0, 0);
         lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
-        buildHeader(scr, 3, t(I18N_CAL_STEP3));
+        buildHeader(scr, 2, t(I18N_CALIBRATE), cb, (intptr_t)S2_BACK);
 
+        // One 52 px row per choice, the house list grammar — full names
+        // left, weight right. Custom ("Manuel") first, per request: typing
+        // the real weight of any object beats hoping to own a listed spool.
+        S2Action rowActions[4] = { S2_CUSTOM, S2_P0, S2_P1, S2_P2 };
+        for (int i = 0; i < NP + 1; i++) {
+            int presetIdx = i - 1;             // row 0 is Custom
+            lv_obj_t *btn = lv_btn_create(scr);
+            lv_obj_set_size(btn, 460, 52);
+            lv_obj_set_pos(btn, 10, 60 + i * 61);
+            lv_obj_set_style_bg_color(btn, LVCOL_CARD, 0);
+            lv_obj_set_style_border_color(btn, LVCOL_BORDER, 0);
+            lv_obj_set_style_border_width(btn, 1, 0);
+            lv_obj_set_style_radius(btn, 10, 0);
+            lv_obj_set_style_shadow_width(btn, 0, 0);
+            lv_obj_set_user_data(btn, (void *)(intptr_t)rowActions[i]);
+            lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
+
+            lv_obj_t *nameLbl = lv_label_create(btn);
+            lv_label_set_text(nameLbl, i == 0 ? t(I18N_CUSTOM) : presets[presetIdx].name);
+            lv_obj_set_style_text_color(nameLbl, LVCOL_TEXT, 0);
+            lv_obj_set_style_text_font(nameLbl, &gFont16, 0);
+            lv_obj_align(nameLbl, LV_ALIGN_LEFT_MID, 16, 0);
+
+            lv_obj_t *right = lv_label_create(btn);
+            if (i == 0) {
+                lv_label_set_text(right, LV_SYMBOL_RIGHT);
+            } else {
+                char wbuf[20]; snprintf(wbuf, sizeof(wbuf), "%.0f g  %s", presets[presetIdx].weight, LV_SYMBOL_RIGHT);
+                lv_label_set_text(right, wbuf);
+            }
+            lv_obj_set_style_text_color(right, LVCOL_MUTED, 0);
+            lv_obj_set_style_text_font(right, &gFont16, 0);
+            lv_obj_align(right, LV_ALIGN_RIGHT_MID, -14, 0);
+        }
+
+        loadScreen(scr);
+        while (sS2 == S2_NONE) { lv_timer_handler(); delay(5); }
+
+        if (sS2 == S2_BACK) { step = 1; continue; }
+
+        if (sS2 == S2_CUSTOM) {
+            weightStr = "";   // start empty — a pre-filled 500 was one
+                              // distracted OK away from a wrong factor
+            if (!tsNumericInput(t(I18N_CAL_REF_TITLE), weightStr, 150, 4500)) continue;  // back to this list
+            knownWeight = weightStr.toFloat();
+        } else {
+            int idx = (int)sS2 - (int)S2_P0;
+            knownWeight = presets[idx].weight;
+            weightStr   = String((int)knownWeight);
+        }
+        step = 3;
+        continue;
+    }
+
+    // ---- STEP 3: place the weight — live readout, stability-gated MEASURE ----
+    if (step == 3) {
+        enum S3Action { S3_NONE, S3_BACK, S3_MEASURE };
+        static S3Action sS3;
+        auto cb = [](lv_event_t *e) {
+            sS3 = (S3Action)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_target(e));
+        };
+
+        lv_obj_t *scr = lv_obj_create(nullptr);
+        lv_obj_set_style_bg_color(scr, LVCOL_BG, 0);
+        lv_obj_set_style_border_width(scr, 0, 0);
+        lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+        buildHeader(scr, 3, t(I18N_CALIBRATE), cb, (intptr_t)S3_BACK);
+
+        // The one number on this screen is the instruction itself — big and
+        // white, it is what the user acts on.
         char placemsg[80];
         snprintf(placemsg, sizeof(placemsg), t(I18N_CAL_STEP3A), knownWeight);
-        String msgText = String(placemsg) + "\n" + t(I18N_CAL_STEP3B);
         lv_obj_t *msg = lv_label_create(scr);
-        lv_label_set_text(msg, msgText.c_str());
+        lv_label_set_text(msg, placemsg);
         lv_obj_set_style_text_color(msg, LVCOL_TEXT, 0);
         lv_obj_set_style_text_font(msg, &gFont20, 0);
-        lv_obj_set_style_text_line_space(msg, 8, 0);
-        lv_label_set_long_mode(msg, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(msg, 468);
-        lv_obj_set_pos(msg, 6, 50);
+        lv_obj_set_size(msg, 480, LV_SIZE_CONTENT);
+        lv_obj_set_style_text_align(msg, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_pos(msg, 0, 118);   // visually centered in the empty zone
 
-        // Cancel — top-left arrow, matching the keyboard screen's back button
-        lv_obj_t *cancelBtn = lv_btn_create(scr);
-        lv_obj_set_size(cancelBtn, 34, 36);
-        lv_obj_set_pos(cancelBtn, 0, 0);
-        lv_obj_set_style_bg_opa(cancelBtn, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(cancelBtn, 0, 0);
-        lv_obj_set_style_shadow_width(cancelBtn, 0, 0);
-        lv_obj_set_user_data(cancelBtn, (void *)(intptr_t)S3_CANCEL);
-        lv_obj_add_event_cb(cancelBtn, cb, LV_EVENT_CLICKED, nullptr);
-        lv_obj_t *cancelIcon = lv_label_create(cancelBtn);
-        lv_label_set_text(cancelIcon, LV_SYMBOL_LEFT);
-        lv_obj_set_style_text_color(cancelIcon, LVCOL_MUTED, 0);
-        lv_obj_center(cancelIcon);
+        // Nothing between the instruction and the button, by request — no
+        // number (raw counts through the old factor read as gibberish), no
+        // spinner, no status line. The reading feeds the stability detector
+        // below, and the button turning blue IS the "you can press now".
+        float dispFactor = (fabs(savedFactor) >= 0.5f) ? fabs(savedFactor) : 1.0f;
 
         lv_obj_t *measureBtn = lv_btn_create(scr);
-        lv_obj_set_size(measureBtn, 280, 70);
-        lv_obj_align(measureBtn, LV_ALIGN_BOTTOM_MID, 0, -8);
+        lv_obj_set_size(measureBtn, 280, 56);
+        lv_obj_align(measureBtn, LV_ALIGN_BOTTOM_MID, 0, -12);
         lv_obj_set_style_bg_color(measureBtn, LVCOL_CARD, 0);
         lv_obj_set_style_border_color(measureBtn, LVCOL_BORDER, 0);
         lv_obj_set_style_border_width(measureBtn, 1, 0);
@@ -3421,13 +3630,42 @@ static void runCalibrationWizard() {
         lv_obj_set_user_data(measureBtn, (void *)(intptr_t)S3_MEASURE);
         lv_obj_add_event_cb(measureBtn, cb, LV_EVENT_CLICKED, nullptr);
         lv_obj_t *measureLbl = lv_label_create(measureBtn);
-        lv_label_set_text(measureLbl, t(I18N_MEASURE));
-        lv_obj_set_style_text_color(measureLbl, LVCOL_TEXT, 0);
+        // "Calibrate", not "Measure": for the user this IS the calibration,
+        // and it is the last step — the wizard's own name belongs on it.
+        lv_label_set_text(measureLbl, t(I18N_CALIBRATE));
+        lv_obj_set_style_text_color(measureLbl, LVCOL_FAINT, 0);
+        lv_obj_set_style_text_font(measureLbl, &gFont16, 0);
         lv_obj_center(measureLbl);
 
         loadScreen(scr);
-        while (sS3 == S3_NONE) { lv_timer_handler(); delay(5); }
-        if (sS3 == S3_CANCEL) goto wizard_cancel;
+
+        // Stable = the last 6 quarter-second samples stay within 1 g
+        // (displayed scale). MEASURE arms (blue) only then, so the 30-sample
+        // average below can't be started on a still-swinging pan.
+        float ring[6] = {0}; int ringN = 0, ringI = 0;
+        bool stable = false;
+        bool goBack = false;
+        uint32_t lastW = 0;
+        for (;;) {
+            sS3 = S3_NONE;
+            while (sS3 == S3_NONE) {
+                lv_timer_handler(); delay(5);
+                if (millis() - lastW > 250) {
+                    lastW = millis();
+                    float g = scale.get_units(1) / dispFactor;
+                    ring[ringI] = g; ringI = (ringI + 1) % 6; if (ringN < 6) ringN++;
+                    float mn = ring[0], mx = ring[0];
+                    for (int i = 1; i < ringN; i++) { if (ring[i] < mn) mn = ring[i]; if (ring[i] > mx) mx = ring[i]; }
+                    stable = (ringN == 6) && (mx - mn < 1.0f) && (fabs(g) > 1.0f);
+                    lv_obj_set_style_bg_color(measureBtn, stable ? LVCOL_ACCENT : LVCOL_CARD, 0);
+                    lv_obj_set_style_border_width(measureBtn, stable ? 0 : 1, 0);
+                    lv_obj_set_style_text_color(measureLbl, stable ? LVCOL_TEXT : LVCOL_FAINT, 0);
+                }
+            }
+            if (sS3 == S3_BACK) { goBack = true; break; }
+            if (sS3 == S3_MEASURE && stable) break;   // gated until steady
+        }
+        if (goBack) { step = 2; continue; }
 
         {
             lv_obj_t *busyCol;
@@ -3450,101 +3688,34 @@ static void runCalibrationWizard() {
             uint32_t t0 = millis(); while (millis() - t0 < 2500) { lv_timer_handler(); delay(20); }
             goto wizard_cancel;
         }
+        break;   // measured and plausible: leave the loop, save below
     }
 
-    // ---- STEP 4: Show result → SAVE / CANCEL ----
+    }   // step loop
+
+    // ---- Auto-save + success (the review step is gone, by request) ----
+    // The measure already passed the plausibility guard above, and the
+    // reference weight was explicitly chosen one screen ago — a review
+    // screen only re-asked a question the user had answered. Save, show the
+    // house success screen for 2 s, land back home.
     {
-        enum S4Action { S4_NONE, S4_CANCEL, S4_SAVE };
-        static S4Action sS4;
-        auto cb = [](lv_event_t *e) {
-            sS4 = (S4Action)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_target(e));
-        };
-        sS4 = S4_NONE;
-
-        lv_obj_t *scr = lv_obj_create(nullptr);
-        lv_obj_set_style_bg_color(scr, LVCOL_BG, 0);
-        lv_obj_set_style_border_width(scr, 0, 0);
-        lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
-        buildHeader(scr, 4, t(I18N_CAL_RESULT));
-
-        char buf[80];
-        String lines;
-        snprintf(buf, sizeof(buf), t(I18N_CAL_REF_WEIGHT), knownWeight); lines += buf; lines += "\n";
-        snprintf(buf, sizeof(buf), t(I18N_CAL_RAW), rawReading); lines += buf; lines += "\n";
-        snprintf(buf, sizeof(buf), t(I18N_CAL_OLD_FACTOR), savedFactor); lines += buf;
-        lv_obj_t *infoLbl = lv_label_create(scr);
-        lv_label_set_text(infoLbl, lines.c_str());
-        lv_obj_set_style_text_color(infoLbl, LVCOL_MUTED, 0);
-        lv_obj_set_style_text_font(infoLbl, &gFont14, 0);
-        lv_obj_set_pos(infoLbl, 6, 44);
-
-        snprintf(buf, sizeof(buf), t(I18N_CAL_NEW_FACTOR), newFactor);
-        lv_obj_t *newLbl = lv_label_create(scr);
-        lv_label_set_text(newLbl, buf);
-        lv_obj_set_style_text_color(newLbl, LVCOL_GREEN, 0);
-        lv_obj_set_style_text_font(newLbl, &gFont20, 0);
-        lv_obj_set_pos(newLbl, 6, 108);
-
-        snprintf(buf, sizeof(buf), t(I18N_CAL_VERIFY), rawReading / newFactor, knownWeight);
-        lv_obj_t *verifyLbl = lv_label_create(scr);
-        lv_label_set_text(verifyLbl, buf);
-        lv_obj_set_style_text_color(verifyLbl, LVCOL_TEXT, 0);
-        lv_obj_set_style_text_font(verifyLbl, &gFont14, 0);
-        lv_label_set_long_mode(verifyLbl, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(verifyLbl, 468);
-        lv_obj_set_pos(verifyLbl, 6, 144);
-
-        // Cancel — top-left arrow, matching the keyboard screen's back button
-        lv_obj_t *cancelBtn = lv_btn_create(scr);
-        lv_obj_set_size(cancelBtn, 34, 36);
-        lv_obj_set_pos(cancelBtn, 0, 0);
-        lv_obj_set_style_bg_opa(cancelBtn, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(cancelBtn, 0, 0);
-        lv_obj_set_style_shadow_width(cancelBtn, 0, 0);
-        lv_obj_set_user_data(cancelBtn, (void *)(intptr_t)S4_CANCEL);
-        lv_obj_add_event_cb(cancelBtn, cb, LV_EVENT_CLICKED, nullptr);
-        lv_obj_t *cancelIcon = lv_label_create(cancelBtn);
-        lv_label_set_text(cancelIcon, LV_SYMBOL_LEFT);
-        lv_obj_set_style_text_color(cancelIcon, LVCOL_MUTED, 0);
-        lv_obj_center(cancelIcon);
-
-        lv_obj_t *saveBtn = lv_btn_create(scr);
-        lv_obj_set_size(saveBtn, 280, 70);
-        lv_obj_align(saveBtn, LV_ALIGN_BOTTOM_MID, 0, -8);
-        lv_obj_set_style_bg_color(saveBtn, LVCOL_CARD, 0);
-        lv_obj_set_style_border_color(saveBtn, LVCOL_BORDER, 0);
-        lv_obj_set_style_border_width(saveBtn, 1, 0);
-        lv_obj_set_style_radius(saveBtn, 12, 0);
-        lv_obj_set_style_shadow_width(saveBtn, 0, 0);
-        lv_obj_set_user_data(saveBtn, (void *)(intptr_t)S4_SAVE);
-        lv_obj_add_event_cb(saveBtn, cb, LV_EVENT_CLICKED, nullptr);
-        lv_obj_t *saveLbl = lv_label_create(saveBtn);
-        lv_label_set_text(saveLbl, t(I18N_CAL_SAVE));
-        lv_obj_set_style_text_color(saveLbl, LVCOL_TEXT, 0);
-        lv_obj_center(saveLbl);
-
-        loadScreen(scr);
-        while (sS4 == S4_NONE) { lv_timer_handler(); delay(5); }
-
-        if (sS4 == S4_SAVE) {
-            calibrationFactor = newFactor;
-            scale.set_scale(calibrationFactor);
-            float newOffset = scale.get_offset();
-            resetWeightFilters();
-            prefs.begin("config", false);
-            prefs.putFloat("calFactor", calibrationFactor);
-            prefs.putFloat("tareFactor", newOffset);
-            prefs.end();
-            char msg[32]; snprintf(msg, sizeof(msg), "Factor: %.4f", calibrationFactor);
-            lv_obj_t *okCol;
-            lv_obj_t *okScr = lvglCenteredScreen(&okCol);
-            lvglAddStatusBadge(okCol, true);
-            lvglAddCenteredLabel(okCol, t(I18N_CAL_SAVED), LVCOL_GREEN, &gFont20);
-            lvglAddCenteredLabel(okCol, String(msg) + "\n" + t(I18N_CAL_SAVED2), LVCOL_MUTED, &gFont14);
-            loadScreen(okScr);
-            uint32_t t0 = millis(); while (millis() - t0 < 2200) { lv_timer_handler(); delay(20); }
-            saved = true;
-        }
+        calibrationFactor = newFactor;
+        scale.set_scale(calibrationFactor);
+        float newOffset = scale.get_offset();
+        resetWeightFilters();
+        prefs.begin("config", false);
+        prefs.putFloat("calFactor", calibrationFactor);
+        prefs.putFloat("tareFactor", newOffset);
+        prefs.end();
+        char msg[32]; snprintf(msg, sizeof(msg), "Factor: %.4f", calibrationFactor);
+        lv_obj_t *okCol;
+        lv_obj_t *okScr = lvglCenteredScreen(&okCol);
+        lvglAddStatusBadge(okCol, true);
+        lvglAddCenteredLabel(okCol, t(I18N_CAL_SAVED), LVCOL_GREEN, &gFont20);
+        lvglAddCenteredLabel(okCol, String(msg) + "\n" + t(I18N_CAL_SAVED2), LVCOL_MUTED, &gFont14);
+        loadScreen(okScr);
+        uint32_t t0 = millis(); while (millis() - t0 < 2000) { lv_timer_handler(); delay(20); }
+        saved = true;
     }
 
 wizard_cancel:
@@ -3557,6 +3728,7 @@ wizard_cancel:
     lv_scr_load(lvScreen);
     lv_obj_del(prevScr);
     { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis()-t0 < 800) delay(20); }
+    return saved;
 }
 
 // Volume control: +/- buttons, mute toggle, theme selector, visual bar. Saves to prefs on change.
@@ -3594,25 +3766,13 @@ static void runVolumeSettings() {
         lv_obj_set_style_border_width(scr, 0, 0);
         lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-        lv_obj_t *title = lv_label_create(scr);
-        lv_label_set_text(title, t(I18N_VOLUME));
-        lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
-        lv_obj_set_style_text_font(title, &gFont20, 0);
-        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
-
-        lv_obj_t *div = lv_obj_create(scr);
-        lv_obj_remove_style_all(div);
-        lv_obj_set_size(div, 480, 1);
-        lv_obj_set_style_bg_color(div, LVCOL_BORDER, 0);
-        lv_obj_set_style_bg_opa(div, LV_OPA_COVER, 0);
-        lv_obj_set_pos(div, 0, 36);
-        lv_obj_clear_flag(div, LV_OBJ_FLAG_SCROLLABLE);
+        lvglAddHeader(scr, t(I18N_VOLUME), actionCb, nullptr, (intptr_t)VA_BACK);
 
         // Volume bar — thick, fills the space the Mute button used to take
         lv_obj_t *barBg = lv_obj_create(scr);
         lv_obj_remove_style_all(barBg);
         lv_obj_set_size(barBg, 468, 48);
-        lv_obj_set_pos(barBg, 6, 38);
+        lv_obj_set_pos(barBg, 6, 52);
         lv_obj_set_style_bg_color(barBg, LVCOL_CARD, 0);
         lv_obj_set_style_bg_opa(barBg, LV_OPA_COVER, 0);
         lv_obj_set_style_border_color(barBg, LVCOL_BORDER, 0);
@@ -3636,12 +3796,12 @@ static void runVolumeSettings() {
         lv_label_set_text_fmt(volLbl, "%u%%", (unsigned)gVolume);
         lv_obj_set_style_text_color(volLbl, LVCOL_TEXT, 0);
         lv_obj_set_style_text_font(volLbl, &gFont16, 0);
-        lv_obj_align(volLbl, LV_ALIGN_TOP_MID, 0, 56);
+        lv_obj_align(volLbl, LV_ALIGN_TOP_MID, 0, 70);
 
         // - / + buttons (10-point steps)
         lv_obj_t *minusBtn = lv_btn_create(scr);
         lv_obj_set_size(minusBtn, 227, 56);
-        lv_obj_set_pos(minusBtn, 6, 96);
+        lv_obj_set_pos(minusBtn, 6, 108);
         lv_obj_set_style_bg_color(minusBtn, LVCOL_CARD, 0);
         lv_obj_set_style_border_color(minusBtn, LVCOL_BORDER, 0);
         lv_obj_set_style_border_width(minusBtn, 1, 0);
@@ -3657,7 +3817,7 @@ static void runVolumeSettings() {
 
         lv_obj_t *plusBtn = lv_btn_create(scr);
         lv_obj_set_size(plusBtn, 227, 56);
-        lv_obj_set_pos(plusBtn, 247, 96);
+        lv_obj_set_pos(plusBtn, 247, 108);
         lv_obj_set_style_bg_color(plusBtn, LVCOL_CARD, 0);
         lv_obj_set_style_border_color(plusBtn, LVCOL_BORDER, 0);
         lv_obj_set_style_border_width(plusBtn, 1, 0);
@@ -3673,12 +3833,12 @@ static void runVolumeSettings() {
 
         // Sound theme label + 4 square cards, side by side
         lv_obj_t *themeLbl = lv_label_create(scr);
-        lv_label_set_text(themeLbl, "Son:");
+        lv_label_set_text(themeLbl, t(I18N_SOUND));
         lv_obj_set_style_text_color(themeLbl, LVCOL_MUTED, 0);
-        lv_obj_set_pos(themeLbl, 6, 168);
+        lv_obj_set_pos(themeLbl, 6, 174);
 
         VolAction themeActions[4] = { VA_THEME0, VA_THEME1, VA_THEME2, VA_THEME3 };
-        const int TW = 111, TGAP = 6, TY = 182, TH = 120;
+        const int TW = 111, TGAP = 6, TY = 188, TH = 120;
         for (int i = 0; i < 4; i++) {
             bool sel = (gSoundTheme == (uint8_t)i);
             lv_obj_t *tb = lv_btn_create(scr);
@@ -3696,20 +3856,6 @@ static void runVolumeSettings() {
             lv_obj_set_style_text_color(tl, sel ? LVCOL_TEXT : LVCOL_MUTED, 0);
             lv_obj_center(tl);
         }
-
-        // Back — top-left arrow, matching the keyboard screen's back button
-        lv_obj_t *backBtn = lv_btn_create(scr);
-        lv_obj_set_size(backBtn, 34, 36);
-        lv_obj_set_pos(backBtn, 0, 0);
-        lv_obj_set_style_bg_opa(backBtn, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(backBtn, 0, 0);
-        lv_obj_set_style_shadow_width(backBtn, 0, 0);
-        lv_obj_set_user_data(backBtn, (void *)(intptr_t)VA_BACK);
-        lv_obj_add_event_cb(backBtn, actionCb, LV_EVENT_CLICKED, nullptr);
-        lv_obj_t *backIcon = lv_label_create(backBtn);
-        lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
-        lv_obj_set_style_text_color(backIcon, LVCOL_MUTED, 0);
-        lv_obj_center(backIcon);
 
         lv_scr_load(scr);
         if (prevScr) { lv_obj_del(prevScr); prevScr = nullptr; }
@@ -3747,24 +3893,20 @@ static void runVolumeSettings() {
 // same reason as tsPick_network() above — only reached from
 // runSettingsMenu(), never from an LVGL click callback. Selection
 // logic/prefs storage unchanged.
-static void runLanguageSettings() {
-    const int CW = 110, CH = 96, GAP = 8, X0 = 8;
-    const int X1 = X0 + CW + GAP, X2 = X1 + CW + GAP, X3 = X2 + CW + GAP;
-    const int Y0 = 44, Y1 = Y0 + CH + GAP;
-
-    struct { Language lang; const char *name; } opts[8] = {
-        { LANG_DE, "Deutsch"   },
-        { LANG_EN, "English"   },
-        { LANG_ES, "Espanol"   },
-        { LANG_FR, "Francais"  },
-        { LANG_IT, "Italiano"  },
-        { LANG_PL, "Polski"    },
-        { LANG_PT, "Portugues" },
-        { LANG_ZH, "中文" },   // a language names itself in its own script
+static void runLanguageSettings(bool firstBoot) {
+    // Exactly Studio Manager's list — same languages, same order — so the
+    // scale and Studio never disagree on what can be picked.
+    struct { Language lang; const char *name; } opts[NUM_LANGS] = {
+        { LANG_EN,    "English"               },
+        { LANG_FR,    "Francais"              },
+        { LANG_DE,    "Deutsch"               },
+        { LANG_ES,    "Espanol"               },
+        { LANG_IT,    "Italiano"              },
+        { LANG_ZH,    "中文" },   // a language names itself in its own script
+        { LANG_PT,    "Portugues (Brasil)"    },
+        { LANG_PT_PT, "Portugues (Portugal)"  },
+        { LANG_PL,    "Polski"                },
     };
-    const int bx[8] = {X0,X1,X2,X3, X0,X1,X2,X3};
-    const int by[8] = {Y0,Y0,Y0,Y0, Y1,Y1,Y1,Y1};
-
     enum LangAction { LA_NONE, LA_PICK, LA_BACK };
     static LangAction sLangAction;
     static int        sLangIdx;
@@ -3785,30 +3927,52 @@ static void runLanguageSettings() {
         lv_obj_set_style_border_width(scr, 0, 0);
         lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-        lv_obj_t *title = lv_label_create(scr);
-        lv_label_set_text(title, t(I18N_LANGUAGE));
-        lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
-        lv_obj_set_style_text_font(title, &gFont20, 0);
-        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+        if (firstBoot) {
+            // First-boot step 1: no back chevron — there is nothing before
+            // this screen — and a language-neutral literal title, since no
+            // language has been chosen yet.
+            lv_obj_t *ttl = lv_label_create(scr);
+            lv_label_set_text(ttl, "Language");
+            lv_obj_set_style_text_color(ttl, LVCOL_TEXT, 0);
+            lv_obj_set_style_text_font(ttl, &gFont20, 0);
+            lv_obj_set_pos(ttl, 20, 13);
+            lv_obj_t *div = lv_obj_create(scr);
+            lv_obj_remove_style_all(div);
+            lv_obj_set_size(div, 480, 1);
+            lv_obj_set_pos(div, 0, 48);
+            lv_obj_set_style_bg_color(div, LVCOL_BORDER, 0);
+            lv_obj_set_style_bg_opa(div, LV_OPA_COVER, 0);
+        } else {
+            lvglAddHeader(scr, t(I18N_LANGUAGE), backCb, nullptr, 0);
+        }
 
-        lv_obj_t *div = lv_obj_create(scr);
-        lv_obj_remove_style_all(div);
-        lv_obj_set_size(div, 480, 1);
-        lv_obj_set_style_bg_color(div, LVCOL_BORDER, 0);
-        lv_obj_set_style_bg_opa(div, LV_OPA_COVER, 0);
-        lv_obj_set_pos(div, 0, 36);
-        lv_obj_clear_flag(div, LV_OBJ_FLAG_SCROLLABLE);
+        // One row per language, the same scrolling-list shape as Settings.
+        // The current language carries the accent border and a check mark.
+        const int ROW_H = 56;
+        lv_obj_t *list = lv_obj_create(scr);
+        lv_obj_remove_style_all(list);
+        lv_obj_set_size(list, 428, 320 - 49);
+        lv_obj_set_pos(list, 0, 49);
+        lv_obj_set_style_pad_top(list, 8, 0);
+        lv_obj_set_style_pad_bottom(list, 8, 0);
+        lv_obj_set_style_pad_left(list, 10, 0);
+        lv_obj_set_style_pad_right(list, 6, 0);
+        lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(list, 6, 0);
+        lv_obj_set_scroll_dir(list, LV_DIR_VER);
+        lvglStyleScrollbar(list);
+        lvglAddScrollRail(scr, list, 57, 312, 2 * (ROW_H + 6));
 
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < NUM_LANGS; i++) {
             bool sel = (opts[i].lang == gLanguage);
-            lv_obj_t *card = lv_btn_create(scr);
-            lv_obj_set_size(card, CW, CH);
-            lv_obj_set_pos(card, bx[i], by[i]);
+            lv_obj_t *card = lv_btn_create(list);
+            lv_obj_set_size(card, LV_PCT(100), ROW_H);
             lv_obj_set_style_bg_color(card, LVCOL_CARD, 0);
             lv_obj_set_style_border_color(card, sel ? LVCOL_ACCENT : LVCOL_BORDER, 0);
             lv_obj_set_style_border_width(card, sel ? 2 : 1, 0);
-            lv_obj_set_style_radius(card, 12, 0);
+            lv_obj_set_style_radius(card, 10, 0);
             lv_obj_set_style_shadow_width(card, 0, 0);
+            lv_obj_set_style_pad_all(card, 0, 0);
             lv_obj_set_user_data(card, (void *)(intptr_t)i);
             lv_obj_add_event_cb(card, cardCb, LV_EVENT_CLICKED, nullptr);
 
@@ -3816,37 +3980,43 @@ static void runLanguageSettings() {
             lv_label_set_text(lbl, opts[i].name);
             lv_obj_set_style_text_color(lbl, sel ? LVCOL_TEXT : LVCOL_MUTED, 0);
             lv_obj_set_style_text_font(lbl, &gFont16, 0);
-            lv_obj_center(lbl);
+            lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 16, 0);
+
+            if (sel) {
+                lv_obj_t *mark = lv_label_create(card);
+                lv_label_set_text(mark, LV_SYMBOL_OK);
+                lv_obj_set_style_text_color(mark, LVCOL_ACCENT, 0);
+                lv_obj_set_style_text_font(mark, &lv_font_montserrat_20, 0);
+                lv_obj_align(mark, LV_ALIGN_RIGHT_MID, -16, 0);
+            }
         }
 
-        lv_obj_t *backBtn = lv_btn_create(scr);
-        lv_obj_set_size(backBtn, 34, 36);
-        lv_obj_set_pos(backBtn, 0, 0);
-        lv_obj_set_style_bg_opa(backBtn, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(backBtn, 0, 0);
-        lv_obj_set_style_shadow_width(backBtn, 0, 0);
-        lv_obj_add_event_cb(backBtn, backCb, LV_EVENT_CLICKED, nullptr);
-        lv_obj_t *backIcon = lv_label_create(backBtn);
-        lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
-        lv_obj_set_style_text_color(backIcon, LVCOL_MUTED, 0);
-        lv_obj_center(backIcon);
-
+        lvglRailRefresh(list);
         lv_scr_load(scr);
         if (prevScr) { lv_obj_del(prevScr); prevScr = nullptr; }
 
         while (sLangAction == LA_NONE) { lv_timer_handler(); delay(5); }
 
         if (sLangAction != LA_BACK) {
-            if (opts[sLangIdx].lang != gLanguage) {
+            // At first boot the write is unconditional even when English —
+            // the default — is picked: the EXISTENCE of the "language" key is
+            // what says "the owner has chosen", and its absence is what
+            // triggers this whole flow on the next power-up.
+            if (firstBoot || opts[sLangIdx].lang != gLanguage) {
                 gLanguage = opts[sLangIdx].lang;
                 prefs.begin("config", false);
                 prefs.putUChar("language", (uint8_t)gLanguage);
                 prefs.end();
+                // Keep the account in step, like Studio's saveAccountLang():
+                // the cloud worker writes users/{uid}/prefs/app.lang, and
+                // Studio picks it up at its next startup sync.
+                gLangPushPending = true;
             }
         }
 
         prevScr = scr;
         if (sLangAction == LA_BACK) break;
+        if (firstBoot && sLangAction == LA_PICK) break;   // chosen: on to the next step
     }
 
     lv_scr_load(lvScreen);
@@ -3958,83 +4128,95 @@ static void runFirebaseAccountMenu() {
     lv_obj_set_style_border_width(scr, 0, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, t(I18N_FB_ACCOUNT));
-    lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
-    lv_obj_set_style_text_font(title, &gFont20, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+    lvglAddHeader(scr, t(I18N_ACCOUNT), actionCb, nullptr, (intptr_t)FA_BACK);
 
-    lv_obj_t *div = lv_obj_create(scr);
-    lv_obj_remove_style_all(div);
-    lv_obj_set_size(div, 480, 1);
-    lv_obj_set_style_bg_color(div, LVCOL_BORDER, 0);
-    lv_obj_set_style_bg_opa(div, LV_OPA_COVER, 0);
-    lv_obj_set_pos(div, 0, 36);
-    lv_obj_clear_flag(div, LV_OBJ_FLAG_SCROLLABLE);
+    // Label/value rows, the same grammar as the LAN and Settings pages — this
+    // screen used to be a floating column in mostly empty space.
+    auto row = [&](int y, const char *label) {
+        lv_obj_t *r = lv_obj_create(scr);
+        lv_obj_set_size(r, 420, 52);
+        lv_obj_align(r, LV_ALIGN_TOP_MID, 0, y);
+        lv_obj_set_style_bg_color(r, LVCOL_CARD, 0);
+        lv_obj_set_style_border_color(r, LVCOL_BORDER, 0);
+        lv_obj_set_style_border_width(r, 1, 0);
+        lv_obj_set_style_radius(r, 10, 0);
+        lv_obj_set_style_shadow_width(r, 0, 0);
+        lv_obj_clear_flag(r, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *l = lv_label_create(r);
+        lv_label_set_text(l, label);
+        lv_obj_set_style_text_color(l, LVCOL_MUTED, 0);
+        lv_obj_align(l, LV_ALIGN_LEFT_MID, 14, 0);
+        return r;
+    };
 
-    lv_obj_t *col = lv_obj_create(scr);
-    lv_obj_remove_style_all(col);
-    lv_obj_set_size(col, 360, LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(col, 8, 0);
-    lv_obj_align(col, LV_ALIGN_TOP_MID, 0, 60);
-    lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
+    // Name row: green account silhouette + display name (this page is only
+    // reachable signed-in, so the silhouette is always the connected green).
+    lv_obj_t *nameRow = row(60, t(I18N_NAME));
+    lv_obj_t *vgrp = lv_obj_create(nameRow);
+    lv_obj_remove_style_all(vgrp);
+    lv_obj_set_size(vgrp, LV_SIZE_CONTENT, 26);
+    lv_obj_set_flex_flow(vgrp, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(vgrp, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(vgrp, 8, 0);
+    lv_obj_align(vgrp, LV_ALIGN_RIGHT_MID, -14, 0);
+    lv_obj_clear_flag(vgrp, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(vgrp, LV_OBJ_FLAG_CLICKABLE);
 
-    lv_color_t cloudCol = firebaseAuth ? LVCOL_GREEN : LVCOL_RED;
-    lv_obj_t *cloudGroup = lv_obj_create(col);
-    lv_obj_remove_style_all(cloudGroup);
-    lv_obj_set_size(cloudGroup, 40, 26);
-    lv_obj_clear_flag(cloudGroup, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(cloudGroup, LV_OBJ_FLAG_CLICKABLE);
-
-    lv_obj_t *dome1 = lv_obj_create(cloudGroup);
-    lv_obj_set_size(dome1, 26, 26);
-    lv_obj_set_style_radius(dome1, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_width(dome1, 0, 0);
-    lv_obj_set_style_bg_color(dome1, cloudCol, 0);
-    lv_obj_set_pos(dome1, 0, 0);
-    lv_obj_clear_flag(dome1, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(dome1, LV_OBJ_FLAG_CLICKABLE);
-
-    lv_obj_t *dome2 = lv_obj_create(cloudGroup);
-    lv_obj_set_size(dome2, 18, 18);
-    lv_obj_set_style_radius(dome2, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_width(dome2, 0, 0);
-    lv_obj_set_style_bg_color(dome2, cloudCol, 0);
-    lv_obj_set_pos(dome2, 21, 8);
-    lv_obj_clear_flag(dome2, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(dome2, LV_OBJ_FLAG_CLICKABLE);
-
-    lv_obj_t *base = lv_obj_create(cloudGroup);
-    lv_obj_remove_style_all(base);
-    lv_obj_set_size(base, 40, 12);
-    lv_obj_set_style_bg_color(base, cloudCol, 0);
-    lv_obj_set_style_bg_opa(base, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(base, 4, 0);
-    lv_obj_set_pos(base, 0, 14);
-    lv_obj_clear_flag(base, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(base, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *face = lv_obj_create(vgrp);
+    lv_obj_remove_style_all(face);
+    lv_obj_set_size(face, 26, 26);
+    lv_obj_clear_flag(face, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(face, LV_OBJ_FLAG_CLICKABLE);
+    auto disc = [&](int x, int y2, int d) {
+        lv_obj_t *o = lv_obj_create(face);
+        lv_obj_set_size(o, d, d);
+        lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(o, 0, 0);
+        lv_obj_set_style_bg_color(o, LVCOL_GREEN, 0);
+        lv_obj_set_pos(o, x, y2);
+        lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(o, LV_OBJ_FLAG_CLICKABLE);
+    };
+    disc(9, 2, 9);      // head
+    disc(3, 15, 20);    // shoulders (clipped by the 26x26 group)
 
     String dispName = firebaseDisplayName.length() ? firebaseDisplayName : firebaseEmail;
-    lv_obj_t *nameLbl = lv_label_create(col);
+    lv_obj_t *nameLbl = lv_label_create(vgrp);
     lv_label_set_text(nameLbl, dispName.c_str());
+    lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_max_width(nameLbl, 240, 0);
     lv_obj_set_style_text_color(nameLbl, LVCOL_TEXT, 0);
-    lv_obj_set_style_text_font(nameLbl, &gFont20, 0);
+    lv_obj_set_style_text_font(nameLbl, &gFont16, 0);
 
-    if (firebaseDisplayName.length() && firebaseEmail.length()) {
-        lv_obj_t *emailLbl = lv_label_create(col);
-        lv_label_set_text(emailLbl, firebaseEmail.c_str());
-        lv_obj_set_style_text_color(emailLbl, LVCOL_MUTED, 0);
-        lv_obj_set_style_text_font(emailLbl, &gFont14, 0);
+    lv_obj_t *emailRow = row(120, "Email");
+    lv_obj_t *emailLbl = lv_label_create(emailRow);
+    lv_label_set_text(emailLbl, firebaseEmail.length() ? firebaseEmail.c_str() : "--");
+    lv_label_set_long_mode(emailLbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_max_width(emailLbl, 300, 0);
+    lv_obj_set_style_text_color(emailLbl, LVCOL_TEXT, 0);
+    lv_obj_align(emailLbl, LV_ALIGN_RIGHT_MID, -14, 0);
+
+    // "Is it working?" — the one question this page gets opened for.
+    String syncVal = "--";
+    if (gLastCloudSendOkMs > 0) {
+        uint32_t mins = (millis() - gLastCloudSendOkMs) / 60000UL;
+        syncVal = (mins < 1)  ? String("<1 min")
+                : (mins < 60) ? String(mins) + " min"
+                              : String(mins / 60) + " h " + String(mins % 60) + " min";
     }
+    lv_obj_t *syncRow = row(180, t(I18N_LAST_SYNC));
+    lv_obj_t *syncLbl = lv_label_create(syncRow);
+    lv_label_set_text(syncLbl, syncVal.c_str());
+    lv_obj_set_style_text_color(syncLbl, LVCOL_TEXT, 0);
+    lv_obj_align(syncLbl, LV_ALIGN_RIGHT_MID, -14, 0);
 
-    lv_obj_t *logoutBtn = lv_btn_create(col);
-    lv_obj_set_size(logoutBtn, 160, 40);
+    lv_obj_t *logoutBtn = lv_btn_create(scr);
+    lv_obj_set_size(logoutBtn, 220, 48);
+    lv_obj_align(logoutBtn, LV_ALIGN_BOTTOM_MID, 0, -10);
     lv_obj_set_style_bg_color(logoutBtn, LVCOL_CARD, 0);
-    lv_obj_set_style_border_color(logoutBtn, LVCOL_BORDER, 0);
+    lv_obj_set_style_border_color(logoutBtn, LVCOL_RED, 0);
     lv_obj_set_style_border_width(logoutBtn, 1, 0);
-    lv_obj_set_style_radius(logoutBtn, 10, 0);
+    lv_obj_set_style_radius(logoutBtn, 12, 0);
     lv_obj_set_style_shadow_width(logoutBtn, 0, 0);
     lv_obj_set_user_data(logoutBtn, (void *)(intptr_t)FA_LOGOUT);
     lv_obj_add_event_cb(logoutBtn, actionCb, LV_EVENT_CLICKED, nullptr);
@@ -4043,34 +4225,54 @@ static void runFirebaseAccountMenu() {
     lv_obj_set_style_text_color(logoutLbl, LVCOL_RED, 0);
     lv_obj_center(logoutLbl);
 
-    lv_obj_t *backBtn = lv_btn_create(scr);
-    lv_obj_set_size(backBtn, 34, 36);
-    lv_obj_set_pos(backBtn, 0, 0);
-    lv_obj_set_style_bg_opa(backBtn, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(backBtn, 0, 0);
-    lv_obj_set_style_shadow_width(backBtn, 0, 0);
-    lv_obj_set_user_data(backBtn, (void *)(intptr_t)FA_BACK);
-    lv_obj_add_event_cb(backBtn, actionCb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *backIcon = lv_label_create(backBtn);
-    lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
-    lv_obj_set_style_text_color(backIcon, LVCOL_MUTED, 0);
-    lv_obj_center(backIcon);
-
     lv_scr_load(scr);
 
-    while (sFbAction == FA_NONE) { lv_timer_handler(); delay(5); }
+    for (;;) {
+        sFbAction = FA_NONE;
+        uint32_t lastRefresh = 0;
+        while (sFbAction == FA_NONE) {
+            lv_timer_handler(); delay(5);
+            // Freshly paired, this page often opens BEFORE the cloud worker
+            // has fetched the profile — it used to freeze its build-time
+            // emptiness. Re-read the globals twice a second; identical text
+            // is a redraw no-op.
+            if (millis() - lastRefresh > 500) {
+                lastRefresh = millis();
+                String dn = firebaseDisplayName.length() ? firebaseDisplayName : firebaseEmail;
+                lv_label_set_text(nameLbl, dn.c_str());
+                lv_label_set_text(emailLbl,
+                    (firebaseEmail.length() && firebaseEmail != dn) ? firebaseEmail.c_str() : "--");
+                // The account language sync can land while this page is open
+                // (it follows the pairing by seconds) — re-set the static
+                // captions too, so the page re-translates in place.
+                lv_label_set_text(lv_obj_get_child(nameRow, 0), t(I18N_NAME));
+                lv_label_set_text(lv_obj_get_child(syncRow, 0), t(I18N_LAST_SYNC));
+                lv_label_set_text(logoutLbl, t(I18N_LOGOUT));
+            }
+        }
+        if (sFbAction != FA_LOGOUT) break;
+        // The only destructive tap of this page gets the same second look as
+        // the LAN code regeneration. lvglConfirm restores this screen on "no".
+        if (lvglConfirm(t(I18N_LOGOUT_Q))) break;
+    }
 
     if (sFbAction == FA_LOGOUT) {
-        // Clear all firebase credentials
-        firebaseEmail       = "";
-        firebasePassword    = "";
-        firebaseDisplayName = "";
-        firebaseIdToken     = "";
-        firebaseAuth        = false;
+        // Clear all firebase credentials — the refresh token INCLUDED. It used
+        // to survive logout, which kept the "signing in..." state alive and,
+        // with the 30 s unauthenticated retry, could silently sign the account
+        // back in. Logged out means logged out.
+        firebaseEmail        = "";
+        firebasePassword     = "";
+        firebaseDisplayName  = "";
+        firebaseIdToken      = "";
+        firebaseRefreshToken = "";
+        firebaseAuth         = false;
         prefs.begin("config", false);
         prefs.remove("fbEmail");
         prefs.remove("fbPass");
         prefs.remove("fbDisplayName");
+        prefs.remove("fbRefresh");
+        prefs.remove("fbUid");
         prefs.end();
         // Clear Firebase identity so cloud worker re-inits after next login
         firebaseUid      = "";
@@ -4119,7 +4321,7 @@ static void runHardwareTest() {
     String uid1 = "", uid2 = "";
     bool scanning = false;
 
-    enum HwAction { HA_NONE, HA_MINUS, HA_PLUS, HA_PILL1, HA_PILL2, HA_SCAN, HA_TEST, HA_BACK };
+    enum HwAction { HA_NONE, HA_MINUS, HA_PLUS, HA_PILL1, HA_PILL2, HA_SCAN, HA_BACK };
     static HwAction sHwAction;
     auto actionCb = [](lv_event_t *e) {
         lv_obj_t *o = (lv_obj_t *)lv_event_get_target(e);
@@ -4131,31 +4333,21 @@ static void runHardwareTest() {
     lv_obj_set_style_border_width(scr, 0, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, t(I18N_HARDWARE));
-    lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
-    lv_obj_set_style_text_font(title, &gFont20, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
-
-    lv_obj_t *div = lv_obj_create(scr);
-    lv_obj_remove_style_all(div);
-    lv_obj_set_size(div, 480, 1);
-    lv_obj_set_style_bg_color(div, LVCOL_BORDER, 0);
-    lv_obj_set_style_bg_opa(div, LV_OPA_COVER, 0);
-    lv_obj_set_pos(div, 0, 36);
-    lv_obj_clear_flag(div, LV_OBJ_FLAG_SCROLLABLE);
+    // "RFID" like the Settings row that opens it — the row/title mismatch
+    // (RFID vs MATERIEL) read as landing on the wrong page.
+    lvglAddHeader(scr, "RFID", actionCb, nullptr, (intptr_t)HA_BACK);
 
     // Power stepper (left) + reader-count pills (right), each with its own
     // label — enlarged for easier touch, screen filled more fully.
     lv_obj_t *powLbl = lv_label_create(scr);
-    lv_label_set_text(powLbl, "PUISSANCE RFID");
+    lv_label_set_text(powLbl, t(I18N_RFID_POWER));
     lv_obj_set_style_text_color(powLbl, LVCOL_MUTED, 0);
     lv_obj_set_style_text_font(powLbl, &gFont14, 0);
-    lv_obj_set_pos(powLbl, 6, 36);
+    lv_obj_set_pos(powLbl, 6, 52);
 
     lv_obj_t *minusBtn = lv_btn_create(scr);
     lv_obj_set_size(minusBtn, 48, 44);
-    lv_obj_set_pos(minusBtn, 6, 52);
+    lv_obj_set_pos(minusBtn, 6, 68);
     lv_obj_set_style_bg_color(minusBtn, LVCOL_CARD, 0);
     lv_obj_set_style_border_color(minusBtn, LVCOL_BORDER, 0);
     lv_obj_set_style_border_width(minusBtn, 1, 0);
@@ -4172,7 +4364,7 @@ static void runHardwareTest() {
     lv_obj_t *powNumBox = lv_obj_create(scr);
     lv_obj_remove_style_all(powNumBox);
     lv_obj_set_size(powNumBox, 64, 44);
-    lv_obj_set_pos(powNumBox, 60, 52);
+    lv_obj_set_pos(powNumBox, 60, 68);
     lv_obj_set_style_bg_color(powNumBox, LVCOL_CARD, 0);
     lv_obj_set_style_bg_opa(powNumBox, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(powNumBox, LVCOL_BORDER, 0);
@@ -4186,7 +4378,7 @@ static void runHardwareTest() {
 
     lv_obj_t *plusBtn = lv_btn_create(scr);
     lv_obj_set_size(plusBtn, 48, 44);
-    lv_obj_set_pos(plusBtn, 130, 52);
+    lv_obj_set_pos(plusBtn, 130, 68);
     lv_obj_set_style_bg_color(plusBtn, LVCOL_CARD, 0);
     lv_obj_set_style_border_color(plusBtn, LVCOL_BORDER, 0);
     lv_obj_set_style_border_width(plusBtn, 1, 0);
@@ -4204,11 +4396,11 @@ static void runHardwareTest() {
     lv_label_set_text(readersLbl, "LECTEURS");
     lv_obj_set_style_text_color(readersLbl, LVCOL_MUTED, 0);
     lv_obj_set_style_text_font(readersLbl, &gFont14, 0);
-    lv_obj_align(readersLbl, LV_ALIGN_TOP_RIGHT, -6, 36);
+    lv_obj_align(readersLbl, LV_ALIGN_TOP_RIGHT, -6, 52);
 
     lv_obj_t *pill1 = lv_btn_create(scr);
     lv_obj_set_size(pill1, 44, 44);
-    lv_obj_align(pill1, LV_ALIGN_TOP_RIGHT, -56, 52);
+    lv_obj_align(pill1, LV_ALIGN_TOP_RIGHT, -56, 68);
     lv_obj_set_style_radius(pill1, 22, 0);
     lv_obj_set_style_border_width(pill1, 1, 0);
     lv_obj_set_style_border_color(pill1, LVCOL_BORDER, 0);
@@ -4223,7 +4415,7 @@ static void runHardwareTest() {
 
     lv_obj_t *pill2 = lv_btn_create(scr);
     lv_obj_set_size(pill2, 44, 44);
-    lv_obj_align(pill2, LV_ALIGN_TOP_RIGHT, -6, 52);
+    lv_obj_align(pill2, LV_ALIGN_TOP_RIGHT, -6, 68);
     lv_obj_set_style_radius(pill2, 22, 0);
     lv_obj_set_style_border_width(pill2, 1, 0);
     lv_obj_set_style_border_color(pill2, LVCOL_BORDER, 0);
@@ -4241,7 +4433,7 @@ static void runHardwareTest() {
     lv_obj_t *box1 = lv_obj_create(scr);
     lv_obj_remove_style_all(box1);
     lv_obj_set_size(box1, 228, 64);
-    lv_obj_set_pos(box1, 6, 137);
+    lv_obj_set_pos(box1, 6, 148);
     lv_obj_set_style_bg_color(box1, LVCOL_CARD, 0);
     lv_obj_set_style_bg_opa(box1, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(box1, LVCOL_BORDER, 0);
@@ -4259,7 +4451,7 @@ static void runHardwareTest() {
     lv_obj_t *box2 = lv_obj_create(scr);
     lv_obj_remove_style_all(box2);
     lv_obj_set_size(box2, 228, 64);
-    lv_obj_set_pos(box2, 246, 137);
+    lv_obj_set_pos(box2, 246, 148);
     lv_obj_set_style_bg_color(box2, LVCOL_CARD, 0);
     lv_obj_set_style_bg_opa(box2, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(box2, LVCOL_BORDER, 0);
@@ -4275,10 +4467,9 @@ static void runHardwareTest() {
     lv_obj_set_pos(box2Val, 10, 30);
 
     // Scan / Stop button — centered, not full width, big enough to tap easily
-    // Scan shares the bottom row with the self-test now, so it narrows.
     lv_obj_t *scanBtn = lv_btn_create(scr);
-    lv_obj_set_size(scanBtn, 236, 70);
-    lv_obj_align(scanBtn, LV_ALIGN_TOP_MID, -74, 242);
+    lv_obj_set_size(scanBtn, 300, 66);
+    lv_obj_align(scanBtn, LV_ALIGN_TOP_MID, 0, 248);
     lv_obj_set_style_border_width(scanBtn, 1, 0);
     lv_obj_set_style_radius(scanBtn, 12, 0);
     lv_obj_set_style_shadow_width(scanBtn, 0, 0);
@@ -4288,42 +4479,10 @@ static void runHardwareTest() {
     lv_obj_set_style_text_font(scanLbl, &gFont16, 0);
     lv_obj_center(scanLbl);
 
-    // Back
-    // Self-test: one reader emulates a card with three random bytes, the other
-    // reads it. Both directions, so a failure names the antenna. See
-    // rfidFieldTest() in §24. Label left untranslated -- "TEST" reads the same
-    // in all eight languages this firmware ships.
-    lv_obj_t *testBtn = lv_btn_create(scr);
-    lv_obj_set_size(testBtn, 140, 70);
-    lv_obj_align(testBtn, LV_ALIGN_TOP_MID, 122, 242);
-    lv_obj_set_style_bg_color(testBtn, LVCOL_CARD, 0);
-    lv_obj_set_style_border_color(testBtn, LVCOL_BORDER, 0);
-    lv_obj_set_style_border_width(testBtn, 1, 0);
-    lv_obj_set_style_radius(testBtn, 12, 0);
-    lv_obj_set_style_shadow_width(testBtn, 0, 0);
-    lv_obj_set_user_data(testBtn, (void *)(intptr_t)HA_TEST);
-    lv_obj_add_event_cb(testBtn, actionCb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *testLbl = lv_label_create(testBtn);
-    lv_label_set_text(testLbl, "TEST");
-    lv_obj_set_style_text_font(testLbl, &gFont16, 0);
-    lv_obj_set_style_text_color(testLbl, LVCOL_TEXT, 0);
-    lv_obj_center(testLbl);
-
-    lv_obj_t *backBtn = lv_btn_create(scr);
-    lv_obj_set_size(backBtn, 34, 36);
-    lv_obj_set_pos(backBtn, 0, 0);
-    lv_obj_set_style_bg_opa(backBtn, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(backBtn, 0, 0);
-    lv_obj_set_style_shadow_width(backBtn, 0, 0);
-    lv_obj_set_user_data(backBtn, (void *)(intptr_t)HA_BACK);
-    lv_obj_add_event_cb(backBtn, actionCb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *backIcon = lv_label_create(backBtn);
-    lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
-    lv_obj_set_style_text_color(backIcon, LVCOL_MUTED, 0);
-    lv_obj_center(backIcon);
-
     auto updatePower = [&]() {
-        lv_label_set_text_fmt(powNumLbl, "%u", (unsigned)gRfidPowerLevel);
+        // With its scale: a bare "3" answered nothing ("3 out of what?").
+        lv_label_set_text_fmt(powNumLbl, "%u/%u", (unsigned)gRfidPowerLevel,
+                              (unsigned)(PN532_RF_LEVEL_COUNT - 1));
         lv_obj_set_style_text_color(minusBtn, gRfidPowerLevel > 0 ? LVCOL_TEXT : LVCOL_BORDER, 0);
         lv_obj_set_style_text_color(minusLbl, gRfidPowerLevel > 0 ? LVCOL_TEXT : LVCOL_BORDER, 0);
         lv_obj_set_style_text_color(plusLbl,  gRfidPowerLevel < PN532_RF_LEVEL_COUNT-1 ? LVCOL_TEXT : LVCOL_BORDER, 0);
@@ -4393,49 +4552,6 @@ static void runHardwareTest() {
                 scanning = true;
                 updateBoxes(); updateScanBtn();
                 // Wait for finger lift before entering the scan loop
-                { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis()-t0 < 600) delay(20); }
-            } else if (sHwAction == HA_TEST) {
-                // Needs both readers and an empty platform: a spool between the
-                // antennas blocks the field and fails for the wrong reason.
-                if (hwRfidCount < 2) {
-                    lv_label_set_text(box1Val, "2 readers");
-                    lv_label_set_text(box2Val, "required");
-                    lv_obj_set_style_text_color(box1Val, LVCOL_MUTED, 0);
-                    lv_obj_set_style_text_color(box2Val, LVCOL_MUTED, 0);
-                } else {
-                    lv_label_set_text(box1Val, "...");
-                    lv_label_set_text(box2Val, "...");
-                    lv_obj_set_style_text_color(box1Val, LVCOL_MUTED, 0);
-                    lv_obj_set_style_text_color(box2Val, LVCOL_MUTED, 0);
-                    lv_timer_handler();
-
-                    // Sweep the power from the lowest level upwards and stop at
-                    // the first that carries the bytes. Reporting the level is
-                    // the point: it is the coupling margin, not just a pass.
-                    String d1, d2;
-                    int lv1 = -1, lv2 = -1;
-
-                    // Right emits, left listens -> the LEFT box reports it.
-                    for (uint8_t lv = 0; lv < PN532_RF_TEST_LEVEL_COUNT && lv1 < 0; lv++) {
-                        if (rfidFieldTest(rfid1, PN532_1_SS, PN532_1_RST, "PN532-1", rfid2, lv, d1))
-                            lv1 = lv;
-                        lv_timer_handler();
-                    }
-                    String r1 = (lv1 >= 0) ? ("OK L" + String(lv1)) : d1;
-                    lv_label_set_text(box1Val, r1.c_str());
-                    lv_obj_set_style_text_color(box1Val, lv1 >= 0 ? LVCOL_GREEN : LVCOL_RED, 0);
-                    lv_timer_handler();
-
-                    // Left emits, right listens.
-                    for (uint8_t lv = 0; lv < PN532_RF_TEST_LEVEL_COUNT && lv2 < 0; lv++) {
-                        if (rfidFieldTest(rfid2, PN532_2_SS, PN532_2_RST, "PN532-2", rfid1, lv, d2))
-                            lv2 = lv;
-                        lv_timer_handler();
-                    }
-                    String r2 = (lv2 >= 0) ? ("OK L" + String(lv2)) : d2;
-                    lv_label_set_text(box2Val, r2.c_str());
-                    lv_obj_set_style_text_color(box2Val, lv2 >= 0 ? LVCOL_GREEN : LVCOL_RED, 0);
-                }
                 { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis()-t0 < 600) delay(20); }
             } else if (sHwAction == HA_BACK) {
                 break;
@@ -4603,6 +4719,67 @@ static String lanMakeCode() {
     return out;
 }
 
+// Blocking yes/no confirmation screen — for the rare destructive taps that
+// deserve a second look (regenerating the LAN code kills every open viewer).
+// Only callable from the blocking-loop screens, never from an LVGL callback,
+// for the same reentrancy reason as every other run*() screen here.
+static bool lvglConfirm(const char *question) {
+    enum { C_NONE, C_YES, C_NO };
+    static int sC;
+    sC = C_NONE;
+    auto cb = [](lv_event_t *e) {
+        sC = (int)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_target(e));
+    };
+
+    lv_obj_t *prev = lv_scr_act();
+    lv_obj_t *col;
+    lv_obj_t *scr = lvglCenteredScreen(&col);
+
+    lv_obj_t *q = lv_label_create(col);
+    lv_label_set_text(q, question);
+    lv_label_set_long_mode(q, LV_LABEL_LONG_WRAP);
+    // No wider than the centered column that holds it (360 px) — 420 poked
+    // out both sides of the screen and long questions arrived pre-clipped.
+    lv_obj_set_width(q, 356);
+    lv_obj_set_style_text_align(q, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(q, LVCOL_TEXT, 0);
+    lv_obj_set_style_text_font(q, &gFont20, 0);
+
+    lv_obj_t *btnRow = lv_obj_create(col);
+    lv_obj_remove_style_all(btnRow);
+    lv_obj_set_size(btnRow, 380, 64);
+    lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btnRow, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(btnRow, 20, 0);
+    lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
+
+    auto makeBtn = [&](const char *txt, bool accent, int action) {
+        lv_obj_t *b = lv_btn_create(btnRow);
+        lv_obj_set_size(b, 170, 52);
+        lv_obj_set_style_bg_color(b, accent ? LVCOL_ACCENT : LVCOL_CARD, 0);
+        lv_obj_set_style_border_color(b, LVCOL_BORDER, 0);
+        lv_obj_set_style_border_width(b, accent ? 0 : 1, 0);
+        lv_obj_set_style_radius(b, 12, 0);
+        lv_obj_set_style_shadow_width(b, 0, 0);
+        lv_obj_set_user_data(b, (void *)(intptr_t)action);
+        lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t *l = lv_label_create(b);
+        lv_label_set_text(l, txt);
+        lv_obj_set_style_text_color(l, LVCOL_TEXT, 0);
+        lv_obj_set_style_text_font(l, &gFont16, 0);
+        lv_obj_center(l);
+    };
+    makeBtn(t(I18N_CANCEL),   false, C_NO);
+    makeBtn(t(I18N_VALIDATE), true,  C_YES);
+
+    lv_scr_load(scr);
+    while (sC == C_NONE) { lv_timer_handler(); delay(5); }
+    lv_scr_load(prev);
+    lv_obj_del(scr);
+    { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis()-t0 < 800) delay(20); }
+    return sC == C_YES;
+}
+
 static void lanEnsureCode() {
     prefs.begin("config", false);
     gLanAccessCode = prefs.getString("lanCode", "");
@@ -4636,23 +4813,7 @@ static void runLanSettings() {
     lv_obj_set_style_border_width(scr, 0, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, t(I18N_LAN_TITLE));
-    lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
-    lv_obj_set_style_text_font(title, &gFont20, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
-
-    lv_obj_t *back = lv_btn_create(scr);
-    lv_obj_set_size(back, 44, 38); lv_obj_set_pos(back, 0, 0);
-    lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(back, 0, 0);
-    lv_obj_set_style_shadow_width(back, 0, 0);
-    lv_obj_set_user_data(back, (void *)(intptr_t)L_BACK);
-    lv_obj_add_event_cb(back, cb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *backIcon = lv_label_create(back);
-    lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
-    lv_obj_set_style_text_color(backIcon, LVCOL_MUTED, 0);
-    lv_obj_center(backIcon);
+    lvglAddHeader(scr, t(I18N_LAN_TITLE), cb, nullptr, (intptr_t)L_BACK);
 
     // One row: a label on the left, a value on the right.
     auto row = [&](int y, const char *label) {
@@ -4672,21 +4833,24 @@ static void runLanSettings() {
         return r;
     };
 
-    lv_obj_t *ipRow = row(52, "IP");
+    // The complete, ready-to-use URL — code included, port included. The
+    // short /live door still works and asks for the code, but the address a
+    // person copies from this screen should just open, with nothing to type.
+    lv_obj_t *ipRow = row(60, "URL");
     lv_obj_t *ipVal = lv_label_create(ipRow);
-    lv_label_set_text(ipVal, wifiConnected ? WiFi.localIP().toString().c_str() : t(I18N_NO_WIFI));
     lv_obj_set_style_text_color(ipVal, LVCOL_TEXT, 0);
+    lv_obj_set_style_text_font(ipVal, &gFont14, 0);
     lv_obj_align(ipVal, LV_ALIGN_RIGHT_MID, -14, 0);
 
-    lv_obj_t *codeRow = row(112, t(I18N_LAN_CODE));
+    lv_obj_t *codeRow = row(120, t(I18N_LAN_CODE));
     lv_obj_t *codeVal = lv_label_create(codeRow);
     lv_obj_set_style_text_color(codeVal, LVCOL_TEXT, 0);
     lv_obj_set_style_text_font(codeVal, &gFont20, 0);
     lv_obj_align(codeVal, LV_ALIGN_RIGHT_MID, -52, 0);
 
     lv_obj_t *regen = lv_btn_create(codeRow);
-    lv_obj_set_size(regen, 38, 38);
-    lv_obj_align(regen, LV_ALIGN_RIGHT_MID, -6, 0);
+    lv_obj_set_size(regen, 44, 44);   // full finger target — it is a destructive button
+    lv_obj_align(regen, LV_ALIGN_RIGHT_MID, -4, 0);
     lv_obj_set_style_bg_opa(regen, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(regen, 0, 0);
     lv_obj_set_style_shadow_width(regen, 0, 0);
@@ -4697,7 +4861,7 @@ static void runLanSettings() {
     lv_obj_set_style_text_color(regenIcon, LVCOL_ACCENT, 0);
     lv_obj_center(regenIcon);
 
-    lv_obj_t *liveRow = row(172, t(I18N_LAN_LIVE));
+    lv_obj_t *liveRow = row(180, t(I18N_LAN_LIVE));
     lv_obj_t *sw = lv_switch_create(liveRow);
     lv_obj_set_size(sw, 56, 30);
     lv_obj_align(sw, LV_ALIGN_RIGHT_MID, -14, 0);
@@ -4711,10 +4875,16 @@ static void runLanSettings() {
     lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(note, 420);
     lv_obj_set_style_text_align(note, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(note, LV_ALIGN_TOP_MID, 0, 240);
+    lv_obj_align(note, LV_ALIGN_TOP_MID, 0, 248);
 
     auto paint = [&]() {
         lv_label_set_text(codeVal, gLanAccessCode.c_str());
+        // Painted here, not at build: regenerating the code must retint the
+        // URL too — the two always agree.
+        String liveUrl = wifiConnected
+            ? ("http://" + WiFi.localIP().toString() + ":" + String(LIVE_PORT) + "/" + gLanAccessCode)
+            : String(t(I18N_NO_WIFI));
+        lv_label_set_text(ipVal, liveUrl.c_str());
         if (gLanLiveView) lv_obj_add_state(sw, LV_STATE_CHECKED);
         else              lv_obj_clear_state(sw, LV_STATE_CHECKED);
         lv_label_set_text(note, gLanLiveView ? "" : t(I18N_LAN_LIVE_OFF));
@@ -4729,9 +4899,12 @@ static void runLanSettings() {
         if (sAct == L_BACK) break;
         if (sAct == L_REGEN) {
             // Same gesture as changing a password: everything holding the old
-            // one stops working, on purpose.
-            gLanAccessCode = lanMakeCode();
-            prefs.begin("config", false); prefs.putString("lanCode", gLanAccessCode); prefs.end();
+            // one stops working, on purpose — which is exactly why it asks
+            // first. It sits one accidental tap from the code it invalidates.
+            if (lvglConfirm(t(I18N_LAN_REGEN_Q))) {
+                gLanAccessCode = lanMakeCode();
+                prefs.begin("config", false); prefs.putString("lanCode", gLanAccessCode); prefs.end();
+            }
         } else if (sAct == L_TOGGLE) {
             gLanLiveView = lv_obj_has_state(sw, LV_STATE_CHECKED);
             prefs.begin("config", false); prefs.putBool("lanLive", gLanLiveView); prefs.end();
@@ -4745,19 +4918,18 @@ static void runLanSettings() {
 }
 
 
-// Screen sleep: the switch, and how long the scale waits before using it.
-//
-// Both used to be a single hard-coded 300000UL in loop(). Same layout as the LAN
-// page above -- 420-wide rows, the same switch, the same back arrow -- because a
-// settings screen that looks like the other settings screens needs no learning.
 static const uint8_t kSleepDelays[] = { 1, 2, 5, 10, 15, 30 };
 
-static void runSleepSettings() {
-    enum { S_NONE = 0, S_BACK, S_TOGGLE, S_CHIP0 };
-    static int sAct;
-    sAct = S_NONE;
+// One "Screen" page for everything the panel itself does: a brightness
+// stepper, the sleep switch, and a sleep-delay stepper — merged from the
+// separate Brightness and Sleep pages. Steppers read [-] value [+]; an
+// end-stop button dims like the list rails' arrows, and the whole delay row
+// dims while sleep is off (kept readable, so re-enabling needs no re-picking).
+static void runScreenSettings() {
+    enum ScAction { SC_NONE, SC_BR_MINUS, SC_BR_PLUS, SC_TOGGLE, SC_DL_MINUS, SC_DL_PLUS, SC_BACK };
+    static ScAction sScAction;
     auto cb = [](lv_event_t *e) {
-        sAct = (int)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_target(e));
+        sScAction = (ScAction)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_target(e));
     };
 
     lv_obj_t *scr = lv_obj_create(nullptr);
@@ -4765,106 +4937,118 @@ static void runSleepSettings() {
     lv_obj_set_style_border_width(scr, 0, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, t(I18N_SLEEP_TITLE));
-    lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
-    lv_obj_set_style_text_font(title, &gFont20, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+    lvglAddHeader(scr, t(I18N_SCREEN), cb, nullptr, (intptr_t)SC_BACK);
 
-    lv_obj_t *back = lv_btn_create(scr);
-    lv_obj_set_size(back, 44, 38); lv_obj_set_pos(back, 0, 0);
-    lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(back, 0, 0);
-    lv_obj_set_style_shadow_width(back, 0, 0);
-    lv_obj_set_user_data(back, (void *)(intptr_t)S_BACK);
-    lv_obj_add_event_cb(back, cb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *backIcon = lv_label_create(back);
-    lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
-    lv_obj_set_style_text_color(backIcon, LVCOL_MUTED, 0);
-    lv_obj_center(backIcon);
+    auto row = [&](int y, const char *label, lv_obj_t **lblOut) {
+        lv_obj_t *r = lv_obj_create(scr);
+        lv_obj_set_size(r, 420, 64);
+        lv_obj_align(r, LV_ALIGN_TOP_MID, 0, y);
+        lv_obj_set_style_bg_color(r, LVCOL_CARD, 0);
+        lv_obj_set_style_border_color(r, LVCOL_BORDER, 0);
+        lv_obj_set_style_border_width(r, 1, 0);
+        lv_obj_set_style_radius(r, 10, 0);
+        lv_obj_set_style_shadow_width(r, 0, 0);
+        lv_obj_clear_flag(r, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *l = lv_label_create(r);
+        lv_label_set_text(l, label);
+        lv_obj_set_style_text_color(l, LVCOL_MUTED, 0);
+        lv_obj_align(l, LV_ALIGN_LEFT_MID, 14, 0);
+        if (lblOut) *lblOut = l;
+        return r;
+    };
+    // [-] value [+] riding the row's right side. Returns the value label;
+    // the two button labels come back through the out-params for dimming.
+    auto stepper = [&](lv_obj_t *r, ScAction minus, ScAction plus,
+                       lv_obj_t **mOut, lv_obj_t **pOut) {
+        auto sbtn = [&](int xOfs, ScAction act, const char *txt) {
+            lv_obj_t *b = lv_btn_create(r);
+            lv_obj_set_size(b, 52, 48);
+            lv_obj_align(b, LV_ALIGN_RIGHT_MID, xOfs, 0);
+            lv_obj_set_style_bg_color(b, LVCOL_BG, 0);
+            lv_obj_set_style_border_color(b, LVCOL_BORDER, 0);
+            lv_obj_set_style_border_width(b, 1, 0);
+            lv_obj_set_style_radius(b, 10, 0);
+            lv_obj_set_style_shadow_width(b, 0, 0);
+            lv_obj_set_user_data(b, (void *)(intptr_t)act);
+            lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+            lv_obj_t *l = lv_label_create(b);
+            lv_label_set_text(l, txt);
+            lv_obj_set_style_text_color(l, LVCOL_TEXT, 0);
+            lv_obj_set_style_text_font(l, &lv_font_montserrat_20, 0);
+            lv_obj_center(l);
+            return l;
+        };
+        *mOut = sbtn(-160, minus, "-");
+        *pOut = sbtn(-4,   plus,  "+");
+        lv_obj_t *v = lv_label_create(r);
+        lv_obj_set_width(v, 96);
+        lv_obj_set_style_text_align(v, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(v, LVCOL_TEXT, 0);
+        lv_obj_set_style_text_font(v, &gFont16, 0);
+        lv_obj_align(v, LV_ALIGN_RIGHT_MID, -58, 0);
+        return v;
+    };
 
-    lv_obj_t *row = lv_obj_create(scr);
-    lv_obj_set_size(row, 420, 52);
-    lv_obj_align(row, LV_ALIGN_TOP_MID, 0, 52);
-    lv_obj_set_style_bg_color(row, LVCOL_CARD, 0);
-    lv_obj_set_style_border_color(row, LVCOL_BORDER, 0);
-    lv_obj_set_style_border_width(row, 1, 0);
-    lv_obj_set_style_radius(row, 10, 0);
-    lv_obj_set_style_shadow_width(row, 0, 0);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t *rowLbl = lv_label_create(row);
-    lv_label_set_text(rowLbl, t(I18N_SLEEP_ENABLE));
-    lv_obj_set_style_text_color(rowLbl, LVCOL_MUTED, 0);
-    lv_obj_align(rowLbl, LV_ALIGN_LEFT_MID, 14, 0);
+    lv_obj_t *brMinus, *brPlus, *dlMinus, *dlPlus, *dlRowLbl;
+    lv_obj_t *brRow = row(64, t(I18N_BRIGHTNESS), nullptr);
+    lv_obj_t *brVal = stepper(brRow, SC_BR_MINUS, SC_BR_PLUS, &brMinus, &brPlus);
 
-    lv_obj_t *sw = lv_switch_create(row);
+    lv_obj_t *swRow = row(140, t(I18N_SLEEP_ENABLE), nullptr);
+    lv_obj_t *sw = lv_switch_create(swRow);
     lv_obj_set_size(sw, 56, 30);
     lv_obj_align(sw, LV_ALIGN_RIGHT_MID, -14, 0);
     lv_obj_set_style_bg_color(sw, LVCOL_GREEN, LV_PART_INDICATOR | LV_STATE_CHECKED);
-    lv_obj_set_user_data(sw, (void *)(intptr_t)S_TOGGLE);
+    lv_obj_set_user_data(sw, (void *)(intptr_t)SC_TOGGLE);
     lv_obj_add_event_cb(sw, cb, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    lv_obj_t *delayLbl = lv_label_create(scr);
-    lv_label_set_text(delayLbl, t(I18N_SLEEP_DELAY));
-    lv_obj_set_style_text_color(delayLbl, LVCOL_MUTED, 0);
-    lv_obj_set_pos(delayLbl, 30, 116);
+    lv_obj_t *dlRow = row(216, t(I18N_SLEEP_DELAY), &dlRowLbl);
+    lv_obj_t *dlVal = stepper(dlRow, SC_DL_MINUS, SC_DL_PLUS, &dlMinus, &dlPlus);
 
     const int N = (int)(sizeof(kSleepDelays) / sizeof(kSleepDelays[0]));
-    const int CW = 66, CGAP = 8;
-    lv_obj_t *chip[N];
-    for (int i = 0; i < N; i++) {
-        chip[i] = lv_btn_create(scr);
-        lv_obj_set_size(chip[i], CW, 44);
-        lv_obj_set_pos(chip[i], 30 + i * (CW + CGAP), 142);
-        lv_obj_set_style_radius(chip[i], 10, 0);
-        lv_obj_set_style_border_width(chip[i], 1, 0);
-        lv_obj_set_style_shadow_width(chip[i], 0, 0);
-        lv_obj_set_user_data(chip[i], (void *)(intptr_t)(S_CHIP0 + i));
-        lv_obj_add_event_cb(chip[i], cb, LV_EVENT_CLICKED, nullptr);
-        lv_obj_t *l = lv_label_create(chip[i]);
-        lv_label_set_text_fmt(l, "%u", (unsigned)kSleepDelays[i]);
-        lv_obj_center(l);
-    }
-
-    lv_obj_t *unit = lv_label_create(scr);
-    lv_obj_set_style_text_color(unit, LVCOL_FAINT, 0);
-    lv_obj_set_style_text_font(unit, &gFont14, 0);
-    lv_obj_set_width(unit, 420);
-    lv_obj_set_style_text_align(unit, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(unit, LV_ALIGN_TOP_MID, 0, 196);
+    auto delayIndex = [&]() {
+        for (int i = 0; i < N; i++) if (kSleepDelays[i] == gSleepDelayMin) return i;
+        return 0;
+    };
 
     auto paint = [&]() {
+        lv_label_set_text_fmt(brVal, "%u%%", (unsigned)gBrightness);
+        lv_obj_set_style_text_color(brMinus, gBrightness > 10  ? LVCOL_TEXT : LVCOL_BORDER, 0);
+        lv_obj_set_style_text_color(brPlus,  gBrightness < 100 ? LVCOL_TEXT : LVCOL_BORDER, 0);
+
         if (gSleepEnabled) lv_obj_add_state(sw, LV_STATE_CHECKED);
         else               lv_obj_clear_state(sw, LV_STATE_CHECKED);
-        for (int i = 0; i < N; i++) {
-            bool sel = gSleepEnabled && kSleepDelays[i] == gSleepDelayMin;
-            lv_obj_set_style_bg_color(chip[i], sel ? LVCOL_ACCENT : LVCOL_CARD, 0);
-            lv_obj_set_style_border_color(chip[i], sel ? LVCOL_ACCENT : LVCOL_BORDER, 0);
-            lv_obj_t *l = lv_obj_get_child(chip[i], 0);
-            // Greyed rather than hidden when the switch is off: the chosen delay
-            // stays readable, so turning sleep back on needs no re-picking.
-            if (l) lv_obj_set_style_text_color(l, sel ? LVCOL_TEXT
-                                                      : (gSleepEnabled ? LVCOL_MUTED : LVCOL_FAINT), 0);
-        }
-        lv_label_set_text(unit, gSleepEnabled ? t(I18N_SLEEP_MINUTES) : t(I18N_SLEEP_OFF));
+
+        int di = delayIndex();
+        lv_label_set_text_fmt(dlVal, "%u min", (unsigned)gSleepDelayMin);
+        lv_obj_set_style_text_color(dlRowLbl, gSleepEnabled ? LVCOL_MUTED : LVCOL_FAINT, 0);
+        lv_obj_set_style_text_color(dlVal,    gSleepEnabled ? LVCOL_TEXT  : LVCOL_FAINT, 0);
+        lv_obj_set_style_text_color(dlMinus,  (gSleepEnabled && di > 0)     ? LVCOL_TEXT : (gSleepEnabled ? LVCOL_BORDER : LVCOL_FAINT), 0);
+        lv_obj_set_style_text_color(dlPlus,   (gSleepEnabled && di < N - 1) ? LVCOL_TEXT : (gSleepEnabled ? LVCOL_BORDER : LVCOL_FAINT), 0);
     };
     paint();
 
     lv_obj_t *prev = lv_scr_act();
     lv_scr_load(scr);
     for (;;) {
-        sAct = S_NONE;
-        while (sAct == S_NONE) { lv_timer_handler(); delay(5); }
-        if (sAct == S_BACK) break;
-        if (sAct == S_TOGGLE) {
+        sScAction = SC_NONE;
+        while (sScAction == SC_NONE) { lv_timer_handler(); delay(5); }
+        if (sScAction == SC_BACK) break;
+        if (sScAction == SC_BR_MINUS || sScAction == SC_BR_PLUS) {
+            int v = (int)gBrightness + (sScAction == SC_BR_PLUS ? 10 : -10);
+            if (v > 100) v = 100;
+            if (v < 10)  v = 10;
+            gBrightness = (uint8_t)v;
+            applyBrightness(gBrightness);   // live: brightness is judged by eye
+            prefs.begin("config", false); prefs.putUChar("brightness", gBrightness); prefs.end();
+        } else if (sScAction == SC_TOGGLE) {
             gSleepEnabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
             prefs.begin("config", false); prefs.putBool("sleepOn", gSleepEnabled); prefs.end();
-        } else if (sAct >= S_CHIP0 && sAct < S_CHIP0 + N) {
-            gSleepDelayMin = kSleepDelays[sAct - S_CHIP0];
-            if (!gSleepEnabled) {           // picking a delay implies wanting it on
-                gSleepEnabled = true;
-                prefs.begin("config", false); prefs.putBool("sleepOn", true); prefs.end();
-            }
+            gLastActivityMs = millis();
+        } else if ((sScAction == SC_DL_MINUS || sScAction == SC_DL_PLUS) && gSleepEnabled) {
+            int di = delayIndex() + (sScAction == SC_DL_PLUS ? 1 : -1);
+            if (di < 0) di = 0;
+            if (di > N - 1) di = N - 1;
+            gSleepDelayMin = kSleepDelays[di];
             prefs.begin("config", false); prefs.putUChar("sleepMin", gSleepDelayMin); prefs.end();
             gLastActivityMs = millis();     // restart the countdown from the new value
         }
@@ -4875,6 +5059,7 @@ static void runSleepSettings() {
     lv_obj_del(scr);
     { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis()-t0 < 800) delay(20); }
 }
+
 
 // otaFetchLatest(), without freezing the screen that is waiting for it.
 //
@@ -4929,23 +5114,7 @@ static bool runSignInForm() {
     lv_obj_set_style_border_width(scr, 0, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, t(I18N_PAIR_TITLE));
-    lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
-    lv_obj_set_style_text_font(title, &gFont20, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
-
-    lv_obj_t *back = lv_btn_create(scr);
-    lv_obj_set_size(back, 44, 38); lv_obj_set_pos(back, 0, 0);
-    lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(back, 0, 0);
-    lv_obj_set_style_shadow_width(back, 0, 0);
-    lv_obj_set_user_data(back, (void *)(intptr_t)A_BACK);
-    lv_obj_add_event_cb(back, cb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *backIcon = lv_label_create(back);
-    lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
-    lv_obj_set_style_text_color(backIcon, LVCOL_MUTED, 0);
-    lv_obj_center(backIcon);
+    lvglAddHeader(scr, t(I18N_PAIR_TITLE), cb, nullptr, (intptr_t)A_BACK);
 
     // Two fields, each a tappable card that opens the existing keyboard.
     auto field = [&](int y, int action) {
@@ -4964,12 +5133,12 @@ static bool runSignInForm() {
         lv_obj_align(l, LV_ALIGN_LEFT_MID, 14, 0);
         return l;
     };
-    lv_obj_t *emailLbl = field(46,  A_EMAIL);
-    lv_obj_t *passLbl  = field(104, A_PASS);
+    lv_obj_t *emailLbl = field(58,  A_EMAIL);
+    lv_obj_t *passLbl  = field(116, A_PASS);
 
     lv_obj_t *signBtn = lv_btn_create(scr);
     lv_obj_set_size(signBtn, 380, 50);
-    lv_obj_align(signBtn, LV_ALIGN_TOP_MID, 0, 168);
+    lv_obj_align(signBtn, LV_ALIGN_TOP_MID, 0, 180);
     lv_obj_set_style_bg_color(signBtn, LVCOL_CARD, 0);
     lv_obj_set_style_border_color(signBtn, LVCOL_GREEN, 0);
     lv_obj_set_style_border_width(signBtn, 1, 0);
@@ -4984,7 +5153,7 @@ static bool runSignInForm() {
 
     lv_obj_t *gBtn = lv_btn_create(scr);
     lv_obj_set_size(gBtn, 380, 46);
-    lv_obj_align(gBtn, LV_ALIGN_TOP_MID, 0, 232);
+    lv_obj_align(gBtn, LV_ALIGN_TOP_MID, 0, 244);
     lv_obj_set_style_bg_opa(gBtn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_color(gBtn, LVCOL_BORDER, 0);
     lv_obj_set_style_border_width(gBtn, 1, 0);
@@ -4992,10 +5161,55 @@ static bool runSignInForm() {
     lv_obj_set_style_shadow_width(gBtn, 0, 0);
     lv_obj_set_user_data(gBtn, (void *)(intptr_t)A_GOOGLE);
     lv_obj_add_event_cb(gBtn, cb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *gLbl = lv_label_create(gBtn);
-    lv_label_set_text(gLbl, "Google");
-    lv_obj_set_style_text_color(gLbl, LVCOL_MUTED, 0);
-    lv_obj_center(gLbl);
+    // Google's own button formula: the multicolor G, then "Continue with
+    // Google". The G is drawn, not a glyph — a font glyph is single-color in
+    // LVGL, and the four brand colors are the point. Four arc segments on the
+    // official quadrants plus the blue crossbar; the gap upper-right is where
+    // the real logo opens.
+    lv_obj_t *gRow = lv_obj_create(gBtn);
+    lv_obj_remove_style_all(gRow);
+    lv_obj_set_size(gRow, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(gRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(gRow, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(gRow, 10, 0);
+    lv_obj_center(gRow);
+    lv_obj_clear_flag(gRow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(gRow, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *gMark = lv_obj_create(gRow);
+    lv_obj_remove_style_all(gMark);
+    lv_obj_set_size(gMark, 22, 22);
+    lv_obj_clear_flag(gMark, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(gMark, LV_OBJ_FLAG_CLICKABLE);
+    auto gArc = [&](int a0, int a1, uint32_t hex) {
+        lv_obj_t *a = lv_arc_create(gMark);
+        lv_obj_set_size(a, 22, 22);
+        lv_obj_center(a);
+        lv_arc_set_bg_angles(a, a0, a1);
+        lv_arc_set_angles(a, a0, a1);
+        lv_obj_set_style_arc_width(a, 5, LV_PART_MAIN);
+        lv_obj_set_style_arc_color(a, lv_color_hex(hex), LV_PART_MAIN);
+        lv_obj_set_style_arc_rounded(a, false, LV_PART_MAIN);
+        lv_obj_set_style_arc_opa(a, LV_OPA_TRANSP, LV_PART_INDICATOR);
+        lv_obj_remove_style(a, nullptr, LV_PART_KNOB);
+        lv_obj_clear_flag(a, LV_OBJ_FLAG_CLICKABLE);
+    };
+    gArc(0,   48,  0x4285F4);   // blue, lower-right, meets the crossbar
+    gArc(48,  135, 0x34A853);   // green, bottom
+    gArc(135, 228, 0xFBBC05);   // yellow, left
+    gArc(228, 315, 0xEA4335);   // red, top
+    lv_obj_t *gBar = lv_obj_create(gMark);
+    lv_obj_remove_style_all(gBar);
+    lv_obj_set_size(gBar, 9, 5);
+    lv_obj_set_style_bg_color(gBar, lv_color_hex(0x4285F4), 0);
+    lv_obj_set_style_bg_opa(gBar, LV_OPA_COVER, 0);
+    lv_obj_set_pos(gBar, 11, 9);   // from center to the right edge, crossbar height
+    lv_obj_clear_flag(gBar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(gBar, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *gLbl = lv_label_create(gRow);
+    lv_label_set_text(gLbl, t(I18N_CONTINUE_GOOGLE));
+    lv_obj_set_style_text_color(gLbl, LVCOL_TEXT, 0);
 
     auto paint = [&]() {
         lv_label_set_text(emailLbl, email.length() ? email.c_str() : t(I18N_FORM_EMAIL));
@@ -5020,7 +5234,7 @@ static bool runSignInForm() {
         }
         if (act == A_EMAIL || act == A_PASS) {
             // tsKeyboard owns the screen while it runs, so put ours back after.
-            String v = tsKeyboard(t(act == A_EMAIL ? I18N_FORM_EMAIL : I18N_FORM_PASS));
+            String v = tsKeyboard(t(act == A_EMAIL ? I18N_FORM_EMAIL : I18N_FORM_PASS), act == A_PASS);
             if (!kbCancelled(v)) { if (act == A_EMAIL) email = v; else pass = v; }
             lv_scr_load(scr);
             paint();
@@ -5070,6 +5284,209 @@ static bool runSignInForm() {
     }
 }
 
+// ============================================================================
+// First-boot onboarding — runs once, on the boot after a web-installer flash.
+// ============================================================================
+// The web installer writes the merged factory image, which wipes NVS, so a
+// missing "language" key is the reliable signature of a factory-fresh device
+// (an OTA update or a normal reflash keeps NVS, so owners never see this
+// again). Language is mandatory; WiFi and account are offered and skippable —
+// everything remains reachable in Settings. No reboot anywhere: WiFi connects
+// live, and the deferred-start gates in loop() attach the cloud services the
+// moment an IP appears.
+
+// One screen of the flow: icon, question, one-line why, two answers.
+// Returns true on the primary action. iconKind: 0 = WiFi, 1 = account
+// silhouette, 2 = calibration target. Also serves the first-calibration
+// reminder, hence no longer onboarding-only.
+enum { OB_ICON_WIFI = 0, OB_ICON_ACCOUNT = 1, OB_ICON_CAL = 2 };
+// asModal = true builds the prompt as an overlay ON the current screen — a
+// dimmed backdrop plus a card that slides in from the right — instead of a
+// full screen of its own. Tapping the backdrop counts as "later". Used by
+// the first-calibration reminder so the owner lands on Home first and the
+// question arrives on top of it, not instead of it.
+static bool obPrompt(int iconKind, const char *title, const char *sub, const char *primary,
+                     bool asModal = false) {
+    enum { OB_NONE, OB_GO, OB_LATER };
+    static int sObChoice;
+    sObChoice = OB_NONE;
+    auto cb = [](lv_event_t *e) {
+        sObChoice = (int)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_target(e));
+    };
+
+    lv_obj_t *col;
+    lv_obj_t *scr = nullptr;       // full-screen mode only
+    lv_obj_t *backdrop = nullptr;  // modal mode only
+    lv_obj_t *modalCard = nullptr; // modal mode only — for the fold-away animation
+    if (asModal) {
+        backdrop = lv_obj_create(lv_scr_act());
+        lv_obj_remove_style_all(backdrop);
+        lv_obj_set_size(backdrop, 480, 320);
+        lv_obj_set_pos(backdrop, 0, 0);
+        lv_obj_set_style_bg_color(backdrop, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(backdrop, LV_OPA_60, 0);
+        lv_obj_clear_flag(backdrop, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(backdrop, LV_OBJ_FLAG_CLICKABLE);   // swallow + dismiss
+        lv_obj_set_user_data(backdrop, (void *)(intptr_t)OB_LATER);
+        lv_obj_add_event_cb(backdrop, cb, LV_EVENT_CLICKED, nullptr);
+
+        // Full-height side panel, sliding in from the RIGHT — a notification,
+        // not a dialog. The rest of Home stays visible, dimmed, on the left.
+        lv_obj_t *card = lv_obj_create(backdrop);
+        modalCard = card;
+        lv_obj_remove_style_all(card);
+        lv_obj_set_size(card, 300, 320);
+        lv_obj_set_style_bg_color(card, LVCOL_CARD, 0);
+        lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(card, LVCOL_BORDER, 0);
+        lv_obj_set_style_border_width(card, 1, 0);
+        lv_obj_set_style_border_side(card, LV_BORDER_SIDE_LEFT, 0);
+        lv_obj_set_style_radius(card, 0, 0);
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);       // block backdrop taps under the panel
+        lv_obj_set_pos(card, 480, 0);                        // starts off-screen right
+        lv_anim_t a; lv_anim_init(&a);
+        lv_anim_set_var(&a, card);
+        lv_anim_set_values(&a, 480, 180);
+        lv_anim_set_time(&a, 220);
+        lv_anim_set_exec_cb(&a, [](void *o, int32_t v){ lv_obj_set_x((lv_obj_t *)o, v); });
+        lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+        lv_anim_start(&a);
+
+        col = lv_obj_create(card);
+        lv_obj_remove_style_all(col);
+        lv_obj_set_size(col, 272, LV_SIZE_CONTENT);
+        lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_row(col, 12, 0);
+        lv_obj_align(col, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(col, LV_OBJ_FLAG_CLICKABLE);
+    } else {
+        scr = lvglCenteredScreen(&col);
+    }
+
+    if (iconKind == OB_ICON_WIFI) {
+        lv_obj_t *icon = lv_label_create(col);
+        lv_label_set_text(icon, LV_SYMBOL_WIFI);
+        lv_obj_set_style_text_color(icon, LVCOL_GREEN, 0);
+        lv_obj_set_style_text_font(icon, &lv_font_montserrat_40, 0);
+    } else if (iconKind == OB_ICON_CAL) {
+        // Orange warning triangle: this one is not an invitation, it is a
+        // "your weighings are wrong until you do this" notification.
+        lv_obj_t *icon = lv_label_create(col);
+        lv_label_set_text(icon, LV_SYMBOL_WARNING);
+        lv_obj_set_style_text_color(icon, LVCOL_ORANGE, 0);
+        lv_obj_set_style_text_font(icon, &lv_font_montserrat_40, 0);
+    } else {
+        // The account silhouette, same two-disc drawing as the Account page.
+        lv_obj_t *face = lv_obj_create(col);
+        lv_obj_remove_style_all(face);
+        lv_obj_set_size(face, 40, 40);
+        lv_obj_clear_flag(face, LV_OBJ_FLAG_SCROLLABLE);
+        auto disc = [&](int x, int y, int d) {
+            lv_obj_t *o = lv_obj_create(face);
+            lv_obj_set_size(o, d, d);
+            lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_border_width(o, 0, 0);
+            lv_obj_set_style_bg_color(o, LVCOL_GREEN, 0);
+            lv_obj_set_pos(o, x, y);
+            lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+        };
+        disc(13, 3, 14);    // head
+        disc(5, 23, 30);    // shoulders, clipped by the 40x40 group
+    }
+
+    lv_obj_t *titleLbl = lvglAddCenteredLabel(col, title, LVCOL_TEXT, &gFont20);
+    lv_obj_t *subLbl   = lvglAddCenteredLabel(col, sub, LVCOL_MUTED, &gFont14);
+    if (asModal) { lv_obj_set_width(titleLbl, 260); lv_obj_set_width(subLbl, 260); }
+
+    lv_obj_t *btnRow = lv_obj_create(col);
+    lv_obj_remove_style_all(btnRow);
+    lv_obj_set_size(btnRow, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    // Side-panel mode stacks the buttons (the panel is narrow); full-screen
+    // mode keeps them side by side.
+    lv_obj_set_flex_flow(btnRow, asModal ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btnRow, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(btnRow, 14, 0);
+    lv_obj_set_style_pad_row(btnRow, 10, 0);
+    lv_obj_set_style_pad_top(btnRow, 8, 0);
+    lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
+
+    auto mkBtn = [&](const char *label, bool primaryStyle, int choice) {
+        lv_obj_t *b = lv_btn_create(btnRow);
+        lv_obj_set_size(b, asModal ? 250 : 170, 48);
+        lv_obj_set_style_radius(b, 12, 0);
+        lv_obj_set_style_shadow_width(b, 0, 0);
+        if (primaryStyle) {
+            lv_obj_set_style_bg_color(b, LVCOL_ACCENT, 0);
+        } else {
+            lv_obj_set_style_bg_color(b, LVCOL_CARD, 0);
+            lv_obj_set_style_border_color(b, LVCOL_BORDER, 0);
+            lv_obj_set_style_border_width(b, 1, 0);
+        }
+        lv_obj_set_user_data(b, (void *)(intptr_t)choice);
+        lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t *l = lv_label_create(b);
+        lv_label_set_text(l, label);
+        lv_obj_set_style_text_color(l, primaryStyle ? LVCOL_TEXT : LVCOL_MUTED, 0);
+        lv_obj_center(l);
+    };
+    mkBtn(primary, true, OB_GO);
+    mkBtn(t(I18N_LATER), false, OB_LATER);
+
+    if (!asModal) lv_scr_load(scr);
+    while (sObChoice == OB_NONE) { lv_timer_handler(); delay(5); }
+    if (asModal) {
+        if (sObChoice == OB_LATER && modalCard) {
+            // "Later" folds the panel back out to the right before it goes —
+            // a notification dismissed, not a screen killed.
+            lv_anim_t a; lv_anim_init(&a);
+            lv_anim_set_var(&a, modalCard);
+            lv_anim_set_values(&a, 180, 480);
+            lv_anim_set_time(&a, 200);
+            lv_anim_set_exec_cb(&a, [](void *o, int32_t v){ lv_obj_set_x((lv_obj_t *)o, v); });
+            lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+            lv_anim_start(&a);
+            uint32_t t0 = millis(); while (millis() - t0 < 230) { lv_timer_handler(); delay(10); }
+        }
+        lv_obj_del(backdrop);      // card and content go with it
+    } else {
+        lv_scr_load(lvScreen);
+        lv_obj_del(scr);
+    }
+    { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis()-t0 < 800) delay(20); }
+    return sObChoice == OB_GO;
+}
+
+static void runFirstBootOnboarding() {
+    // The sub-screens all exit through lv_scr_load(lvScreen); make sure it
+    // exists before the first of them runs.
+    if (lvScreen == nullptr) lvglBuildMainScreen();
+
+    Serial.println("[OB] first boot: language");
+    runLanguageSettings(true);
+
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("[OB] wifi prompt");
+        if (obPrompt(OB_ICON_WIFI, t(I18N_OB_WIFI_Q), t(I18N_OB_WIFI_SUB), t(I18N_SETUP))) {
+            wifiTouchConfigure();   // connects in place; no reboot
+        }
+    }
+
+    // Account only makes sense with a network under it; if WiFi was skipped
+    // or failed, the badge already explains the state ("No account").
+    if (WiFi.status() == WL_CONNECTED && !firebaseAuth) {
+        Serial.println("[OB] account prompt");
+        if (obPrompt(OB_ICON_ACCOUNT, t(I18N_OB_ACCOUNT_Q), t(I18N_OB_ACCOUNT_SUB), t(I18N_LINK_NOW))) {
+            if (runSignInForm()) firebaseAuth = true;
+        }
+    }
+
+    Serial.println("[OB] done");
+    lv_scr_load(lvScreen);
+}
+
 
 // One HTTPS POST, run off the UI thread.
 //
@@ -5081,8 +5498,7 @@ static bool runSignInForm() {
 // The struct lives on the caller's stack, so the caller MUST wait for `done`
 // before returning, or the task would write into a frame that no longer exists.
 // 12 KB of stack because mbedTLS needs the room.
-static void pairHttpTaskFn(void* arg) {
-    PairHttp* r = (PairHttp*)arg;
+static void pairHttpRun(PairHttp* r) {
     WiFiClientSecure client; client.setInsecure();
     HTTPClient http; http.setTimeout(15000);
     if (http.begin(client, r->url)) {
@@ -5093,13 +5509,30 @@ static void pairHttpTaskFn(void* arg) {
     } else {
         r->code = -1;
     }
+    if (r->code < 0) {
+        // -1 is almost always mbedTLS failing to allocate. The two numbers
+        // that matter: total free internal heap, and the largest contiguous
+        // block (TLS wants ~16 KB pieces; fragmentation kills it first).
+        Serial.printf("[PAIR] http fail code=%d free=%u largest=%u\n", r->code,
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    }
     r->done = true;
+}
+
+static void pairHttpTaskFn(void* arg) {
+    pairHttpRun((PairHttp*)arg);
     vTaskDelete(NULL);
 }
 
 static bool pairPost(PairHttp& r) {
     r.code = 0; r.done = false; r.resp = "";
-    if (xTaskCreatePinnedToCore(pairHttpTaskFn, "pairHttp", 12288, &r, 1, nullptr, 1) != pdPASS) {
+    // Prefer the boot-time cloud worker: its stack was allocated while the
+    // heap was still whole, so the TLS buffers get the big block. The
+    // spawned-task path only remains for the pre-tasks window.
+    if (gBackgroundTasksStarted) {
+        gPairHttpReq = &r;
+    } else if (xTaskCreatePinnedToCore(pairHttpTaskFn, "pairHttp", 12288, &r, 1, nullptr, 1) != pdPASS) {
         return false;
     }
     // Keep drawing while it works: this is what makes the spinner spin.
@@ -5119,6 +5552,30 @@ static bool pairPost(PairHttp& r) {
 // Protocol and rationale: docs/ACCOUNT-PAIRING.md.
 static const char* PAIR_START = "https://us-central1-tigertag-connect.cloudfunctions.net/pairStart";
 static const char* PAIR_POLL  = "https://us-central1-tigertag-connect.cloudfunctions.net/pairPoll";
+
+// accounts:signInWithCustomToken answers WITHOUT localId — only idToken,
+// refreshToken and expiresIn come back. The UID exists solely inside the
+// idToken JWT (user_id claim), so it has to be decoded out of the payload
+// segment. Missing this left firebaseUid empty after a QR pairing: every
+// profile fetch then no-oped on its uid guard until the next reboot, whose
+// token refresh happens to return user_id — which is why Name/Email showed
+// after a reboot but never right after pairing.
+static String uidFromIdToken(const String& jwt) {
+    int a = jwt.indexOf('.');            if (a < 0) return "";
+    int b = jwt.indexOf('.', a + 1);     if (b < 0) return "";
+    String p = jwt.substring(a + 1, b);  // payload, base64url
+    p.replace('-', '+'); p.replace('_', '/');
+    while (p.length() % 4) p += '=';
+    static unsigned char out[1536];      // UI-thread only; a Firebase payload is well under this
+    size_t got = 0;
+    if (mbedtls_base64_decode(out, sizeof(out) - 1, &got,
+                              (const unsigned char*)p.c_str(), p.length()) != 0) return "";
+    out[got] = 0;
+    StaticJsonDocument<64> filter; filter["user_id"] = true;
+    DynamicJsonDocument doc(256);
+    if (deserializeJson(doc, (const char*)out, DeserializationOption::Filter(filter))) return "";
+    return String(doc["user_id"] | "");
+}
 
 // Exchange the cloud's custom token for a real Firebase session, then land in
 // exactly the state /api/firebase/token leaves behind — the same one the web
@@ -5143,7 +5600,10 @@ static bool firebaseSignInWithCustomToken(const String& customToken) {
     }
     StaticJsonDocument<256> filter;
     filter["idToken"] = true; filter["refreshToken"] = true; filter["localId"] = true;
-    DynamicJsonDocument doc(1024);
+    // 3 KB, not 1 KB: the idToken alone is a ~1 KB JWT and the refresh token
+    // rides beside it — 1024 returned NoMemory on the bench, which surfaced
+    // as a red "failed" AFTER the phone had approved successfully.
+    DynamicJsonDocument doc(3072);
     DeserializationError err = deserializeJson(doc, http.getString(),
                                                DeserializationOption::Filter(filter));
     http.end();
@@ -5151,8 +5611,10 @@ static bool firebaseSignInWithCustomToken(const String& customToken) {
 
     firebaseIdToken      = String(doc["idToken"]      | "");
     firebaseRefreshToken = String(doc["refreshToken"] | "");
-    firebaseUid          = String(doc["localId"]      | "");
     if (firebaseIdToken.isEmpty() || firebaseRefreshToken.isEmpty()) return false;
+    firebaseUid = uidFromIdToken(firebaseIdToken);   // never in the response body — see above
+    if (firebaseUid.isEmpty()) Serial.println("[PAIR] no user_id in idToken payload");
+    else Serial.printf("[PAIR] uid: %s\n", firebaseUid.c_str());
 
     firebasePassword = "";      // there is none, and persisting one would be a lie
     firebaseTokenMs  = millis();
@@ -5163,6 +5625,13 @@ static bool firebaseSignInWithCustomToken(const String& customToken) {
     prefs.putString("fbRefresh", firebaseRefreshToken);
     prefs.putString("fbUid",     firebaseUid);
     prefs.end();
+
+    // Same follow-up the password sign-in schedules: the cloud worker fetches
+    // the profile (display name, e-mail via accounts:lookup) and inits the
+    // Firestore sync. Without it, the Account page sat on "--" until the next
+    // half-hour token tick.
+    gFirestoreSyncNeeded = true;
+    gTokenRenewPending   = true;
     return true;
 }
 
@@ -5176,23 +5645,8 @@ static bool runAccountPairing(bool* wantsEmail) {
 
     static bool sBack, sEmail;
     sBack = false; sEmail = false;
-    lv_obj_t *backBtn = lv_btn_create(scr);
-    lv_obj_set_size(backBtn, 44, 40);
-    lv_obj_set_pos(backBtn, 0, 0);
-    lv_obj_set_style_bg_opa(backBtn, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(backBtn, 0, 0);
-    lv_obj_set_style_shadow_width(backBtn, 0, 0);
-    lv_obj_add_event_cb(backBtn, [](lv_event_t*){ sBack = true; }, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *backIcon = lv_label_create(backBtn);
-    lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
-    lv_obj_set_style_text_color(backIcon, LVCOL_MUTED, 0);
-    lv_obj_center(backIcon);
-
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, t(I18N_PAIR_TITLE));
-    lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
-    lv_obj_set_style_text_font(title, &gFont20, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+    lvglAddHeader(scr, t(I18N_PAIR_TITLE),
+                  [](lv_event_t*){ sBack = true; }, nullptr, 0);
 
     lv_obj_t *status = lv_label_create(scr);
     lv_obj_set_style_text_color(status, LVCOL_MUTED, 0);
@@ -5250,6 +5704,13 @@ static bool runAccountPairing(bool* wantsEmail) {
         { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis()-t0 < 800) delay(20); }
         return linked;
     };
+    // The live view stays up during pairing. It used to be paused here
+    // (gLivePaused) because pairStart/pairPoll died in HTTP -1 with viewers
+    // attached — but that was when pairing TLS ran on a freshly spawned task
+    // carving up an already-fragmented heap. It now runs on the boot-time
+    // cloud worker, and the live view's raised free-heap floors hang viewers
+    // up before TLS becomes impossible, so the owner can watch the QR screen
+    // remotely. Bench-tested with two viewer tabs attached.
     pump(1);
 
     // --- ask for a code ------------------------------------------------------
@@ -5305,6 +5766,7 @@ static bool runAccountPairing(bool* wantsEmail) {
 
     // --- wait for the phone --------------------------------------------------
     uint32_t deadline = millis() + 11UL * 60UL * 1000UL;   // the code's own TTL, plus slack
+    int misses = 0;   // consecutive failed polls — a dead backend must not read as "waiting"
     while (!sBack && !sEmail && millis() < deadline) {
         pump((uint32_t)intervalS * 1000UL);
         if (sBack || sEmail) break;
@@ -5312,7 +5774,12 @@ static bool runAccountPairing(bool* wantsEmail) {
         PairHttp r;
         r.url = PAIR_POLL;
         { DynamicJsonDocument req(192); req["poll_token"] = pollToken; serializeJson(req, r.body); }
-        if (!pairPost(r)) continue;
+        if (!pairPost(r)) {
+            Serial.printf("[PAIR] pairPoll HTTP %d (miss %d)\n", r.code, misses + 1);
+            if (++misses >= 6) return giveUp();   // ~30 s of failures: say so
+            continue;
+        }
+        misses = 0;
 
         StaticJsonDocument<256> filter;
         filter["status"] = true; filter["custom_token"] = true;
@@ -5328,12 +5795,34 @@ static bool runAccountPairing(bool* wantsEmail) {
             lv_label_set_text(wait, "");
             lv_label_set_text(scan, "");
             lv_label_set_text(codeLbl, "");
-            lv_obj_clear_flag(status, LV_OBJ_FLAG_HIDDEN);
             bool ok = firebaseSignInWithCustomToken(ct);
-            lv_label_set_text(status, t(ok ? I18N_PAIR_DONE : I18N_PAIR_FAILED));
-            lv_obj_set_style_text_color(status, ok ? LVCOL_GREEN : LVCOL_RED, 0);
-            pump(2000);
-            return finish(ok);
+            if (!ok) {
+                lv_obj_clear_flag(status, LV_OBJ_FLAG_HIDDEN);
+                lv_label_set_text(status, t(I18N_PAIR_FAILED));
+                lv_obj_set_style_text_color(status, LVCOL_RED, 0);
+                pump(2000);
+                return finish(false);
+            }
+            // Success gets the house result grammar (badge + green title +
+            // account identity), not a bare label beside the QR box's empty
+            // white square. Name and e-mail fill in live: the profile fetch
+            // lands 1-3 s behind the sign-in, on the cloud worker.
+            lv_obj_t *dcol;
+            lv_obj_t *doneScr = lvglCenteredScreen(&dcol);
+            lvglAddStatusBadge(dcol, true);
+            lvglAddCenteredLabel(dcol, t(I18N_PAIR_DONE), LVCOL_GREEN, &gFont20);
+            lv_obj_t *nameL = lvglAddCenteredLabel(dcol, firebaseDisplayName, LVCOL_TEXT,  &gFont16);
+            lv_obj_t *mailL = lvglAddCenteredLabel(dcol, firebaseEmail,       LVCOL_MUTED, &gFont14);
+            lv_scr_load(doneScr);
+            uint32_t td = millis();
+            while (millis() - td < 3200) {
+                lv_timer_handler(); delay(15);
+                lv_label_set_text(nameL, firebaseDisplayName.c_str());
+                lv_label_set_text(mailL, firebaseEmail.c_str());
+            }
+            lv_scr_load(scr);      // finish() switches to lvScreen and deletes scr
+            lv_obj_del(doneScr);
+            return finish(true);
         }
 
         if (qr) lv_obj_add_flag(qr, LV_OBJ_FLAG_HIDDEN);
@@ -5359,32 +5848,20 @@ static void runOtaMenu() {
     lv_obj_set_style_border_width(scr, 0, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, t(I18N_UPDATE));
-    lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
-    lv_obj_set_style_text_font(title, &gFont20, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
-
-    lv_obj_t *div = lv_obj_create(scr);
-    lv_obj_remove_style_all(div);
-    lv_obj_set_size(div, 480, 1);
-    lv_obj_set_style_bg_color(div, LVCOL_BORDER, 0);
-    lv_obj_set_style_bg_opa(div, LV_OPA_COVER, 0);
-    lv_obj_set_pos(div, 0, 36);
-    lv_obj_clear_flag(div, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *header = lvglAddHeader(scr, t(I18N_UPDATE), actionCb, nullptr, (intptr_t)OA_BACK);
 
     char cv[16]; snprintf(cv, sizeof(cv), "v%s", TIGERSCALE_FW_VERSION);
     lv_obj_t *verLbl = lv_label_create(scr);
     lv_label_set_text(verLbl, cv);
     lv_obj_set_style_text_color(verLbl, LVCOL_MUTED, 0);
-    lv_obj_align(verLbl, LV_ALIGN_TOP_MID, 0, 44);
+    lv_obj_align(verLbl, LV_ALIGN_TOP_MID, 0, 56);
 
     lv_obj_t *statusLbl = lv_label_create(scr);
     lv_obj_set_style_text_color(statusLbl, LVCOL_MUTED, 0);
     lv_label_set_long_mode(statusLbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(statusLbl, 400);
     lv_obj_set_style_text_align(statusLbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(statusLbl, LV_ALIGN_TOP_MID, 0, 68);
+    lv_obj_align(statusLbl, LV_ALIGN_TOP_MID, 0, 80);
 
     lv_obj_t *hintLbl = lv_label_create(scr);
     lv_label_set_text(hintLbl, ""); // else LVGL's default label text ("Text") shows on any path that never sets it
@@ -5393,7 +5870,7 @@ static void runOtaMenu() {
     lv_label_set_long_mode(hintLbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(hintLbl, 400);
     lv_obj_set_style_text_align(hintLbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(hintLbl, LV_ALIGN_TOP_MID, 0, 94);
+    lv_obj_align(hintLbl, LV_ALIGN_TOP_MID, 0, 106);
 
     // --- progress ring, shown only while the images are being written -----------
     // Hidden until Install is confirmed, at which point it replaces the whole page.
@@ -5463,19 +5940,6 @@ static void runOtaMenu() {
     lv_obj_set_style_text_color(installLbl, LVCOL_GREEN, 0);
     lv_obj_center(installLbl);
     lv_obj_add_flag(installBtn, LV_OBJ_FLAG_HIDDEN);
-
-    lv_obj_t *backBtn = lv_btn_create(scr);
-    lv_obj_set_size(backBtn, 34, 36);
-    lv_obj_set_pos(backBtn, 0, 0);
-    lv_obj_set_style_bg_opa(backBtn, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(backBtn, 0, 0);
-    lv_obj_set_style_shadow_width(backBtn, 0, 0);
-    lv_obj_set_user_data(backBtn, (void *)(intptr_t)OA_BACK);
-    lv_obj_add_event_cb(backBtn, actionCb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *backIcon = lv_label_create(backBtn);
-    lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
-    lv_obj_set_style_text_color(backIcon, LVCOL_MUTED, 0);
-    lv_obj_center(backIcon);
 
     auto setStatus = [&](const char *msg, lv_color_t col) {
         lv_label_set_text(statusLbl, msg);
@@ -5587,7 +6051,7 @@ static void runOtaMenu() {
     // --- Install ---
     // The page gives way entirely: from here the screen has one job, and the only
     // thing the user can do about it is leave the power on.
-    lv_obj_t *pageParts[] = { title, div, verLbl, statusLbl, hintLbl, installBtn, backBtn };
+    lv_obj_t *pageParts[] = { header, verLbl, statusLbl, hintLbl, installBtn };
     for (lv_obj_t *o : pageParts) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *ringParts[] = { ring, arrow[0], arrow[1], ringPct, ringMsg, ringWarn };
     for (lv_obj_t *o : ringParts) lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
@@ -5659,9 +6123,10 @@ static void runOtaMenu() {
 // LVGL screen. Sub-screens (calibration wizard, hardware test, wifi setup,
 // etc.) are untouched raw-gfx and still called exactly as before.
 static void runSettingsMenu() {
-    enum SettingsAction { SA_NONE, SA_WIFI, SA_FIREBASE, SA_VOLUME, SA_CALIBRATE, SA_LANGUAGE, SA_HARDWARE, SA_LAN, SA_SLEEP, SA_UPDATE, SA_BACK };
+    enum SettingsAction { SA_NONE, SA_WIFI, SA_FIREBASE, SA_VOLUME, SA_SCREEN, SA_CALIBRATE, SA_LANGUAGE, SA_HARDWARE, SA_LAN, SA_UPDATE, SA_FACTORY, SA_BACK };
     static SettingsAction sAction;
     lv_obj_t *prevScr = nullptr;
+    lv_coord_t savedScrollY = 0;   // survives sub-screen round-trips, not menu exits
 
     auto cardClickCb = [](lv_event_t *e) {
         lv_obj_t *card = (lv_obj_t *)lv_event_get_target(e);
@@ -5676,23 +6141,27 @@ static void runSettingsMenu() {
         lv_obj_set_style_border_width(scr, 0, 0);
         lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-        lv_obj_t *title = lv_label_create(scr);
-        lv_label_set_text(title, t(I18N_SETTINGS));
-        lv_obj_set_style_text_color(title, LVCOL_TEXT, 0);
-        lv_obj_set_style_text_font(title, &gFont20, 0);
-        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+        lvglAddHeader(scr, t(I18N_SETTINGS), cardClickCb, &sAction, (intptr_t)SA_BACK);
 
-        lv_obj_t *div = lv_obj_create(scr);
-        lv_obj_remove_style_all(div);
-        lv_obj_set_size(div, 480, 1);
-        lv_obj_set_style_bg_color(div, LVCOL_BORDER, 0);
-        lv_obj_set_style_bg_opa(div, LV_OPA_COVER, 0);
-        lv_obj_set_pos(div, 0, 36);
-        lv_obj_clear_flag(div, LV_OBJ_FLAG_SCROLLABLE);
-
-        const int CW = 152, CH = 78, GAP = 6, X0 = 6;
-        const int X1 = X0 + CW + GAP, X2 = X1 + CW + GAP;
-        const int Y0 = 44, Y1 = Y0 + CH + 8, Y2 = Y1 + CH + 10;
+        // One row per setting, in a vertically scrolling column. The list will
+        // only grow — a grid re-layout per new setting does not scale, a row
+        // does. Scroll is signalled twice over: the row heights are chosen so
+        // the fifth row is cut by the bottom edge, and the scrollbar is
+        // always-on for this screen rather than gesture-only.
+        const int ROW_H = 56;
+        lv_obj_t *list = lv_obj_create(scr);
+        lv_obj_remove_style_all(list);
+        lv_obj_set_size(list, 428, 320 - 49);   // 428: clears the scroll rail
+        lv_obj_set_pos(list, 0, 49);
+        lv_obj_set_style_pad_top(list, 8, 0);
+        lv_obj_set_style_pad_bottom(list, 8, 0);
+        lv_obj_set_style_pad_left(list, 10, 0);
+        lv_obj_set_style_pad_right(list, 6, 0);
+        lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(list, 6, 0);
+        lv_obj_set_scroll_dir(list, LV_DIR_VER);
+        lvglStyleScrollbar(list);
+        lvglAddScrollRail(scr, list, 57, 312, 2 * (ROW_H + 6));
 
         enum CardIcon { CI_GLYPH, CI_USER, CI_LAN, CI_TARGET, CI_GLOBE, CI_CHIP, CI_MOON };
 
@@ -5736,16 +6205,16 @@ static void runSettingsMenu() {
             lv_obj_clear_flag(o, LV_OBJ_FLAG_CLICKABLE);
         };
 
-        auto makeCard = [&](int x, int y, CardIcon iconKind, const char *iconSym, lv_color_t iconCol,
-                             const String &valStr, SettingsAction act) {
-            lv_obj_t *card = lv_btn_create(scr);
-            lv_obj_set_size(card, CW, CH);
-            lv_obj_set_pos(card, x, y);
+        auto makeRow = [&](CardIcon iconKind, const char *iconSym, lv_color_t iconCol,
+                            const String &nameStr, const String &valStr, SettingsAction act) -> lv_obj_t* {
+            lv_obj_t *card = lv_btn_create(list);
+            lv_obj_set_size(card, LV_PCT(100), ROW_H);
             lv_obj_set_style_bg_color(card, LVCOL_CARD, 0);
             lv_obj_set_style_border_color(card, LVCOL_BORDER, 0);
             lv_obj_set_style_border_width(card, 1, 0);
-            lv_obj_set_style_radius(card, 12, 0);
+            lv_obj_set_style_radius(card, 10, 0);
             lv_obj_set_style_shadow_width(card, 0, 0);
+            lv_obj_set_style_pad_all(card, 0, 0);
             lv_obj_set_user_data(card, (void *)(intptr_t)act);
             lv_obj_add_event_cb(card, cardClickCb, LV_EVENT_CLICKED, &sAction);
 
@@ -5753,15 +6222,18 @@ static void runSettingsMenu() {
                 lv_obj_t *icon = lv_label_create(card);
                 lv_label_set_text(icon, iconSym);
                 lv_obj_set_style_text_color(icon, iconCol, 0);
-                lv_obj_set_style_text_font(icon, &lv_font_montserrat_28, 0);
-                lv_obj_align(icon, LV_ALIGN_CENTER, 0, -12);
+                // gFont20 (the fallback-carrying Montserrat copy), not the
+                // const face: the sun glyph lives in the FontAwesome subset
+                // the fallback carries, LVGL's own symbols resolve either way.
+                lv_obj_set_style_text_font(icon, &gFont20, 0);
+                lv_obj_align(icon, LV_ALIGN_LEFT_MID, 14, 0);
             } else {
-                // Custom hand-drawn icons live in a 26x26 group, centered the
-                // same way the glyph label is, so every card lines up.
+                // Custom hand-drawn icons live in a 26x26 group, anchored the
+                // same way the glyph label is, so every row lines up.
                 lv_obj_t *iconArea = lv_obj_create(card);
                 lv_obj_remove_style_all(iconArea);
                 lv_obj_set_size(iconArea, 26, 26);
-                lv_obj_align(iconArea, LV_ALIGN_CENTER, 0, -12);
+                lv_obj_align(iconArea, LV_ALIGN_LEFT_MID, 12, 0);
                 lv_obj_clear_flag(iconArea, LV_OBJ_FLAG_SCROLLABLE);
                 lv_obj_clear_flag(iconArea, LV_OBJ_FLAG_CLICKABLE);
 
@@ -5849,61 +6321,124 @@ static void runSettingsMenu() {
                 }
             }
 
-            lv_obj_t *val = lv_label_create(card);
-            lv_label_set_text(val, valStr.c_str());
-            lv_obj_set_style_text_color(val, LVCOL_MUTED, 0);
-            lv_obj_align(val, LV_ALIGN_BOTTOM_MID, 0, -8);
+            lv_obj_t *name = lv_label_create(card);
+            lv_label_set_text(name, nameStr.c_str());
+            lv_obj_set_style_text_color(name, LVCOL_TEXT, 0);
+            lv_obj_set_style_text_font(name, &gFont16, 0);
+            lv_obj_align(name, LV_ALIGN_LEFT_MID, 52, 0);
+
+            // Big chevron on purpose: it is the "this opens" affordance and
+            // has to read at arm's length on a 3.5" panel.
+            lv_obj_t *chev = lv_label_create(card);
+            lv_label_set_text(chev, LV_SYMBOL_RIGHT);
+            lv_obj_set_style_text_color(chev, LVCOL_MUTED, 0);
+            lv_obj_set_style_text_font(chev, &lv_font_montserrat_28, 0);
+            lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -12, 0);
+
+            if (valStr.length()) {
+                lv_obj_t *val = lv_label_create(card);
+                lv_label_set_text(val, valStr.c_str());
+                lv_obj_set_style_text_color(val, LVCOL_MUTED, 0);
+                lv_obj_set_style_text_font(val, &gFont16, 0);
+                // A long SSID or display name truncates with an ellipsis
+                // rather than colliding with the row's own label.
+                lv_label_set_long_mode(val, LV_LABEL_LONG_DOT);
+                lv_obj_set_width(val, 190);
+                lv_obj_set_style_text_align(val, LV_TEXT_ALIGN_RIGHT, 0);
+                lv_obj_align(val, LV_ALIGN_RIGHT_MID, -46, 0);
+                return val;
+            }
+            return (lv_obj_t*)nullptr;
         };
 
-        // Row 1: WiFi | Firebase | Volume
-        String wifiVal = wifiConnected ? WiFi.localIP().toString() : String(t(I18N_NO_WIFI));
-        makeCard(X0, Y0, CI_GLYPH, LV_SYMBOL_WIFI, wifiConnected ? LVCOL_GREEN : LVCOL_RED, wifiVal, SA_WIFI);
+        // The value column shows the current state, so the list answers most
+        // questions without opening anything: the SSID rather than the IP
+        // (that is what a person recognises), the account's display name, the
+        // running firmware version.
+        String wifiVal = wifiConnected ? WiFi.SSID() : String(t(I18N_NO_WIFI));
+        makeRow(CI_GLYPH, LV_SYMBOL_WIFI, wifiConnected ? LVCOL_GREEN : LVCOL_RED,
+                "WiFi", wifiVal, SA_WIFI);
 
-        String fbVal = firebaseAuth ? "OK" : t(I18N_NO_ACCOUNT);
-        makeCard(X1, Y0, CI_USER, nullptr, firebaseAuth ? LVCOL_GREEN : LVCOL_RED, fbVal, SA_FIREBASE);
+        // Between boot and the saved account's sign-in, say "connecting" —
+        // "no account" while credentials sit in NVS reads as data loss.
+        bool accountPending = (!firebaseAuth && firebaseRefreshToken.length() > 0);
+        String fbVal = firebaseAuth
+            ? (firebaseDisplayName.length() ? firebaseDisplayName : String("OK"))
+            : String(t(accountPending ? I18N_WIFI_CONNECTING : I18N_NO_ACCOUNT));
+        lv_obj_t *fbValLbl = makeRow(CI_USER, nullptr,
+                firebaseAuth ? LVCOL_GREEN : (accountPending ? LVCOL_ACCENT : LVCOL_RED),
+                t(I18N_ACCOUNT), fbVal, SA_FIREBASE);
 
         String volVal = gMute ? String(t(I18N_MUTE)) : (String((int)gVolume) + "%");
-        makeCard(X2, Y0, CI_GLYPH, gMute ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX, gMute ? LVCOL_RED : LVCOL_TEXT, volVal, SA_VOLUME);
+        makeRow(CI_GLYPH, gMute ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX,
+                gMute ? LVCOL_RED : LVCOL_TEXT, t(I18N_VOLUME), volVal, SA_VOLUME);
 
-        // Row 2: Calibrate | Language | Hardware
+        // No value on this row, by request: two settings compressed into one
+        // number salad ("100% 1 min") read worse than nothing at all.
+        makeRow(CI_GLYPH, TT_SYMBOL_SUN, LVCOL_TEXT, t(I18N_SCREEN), String(""), SA_SCREEN);
+
         char calBuf[20]; snprintf(calBuf, sizeof(calBuf), "%.2f", calibrationFactor);
-        makeCard(X0, Y1, CI_TARGET, nullptr, LVCOL_TEXT, String(calBuf), SA_CALIBRATE);
+        // "Calibration Wizard", not the bare verb: the row opens a guided
+        // flow, and the name should promise the hand-holding it delivers.
+        makeRow(CI_TARGET, nullptr, LVCOL_TEXT, t(I18N_CAL_WIZARD), String(calBuf), SA_CALIBRATE);
 
         // Indexed by the Language enum — one entry per language, same order.
-        const char *langNames[8] = { "English", "Portugues", "Francais", "Espanol",
-                                     "Deutsch", "中文", "Italiano", "Polski" };
-        String langVal = langNames[(int)gLanguage < 8 ? (int)gLanguage : 0];
-        makeCard(X1, Y1, CI_GLOBE, nullptr, LVCOL_TEXT, langVal, SA_LANGUAGE);
+        const char *langNames[NUM_LANGS] = { "English", "Portugues (Brasil)", "Francais",
+                                             "Espanol", "Deutsch", "中文", "Italiano",
+                                             "Polski", "Portugues (Portugal)" };
+        String langVal = langNames[(int)gLanguage < NUM_LANGS ? (int)gLanguage : 0];
+        makeRow(CI_GLOBE, nullptr, LVCOL_TEXT, t(I18N_LANGUAGE), langVal, SA_LANGUAGE);
 
-        makeCard(X2, Y1, CI_CHIP, nullptr, LVCOL_TEXT, String("RFID"), SA_HARDWARE);
+        makeRow(CI_CHIP, nullptr, LVCOL_TEXT, "RFID", String(""), SA_HARDWARE);
 
-        // Row 3: Update — same card style as the other 6, under Calibrate
-        makeCard(X0, Y2, CI_GLYPH, LV_SYMBOL_REFRESH, LVCOL_TEXT, String(t(I18N_UPDATE)), SA_UPDATE);
-        makeCard(X1, Y2, CI_LAN, nullptr, gLanLiveView ? LVCOL_GREEN : LVCOL_MUTED,
-                 String(t(I18N_LAN_TITLE)), SA_LAN);
+        makeRow(CI_GLYPH, LV_SYMBOL_REFRESH, LVCOL_TEXT, t(I18N_UPDATE),
+                String(TIGERSCALE_FW_VERSION), SA_UPDATE);
 
-        String sleepVal = gSleepEnabled ? (String((int)gSleepDelayMin) + " min") : String(t(I18N_NO));
-        makeCard(X2, Y2, CI_MOON, nullptr, gSleepEnabled ? LVCOL_TEXT : LVCOL_MUTED,
-                 sleepVal, SA_SLEEP);
+        makeRow(CI_LAN, nullptr, gLanLiveView ? LVCOL_GREEN : LVCOL_MUTED,
+                t(I18N_LAN_TITLE), String(t(gLanLiveView ? I18N_YES : I18N_NO)), SA_LAN);
 
-        // Back — top-left arrow, matching the keyboard screen's back button
-        lv_obj_t *backBtn = lv_btn_create(scr);
-        lv_obj_set_size(backBtn, 34, 36);
-        lv_obj_set_pos(backBtn, 0, 0);
-        lv_obj_set_style_bg_opa(backBtn, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(backBtn, 0, 0);
-        lv_obj_set_style_shadow_width(backBtn, 0, 0);
-        lv_obj_set_user_data(backBtn, (void *)(intptr_t)SA_BACK);
-        lv_obj_add_event_cb(backBtn, cardClickCb, LV_EVENT_CLICKED, &sAction);
-        lv_obj_t *backIcon = lv_label_create(backBtn);
-        lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
-        lv_obj_set_style_text_color(backIcon, LVCOL_MUTED, 0);
-        lv_obj_center(backIcon);
+        // Last row, deliberately: the one destructive action of this list
+        // sits at the end of the scroll, red, behind an lvglConfirm.
+        makeRow(CI_GLYPH, LV_SYMBOL_TRASH, LVCOL_RED,
+                t(I18N_FACTORY_RESET), String(""), SA_FACTORY);
+
+
+        // Coming back from a sub-screen used to reland at the top of the list
+        // every rebuild — reaching the last row again cost four rail taps.
+        if (savedScrollY > 0) {
+            lv_obj_update_layout(list);
+            lv_obj_scroll_to_y(list, savedScrollY, LV_ANIM_OFF);
+        }
+        lvglRailRefresh(list);
 
         lv_scr_load(scr);
         if (prevScr) { lv_obj_del(prevScr); prevScr = nullptr; }
 
-        while (sAction == SA_NONE) { lv_timer_handler(); delay(5); }
+        {
+            // Freshly paired, this list is rebuilt ~2 s BEFORE the profile
+            // fetch lands, so the account row froze its build-time "OK".
+            // Re-read the globals twice a second, same as the Account page;
+            // identical text is skipped, so idle cost is a strcmp.
+            Language builtLang = gLanguage;
+            uint32_t lastFbRowMs = millis();
+            while (sAction == SA_NONE) {
+                lv_timer_handler(); delay(5);
+                // The account's language sync can land while this list sits
+                // open (it arrives seconds after a pairing). Falling out with
+                // SA_NONE re-enters the outer loop, which rebuilds the list in
+                // the new language at the same scroll offset.
+                if (gLanguage != builtLang) break;
+                if (fbValLbl && millis() - lastFbRowMs > 500) {
+                    lastFbRowMs = millis();
+                    bool pend = (!firebaseAuth && firebaseRefreshToken.length() > 0);
+                    String nv = firebaseAuth
+                        ? (firebaseDisplayName.length() ? firebaseDisplayName : String("OK"))
+                        : String(t(pend ? I18N_WIFI_CONNECTING : I18N_NO_ACCOUNT));
+                    if (nv != lv_label_get_text(fbValLbl)) lv_label_set_text(fbValLbl, nv.c_str());
+                }
+            }
+        }
+        savedScrollY = lv_obj_get_scroll_y(list);
 
         if (sAction == SA_BACK) { lv_scr_load(lvScreen); lv_obj_del(scr); break; }
 
@@ -5929,7 +6464,26 @@ static void runSettingsMenu() {
                 break;
             }
             case SA_FIREBASE:
-                if (firebaseAuth) {
+                if (!firebaseAuth && firebaseRefreshToken.length() > 0 && wifiConnected) {
+                    // A saved account is mid-sign-in: offering the sign-in form
+                    // here read as "your account is gone". Spinner instead,
+                    // tappable away, straight into the account page on success.
+                    static bool sConnDismiss;
+                    sConnDismiss = false;
+                    lv_obj_t *ccol;
+                    lv_obj_t *connScr2 = lvglCenteredScreen(&ccol);
+                    lvglAddSpinner(ccol);
+                    lvglAddCenteredLabel(ccol, t(I18N_WIFI_CONNECTING), LVCOL_TEXT, &gFont20);
+                    lv_obj_add_flag(connScr2, LV_OBJ_FLAG_CLICKABLE);
+                    lv_obj_add_event_cb(connScr2, [](lv_event_t *) { sConnDismiss = true; }, LV_EVENT_CLICKED, nullptr);
+                    lv_obj_t *backTo = lv_scr_act();
+                    lv_scr_load(connScr2);
+                    uint32_t c0 = millis();
+                    while (!firebaseAuth && !sConnDismiss && millis() - c0 < 30000) { lv_timer_handler(); delay(30); }
+                    lv_scr_load(backTo);
+                    lv_obj_del(connScr2);
+                    if (firebaseAuth) runFirebaseAccountMenu();
+                } else if (firebaseAuth) {
                     runFirebaseAccountMenu();
                 } else if (!wifiConnected) {
                     // Same centered badge/title/subtitle treatment as the
@@ -5954,17 +6508,35 @@ static void runSettingsMenu() {
                 }
                 break;
             case SA_VOLUME:     runVolumeSettings();     break;
-            case SA_CALIBRATE:  runCalibrationWizard();  break;
+            case SA_SCREEN:     runScreenSettings();     break;
+            case SA_CALIBRATE:
+                // A finished calibration lands on the Home screen, not back
+                // in this list — the wizard's tail already loaded it.
+                if (runCalibrationWizard()) { lv_obj_del(scr); goto settings_done; }
+                break;
             case SA_LANGUAGE:   runLanguageSettings();   break;
             case SA_HARDWARE:   runHardwareTest();       break;
             case SA_LAN:        runLanSettings();        break;
-            case SA_SLEEP:      runSleepSettings();      break;
             case SA_UPDATE:     runOtaMenu();            break;
+            case SA_FACTORY:
+                // Full NVS erase — every namespace: config, WiFi creds, LAN
+                // code, meta cache, calibration. The next boot finds no
+                // "language" key and runs the first-boot onboarding, which is
+                // exactly the point: this IS "as freshly web-installed".
+                if (lvglConfirm(t(I18N_FACTORY_RESET_Q))) {
+                    Serial.println("[RESET] factory reset from Settings");
+                    prefs.end();            // release any open handle first
+                    nvs_flash_deinit();
+                    nvs_flash_erase();
+                    ESP.restart();
+                }
+                break;
             default: break;
         }
 
         prevScr = scr;
     }
+settings_done:
     { int16_t dx, dy; uint32_t t0=millis(); while(tsRead(dx,dy) && millis()-t0<1000) delay(20); }
 }
 
@@ -6681,12 +7253,57 @@ String getScaleMacAddress() {
 // Fetch displayName + avatar URL from the user's Firestore profile (users/{uid}).
 // Fetches the full document so we can auto-detect the avatar field regardless of its name.
 static void fetchUserDisplayName() {
-    if (firebaseIdToken.length() == 0 || firebaseUid.length() == 0) return;
+    if (firebaseIdToken.length() == 0) { Serial.println("[FIREBASE] profile fetch skipped: no idToken"); return; }
+
+    // accounts:lookup first: it needs only the idToken, and it answers with
+    // BOTH the e-mail and the uid (localId). The e-mail because only the
+    // password sign-in ever typed one; the uid as a safety net — a session
+    // whose uid went missing (it never rides in the custom-token response)
+    // would otherwise skip the Firestore fetch below forever, silently.
+    if (firebaseEmail.length() == 0 || firebaseUid.length() == 0) {
+        HTTPClient http2;
+        String lookupUrl = String("https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=")
+                           + String(TIGERTAG_FIREBASE_WEB_API_KEY);
+        if (!http2.begin(lookupUrl)) {
+            Serial.println("[FIREBASE] lookup http.begin failed (heap?)");
+        } else {
+            http2.addHeader("Content-Type", "application/json");
+            int lcode = http2.POST("{\"idToken\":\"" + firebaseIdToken + "\"}");
+            String lresp = http2.getString();
+            http2.end();
+            if (lcode == 200) {
+                StaticJsonDocument<96> lfilter;
+                lfilter["users"][0]["email"]   = true;
+                lfilter["users"][0]["localId"] = true;
+                DynamicJsonDocument ldoc(768);
+                if (deserializeJson(ldoc, lresp, DeserializationOption::Filter(lfilter)) == DeserializationError::Ok) {
+                    String em  = String(ldoc["users"][0]["email"]   | "");
+                    String lid = String(ldoc["users"][0]["localId"] | "");
+                    prefs.begin("config", false);
+                    if (em.length() > 0 && firebaseEmail.length() == 0) {
+                        firebaseEmail = em;
+                        prefs.putString("fbEmail", firebaseEmail);
+                        Serial.printf("[FIREBASE] email: %s\n", firebaseEmail.c_str());
+                    }
+                    if (lid.length() > 0 && firebaseUid.length() == 0) {
+                        firebaseUid = lid;
+                        prefs.putString("fbUid", firebaseUid);
+                        Serial.printf("[FIREBASE] uid recovered via lookup: %s\n", firebaseUid.c_str());
+                    }
+                    prefs.end();
+                }
+            } else {
+                Serial.printf("[FIREBASE] accounts:lookup HTTP %d\n", lcode);
+            }
+        }
+    }
+
+    if (firebaseUid.length() == 0) { Serial.println("[FIREBASE] profile fetch skipped: no uid"); return; }
     HTTPClient http;
     // No field mask — fetch entire user document so we can auto-detect all fields
     String url = "https://firestore.googleapis.com/v1/projects/tigertag-connect/databases/(default)/documents/users/"
                  + firebaseUid;
-    if (!http.begin(url)) return;
+    if (!http.begin(url)) { Serial.println("[FIREBASE] profile http.begin failed (heap?)"); return; }
     http.addHeader("Authorization", "Bearer " + firebaseIdToken);
     int code = http.GET();
     String resp = http.getString();
@@ -6726,8 +7343,73 @@ static void fetchUserDisplayName() {
 
 }
 
+// ---- Account-level language sync -------------------------------------------
+// Same system as TigerTag Studio Manager (syncLangFromFirestore /
+// saveAccountLang there): the shared truth is users/{uid}/prefs/app,
+// field `lang`, as a bare ISO code ("fr"). NOT `studioLang` on the user
+// root doc — that one is write-only telemetry. Studio reads prefs/app at
+// startup and writes it on every language change; the scale does the same,
+// so changing the language on either side follows on the other.
+
+static const char* kLangCodes[NUM_LANGS] = { "en", "pt", "fr", "es", "de", "zh", "it", "pl", "pt-pt" };
+
+static int codeToLang(const String& code) {
+    for (int i = 0; i < NUM_LANGS; i++) if (code == kLangCodes[i]) return i;
+    return -1;
+}
+
+// Cloud -> scale. Runs on the cloud worker at boot, after every fresh
+// login and on every 30-min token tick. Touches no LVGL object: the main
+// screen re-reads t() on every update, sub-screens rebuild on entry.
+static void syncLangFromCloud() {
+    if (firebaseIdToken.length() == 0 || firebaseUid.length() == 0) return;
+    if (gLangPushPending) return;   // a local change is on its way up; it wins
+    HTTPClient http;
+    String url = "https://firestore.googleapis.com/v1/projects/tigertag-connect/databases/(default)/documents/users/"
+                 + firebaseUid + "/prefs/app?mask.fieldPaths=lang";
+    if (!http.begin(url)) { Serial.println("[LANG] sync http.begin failed (heap?)"); return; }
+    http.addHeader("Authorization", "Bearer " + firebaseIdToken);
+    int code = http.GET();
+    String resp = http.getString();
+    http.end();
+    if (code == 404) return;                 // the account never picked a language anywhere
+    if (code != 200) { Serial.printf("[LANG] sync HTTP %d\n", code); return; }
+    StaticJsonDocument<96> filter;
+    filter["fields"]["lang"]["stringValue"] = true;
+    StaticJsonDocument<256> doc;
+    if (deserializeJson(doc, resp, DeserializationOption::Filter(filter))) return;
+    String cloud = String(doc["fields"]["lang"]["stringValue"] | "");
+    if (cloud.length() == 0) return;
+    int idx = codeToLang(cloud);
+    if (idx < 0) { Serial.printf("[LANG] cloud lang '%s' not supported here\n", cloud.c_str()); return; }
+    if ((Language)idx == gLanguage) return;
+    gLanguage = (Language)idx;
+    prefs.begin("config", false);
+    prefs.putUChar("language", (uint8_t)gLanguage);
+    prefs.end();
+    Serial.printf("[LANG] applied from account: %s\n", cloud.c_str());
+}
+
+// Scale -> cloud. Mirrors Studio's saveAccountLang(): merge-write the one
+// field, creating users/{uid}/prefs/app if it does not exist yet.
+static void pushLangToCloud() {
+    if (firebaseIdToken.length() == 0 || firebaseUid.length() == 0) return;
+    HTTPClient http;
+    String url = "https://firestore.googleapis.com/v1/projects/tigertag-connect/databases/(default)/documents/users/"
+                 + firebaseUid + "/prefs/app?updateMask.fieldPaths=lang";
+    if (!http.begin(url)) { Serial.println("[LANG] push http.begin failed (heap?)"); return; }
+    http.addHeader("Authorization", "Bearer " + firebaseIdToken);
+    http.addHeader("Content-Type", "application/json");
+    String body = String("{\"fields\":{\"lang\":{\"stringValue\":\"")
+                  + kLangCodes[(int)gLanguage < NUM_LANGS ? (int)gLanguage : 0] + "\"}}}";
+    int code = http.PATCH(body);
+    http.end();
+    if (code == 200) Serial.printf("[LANG] pushed to account: %s\n", kLangCodes[(int)gLanguage]);
+    else             Serial.printf("[LANG] push HTTP %d\n", code);
+}
+
 void initScaleFirestoreSync() {
-    if (firebaseUid.length() == 0) return;
+    if (firebaseUid.length() == 0) { Serial.println("[SCALE] Firestore sync skipped: no uid"); return; }
     gScaleMacAddress = getScaleMacAddress();
     gScaleDocPath = "users/" + firebaseUid + "/scales/" + gScaleMacAddress;
     Serial.printf("[SCALE] Firestore doc path: %s\n", gScaleDocPath.c_str());
@@ -7878,10 +8560,20 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
 // Writes to volatile flags so the workflow state-machine on core 1 can poll
 // for completion each 250 ms tick without sleeping.
 
+// Profile-fetch retry budget. File-scope so an explicit login can reset it:
+// a previous account's exhausted budget must not starve the next pairing.
+static uint8_t  gProfileTries  = 0;
+static uint32_t gProfileLastMs = 0;
+
 // cloudWorkerTask (core 0) — container fetch + cloud send
 // Kicks off twinWorkerTask in parallel for the twin/containerB fetches.
 static void cloudWorkerTask(void* /*param*/) {
     for (;;) {
+        if (gPairHttpReq) {
+            PairHttp* pr = (PairHttp*)gPairHttpReq;
+            gPairHttpReq = nullptr;
+            pairHttpRun(pr);   // sets pr->done last; the UI loop is watching it
+        }
         if (gTokenRenewPending) {
             gTokenRenewPending = false;
             ensureFirebaseToken();
@@ -7895,8 +8587,35 @@ static void cloudWorkerTask(void* /*param*/) {
             }
             if (firebaseAuth && (gFirestoreSyncNeeded || gScaleMacAddress.length() == 0)) {
                 gFirestoreSyncNeeded = false;
+                gProfileTries        = 0;   // fresh login: give the retry loop its full budget back
                 initScaleFirestoreSync();
             }
+            // Language follows the account (users/{uid}/prefs/app.lang, the
+            // same doc Studio syncs): checked at boot, after every login and
+            // on each 30-min token tick — a change made in Studio lands here
+            // at the latest half an hour later, immediately after a reboot.
+            if (firebaseAuth) syncLangFromCloud();
+        }
+        if (gLangPushPending && firebaseAuth) {
+            gLangPushPending = false;
+            pushLangToCloud();
+        }
+        // The profile fetch is not one-shot anymore. It used to run exactly
+        // once on the post-pairing tick and, when the live view's viewers had
+        // just reclaimed the heap, fail its TLS silently — leaving Name and
+        // Email at "--" until the half-hour token tick. Retry every 15 s,
+        // bounded, until both the e-mail (accounts always have one) and the
+        // display name have landed.
+        {
+            if (firebaseAuth
+                && (firebaseEmail.length() == 0 || firebaseDisplayName.length() == 0)
+                && gProfileTries < 10
+                && millis() - gProfileLastMs > 15000) {
+                gProfileLastMs = millis();
+                gProfileTries++;
+                fetchUserDisplayName();
+            }
+            if (firebaseEmail.length() && firebaseDisplayName.length()) gProfileTries = 0;
         }
         if (gHeartbeatPending) {
             gHeartbeatPending = false;
@@ -9921,10 +10640,12 @@ void handleWeighWorkflow(float w) {
             wfWeightPresentSinceMs = 0;
         }
 
-        // After a successful send the badge is "ready". Don't start scanning until the
-        // scale has actually been seen empty (< MIN_WEIGHT_TO_SEND_G) — this prevents
-        // scanning being triggered by the spool mid-removal (e.g. 46 g on the way to 0).
-        if (sendPhase == "ready" && w < MIN_WEIGHT_TO_SEND_G) {
+        // After a completed session ("ready" or "done"), don't start scanning
+        // until the scale has actually been seen empty (< MIN_WEIGHT_TO_SEND_G).
+        // This is what stops the removal descent from opening a ghost session:
+        // mid-removal the weight can sit above the scan threshold with a flat
+        // slope for a beat, and the badge flashed "Weighing..." on the way to 0.
+        if ((sendPhase == "ready" || sendPhase == "done") && w < MIN_WEIGHT_TO_SEND_G) {
             gReadyWasZero = true;   // scale is now truly empty — next weight rise = new spool
         }
 
@@ -9939,7 +10660,7 @@ void handleWeighWorkflow(float w) {
             && !rfidLockedForCurrentLoad
             && !autoTarePending
             && !removingNow
-            && (sendPhase != "ready" || gReadyWasZero)) {  // gate: wait for empty scale after "ready"
+            && ((sendPhase != "ready" && sendPhase != "done") || gReadyWasZero)) {  // gate: empty scale first after a completed session
             wfPhase            = WF_SCANNING;
             wfScanStartMs      = now;
             wfWeightPresentSinceMs = 0;
@@ -9997,6 +10718,10 @@ void handleWeighWorkflow(float w) {
         if (spoolRemoved) {
             float slopeAtReset = wfCurrentSlope;   // capture BEFORE resetSlopeBuffer clears it
             float peakAtReset  = wfPeakWeight;     // capture BEFORE clearing
+            // A session that had identified its spool and dies here was
+            // silent: the weight was never sent and nothing said so. Captured
+            // before the UID reset below wipes the evidence.
+            bool hadUid = (lastUID.length() > 0 || lastUID2.length() > 0);
             stopServoSearch();
             wfPhase = WF_IDLE; sendPhase = "idle"; sendCountdown = -1;
             gLastManufacturer = "--"; gLastMaterial = "--"; gLastColor = "--";
@@ -10023,6 +10748,12 @@ void handleWeighWorkflow(float w) {
             gContainerFetchPending = false; gContainerFetchDone = false;
             gContainerBFetchUID = ""; gContainerBFetchResult = 0.0f; gContainerBFetchDone = false;
             gCloudSendPending      = false; gCloudSendDone      = false;
+            // "Cancelled — not sent" for 2 s (decays via the SUCCESS/ERROR
+            // hold in loop()), but only when a spool had actually been
+            // identified — an anonymous object lifted mid-scan just goes
+            // back to Ready.
+            currentOledState = hadUid ? OLED_STATE_CANCELLED : OLED_STATE_IDLE;
+            oledStateChangeMs = now;
             netLog("WF ?IDLE FULL (slope=" + String(slopeAtReset,1)
                    + " w=" + String(w,1) + "g peak=" + String(peakAtReset,1)
                    + "g drop=" + String(dropFromPeak,1) + "g)");
@@ -10106,6 +10837,15 @@ void handleWeighWorkflow(float w) {
             if (lastUID.length() == 0) {
                 wfPhase = WF_IDLE; sendPhase = "idle"; sendCountdown = -1;
                 wfRescanBlockedUntilMs = now + NO_UID_RESCAN_COOLDOWN_MS;
+                // Something is on the platform and the scan found no tag: say
+                // so. The badge used to stay "Ready" forever here, which told
+                // an owner of an untagged spool nothing at all. Held until the
+                // weight leaves (decay in loop()); a later rescan repaints
+                // "Weighing..." honestly.
+                if (w >= MIN_WEIGHT_TO_SEND_G) {
+                    currentOledState = OLED_STATE_NO_TAG;
+                    oledStateChangeMs = now;
+                }
                 netLog("WF SCANNING?IDLE (no UID)");
                 pushSessionEvent("scan_timeout", "no uid", w);
             } else {
@@ -10168,6 +10908,33 @@ void handleWeighWorkflow(float w) {
     if (wfPhase == WF_SENDING) {
         // First entry: kick off the cloud task
         if (!gCloudSendPending && !gCloudSendDone) {
+            // A gross weight clearly below the spool's own container weight
+            // is not a measurement, it is a contradiction — wrong spool on
+            // the platform, spool swapped mid-session, or a drifted tare —
+            // and sending it would write a negative net into the account.
+            // Abort instead: red "Weighing error" badge, no cloud write, and
+            // the session locks like any completed one until the platform is
+            // seen empty. 5 g of tolerance so a genuinely empty spool (net
+            // ~0) still sends its honest zero. Only guards when the container
+            // is actually known — a failed fetch reports 0 and skips this.
+            if (wfContainerFetched && wfContainerWeight > 0.0f
+                && w < wfContainerWeight - 5.0f) {
+                netLog("WF SEND ABORT raw=" + String(w,1) + "g < container="
+                       + String(wfContainerWeight,1) + "g (negative net)");
+                pushSessionEvent("send_abort", "gross below container, not sent", w);
+                gLastMeasurementSentAtMs = now;
+                gLastMeasurementSentWeight = w;
+                gLastMeasurementSentUid1 = lastUID;
+                gLastMeasurementSentUid2 = lastUID2;
+                gLastMeasurementSentStatus = "aborted_negative_net";
+                currentOledState  = OLED_STATE_WEIGH_ERROR;
+                oledStateChangeMs = millis();
+                sendPhase = "error"; sendPhaseLastChangeMs = millis(); sendCountdown = -1;
+                wfPhase = WF_DONE;
+                resetSlopeBuffer();
+                netLog("WF ?DONE (weigh error, session locked until spool removed)");
+                return;
+            }
             wfSendingStartMs = millis();
             gCloudSendWeight = w;
             sendPhase = "send"; sendCountdown = 0;
@@ -10227,6 +10994,7 @@ void handleWeighWorkflow(float w) {
             resetAfterSuccessfulSend(wInt);
             gLastNetValid = false;
             sendPhase = "success"; sendPhaseLastChangeMs = millis(); sendCountdown = -1;
+            gLastCloudSendOkMs = millis();
         } else {
             netLog("WF SEND FAIL uid=" + lastUID);
             gLastMeasurementSentAtMs = now;
@@ -10393,13 +11161,17 @@ float readWeight() {
     const uint32_t HX711_OFFLINE_HOLD_MS = 600;
 
     if (!scale.is_ready()) {
+        // No warning here below the offline hold: a 10 Hz HX711 is "not
+        // ready" ~90% of the time between samples, so logging on the raw
+        // test printed a scary "[HX711] not ready" every 2 s on a scale
+        // that was weighing perfectly. Only a streak past the hold is news.
         if (gHx711NotReadySinceMs == 0) gHx711NotReadySinceMs = millis();
         gHx711Online = false;
-        if (millis() - lastHxWarnMs >= 2000) {
-            lastHxWarnMs = millis();
-            Serial.println("[HX711] not ready");
-        }
         if ((millis() - gHx711NotReadySinceMs) >= HX711_OFFLINE_HOLD_MS) {
+            if (millis() - lastHxWarnMs >= 2000) {
+                lastHxWarnMs = millis();
+                Serial.println("[HX711] not ready");
+            }
             currentWeight = 0.0f;
             gLastDisplayedWeight = 0.0f;
             gEmaWeight = 0.0f;
@@ -10657,89 +11429,6 @@ static bool initPN532Reader(PN532Reader &reader, uint8_t ssPin, uint8_t rstPin, 
 //
 // The platform must be empty. A spool between the antennas blocks the field and
 // fails the test for a reason that has nothing to do with the hardware.
-static bool rfidFieldTest(PN532Reader &tgt, uint8_t tgtSs, uint8_t tgtRst,
-                          const char *tgtLabel, PN532Reader &ini,
-                          uint8_t level, String &detail) {
-    uint8_t id[3];
-    for (int i = 0; i < 3; i++) id[i] = (uint8_t)(esp_random() & 0xFF);
-
-    uint8_t frame[] = {
-        0x8C, 0x00, 0x08, 0x00, id[0], id[1], id[2], 0x60,
-        0x01, 0xfe, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
-        0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7,
-        0xff, 0xff,
-        0xaa, 0x99, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x01, 0x00,
-        0x0d, 0x52, 0x46, 0x49, 0x44, 0x49, 0x4f, 0x74, 0x20, 0x50, 0x4e, 0x35, 0x33, 0x32
-    };
-
-    detail = "";
-    bool ok = false;
-
-    // Put the target in a known state first. Measured: without this the module
-    // does not even acknowledge TgInitAsTarget — the screen showed "no ack" in
-    // both directions, and that happens on the serial link before any RF
-    // exists, so it was never an antenna or a power question. A module that has
-    // just been running passive-target detection will not take the command.
-    initPN532Reader(tgt, tgtSs, tgtRst, tgtLabel);
-
-    // Both antennas at the test step the caller is trying, built here rather
-    // than through applyRfPower() so the self-test is not confined to the
-    // owner's narrow everyday range. Sent through the same raw path the rest of
-    // this function uses, so no new plumbing.
-    if (level >= PN532_RF_TEST_LEVEL_COUNT) level = PN532_RF_TEST_LEVEL_COUNT - 1;
-    const PN532RfLevel &lv = PN532_RF_TEST_LEVELS[level];
-    uint8_t rf[13] = {
-        PN532_COMMAND_RFCONFIGURATION,
-        0x0A,                       // analog settings, 106 kbps type A
-        0x79,                       // RxGain at maximum for the test
-        lv.gsNOn, lv.cwGsP, lv.modGsP,
-        0x4D,
-        (uint8_t)((lv.rxThresholdMinLevel << 4) | 0x5),
-        0x61, 0x6F, 0x26, 0x62, 0x87
-    };
-    delay(20);
-    tgt.sendRawNoReply(rf, sizeof(rf), 500);
-    delay(20);
-    ini.sendRawNoReply(rf, sizeof(rf), 500);
-    delay(20);
-
-    if (!tgt.sendRawNoReply(frame, sizeof(frame), 1000)) {
-        detail = String(tgtLabel) + " no ack";
-    } else {
-        delay(60);   // let the emulation come up before polling it
-        for (int attempt = 0; attempt < 6 && !ok; attempt++) {
-            if (ini.isNewCardPresent() && ini.readCardSerial()) {
-                uint8_t n = ini.uid.size;
-                // A 3-byte NFCID1T is presented as a 4-byte UID whose first byte
-                // marks it randomly generated, so compare the tail, not the whole.
-                if (n >= 3 && ini.uid.uidByte[n-3] == id[0]
-                           && ini.uid.uidByte[n-2] == id[1]
-                           && ini.uid.uidByte[n-1] == id[2]) {
-                    ok = true;
-                } else if (detail.length() == 0) {
-                    detail = "wrong id";
-                }
-            }
-            delay(40);
-        }
-        if (!ok && detail.length() == 0) detail = "no field";
-    }
-
-    // Through netLog, not just Serial: the USB console on this unit stops
-    // producing output after a while and only comes back with a replug, while
-    // GET /api/logs keeps working. A diagnostic you cannot read is not one.
-    netLog("RFTEST " + String(tgtLabel) + " L" + String(level)
-           + " id=" + String(id[0], HEX) + String(id[1], HEX) + String(id[2], HEX)
-           + (ok ? " OK" : " FAIL " + detail));
-
-    // Always restore, pass or fail. A reader left emulating a card stops
-    // reading spools entirely, which would be a far worse bug than the one this
-    // test exists to find — and the power must go back to the owner's setting.
-    initPN532Reader(tgt, tgtSs, tgtRst, tgtLabel);
-    tgt.applyRfPower(gRfidPowerLevel);
-    ini.applyRfPower(gRfidPowerLevel);
-    return ok;
-}
 
 static void rfidSelectReader(uint8_t which) {
     if (FORCE_SINGLE_RFID_STABLE_MODE) {
@@ -11045,6 +11734,7 @@ bool processAutoTare(float weight) {
             resetWeightFilters();
             autoTarePending = false;
             gAutoTareCount++;
+            currentOledState = OLED_STATE_AUTOTARE; oledStateChangeMs = millis();
             servoLockedUntilAutotare = false;  // Unlock servo after auto-tare completes
             autoTareStableSinceMs = 0;
             autoTareStartedMs = 0;              // Reset auto-tare start time
@@ -12327,14 +13017,26 @@ static void lvglFlushCb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *c
 // pre-rotated into the same 480x320 landscape space LVGL expects).
 
 static void lvglTouchCb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
+    static int16_t  lastX = 0, lastY = 0;
+    static uint32_t lastSeenMs = 0;
     int16_t tx, ty;
     if (tsRead(tx, ty)) {
-        data->state   = LV_INDEV_STATE_PRESSED;
-        data->point.x = tx;
-        data->point.y = ty;
+        lastX = tx; lastY = ty; lastSeenMs = millis();
+        data->state = LV_INDEV_STATE_PRESSED;
+    } else if (millis() - lastSeenMs < 60) {
+        // The AXS5106L reports touch events, not a continuous stream: polls
+        // mid-drag can come back empty while the finger is still down. Without
+        // this grace window each gap ended the press, so a drag reached LVGL
+        // as a burst of sub-threshold micro-taps — list rows fired their click
+        // while the finger was scrolling over them, and scrolling itself
+        // barely accumulated. Holding the press across the gaps restores one
+        // continuous drag; a real release only adds ~60 ms of latency.
+        data->state = LV_INDEV_STATE_PRESSED;
     } else {
         data->state = LV_INDEV_STATE_RELEASED;
     }
+    data->point.x = lastX;
+    data->point.y = lastY;
 }
 
 static void lvglInit() {
@@ -12421,7 +13123,9 @@ static void lvglTestScreen() {
 // LVCOL_* palette, lvglReady and lvScreen are declared earlier (near the
 // gfx/panel globals) so bootProgress()/runSettingsMenu() can use them too.
 
-static lv_obj_t *lvTopLeftLabel    = nullptr;
+static lv_obj_t *lvBadgeBox        = nullptr;  // the pill: bg, radius, padding
+static lv_obj_t *lvTopLeftLabel    = nullptr;  // its text
+static lv_obj_t *lvBadgeSpinner    = nullptr;  // its optional in-progress spinner
 static lv_obj_t *lvNameLabel       = nullptr;
 // Pairing badge: a filled blue disc with a chain-link glyph, top-left of the
 // main card. It answers "how many UIDs does this session hold, and how was the
@@ -12492,11 +13196,36 @@ static void lvglBuildMainScreen() {
     lv_obj_clear_flag(lvScreen, LV_OBJ_FLAG_SCROLLABLE);
 
     // ---- Top-left: "Remove material" label / status pill (toggled in update) ----
-    lvTopLeftLabel = lv_label_create(lvScreen);
-    lv_obj_set_style_radius(lvTopLeftLabel, 8, 0);
-    lv_obj_set_style_pad_hor(lvTopLeftLabel, 7, 0);
-    lv_obj_set_style_pad_ver(lvTopLeftLabel, 4, 0);
-    lv_obj_set_pos(lvTopLeftLabel, 8, 8);
+    // The badge is a flex row [spinner][text] so the spinner's spacing is
+    // the layout engine's problem, not hand-tuned padding: a hidden child
+    // takes no room in flex, so text-only states collapse cleanly.
+    lvBadgeBox = lv_obj_create(lvScreen);
+    lv_obj_remove_style_all(lvBadgeBox);
+    lv_obj_set_size(lvBadgeBox, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_radius(lvBadgeBox, 8, 0);
+    lv_obj_set_style_pad_hor(lvBadgeBox, 7, 0);
+    lv_obj_set_style_pad_ver(lvBadgeBox, 4, 0);
+    lv_obj_set_style_pad_column(lvBadgeBox, 6, 0);
+    lv_obj_set_flex_flow(lvBadgeBox, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(lvBadgeBox, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_pos(lvBadgeBox, 8, 8);
+    lv_obj_clear_flag(lvBadgeBox, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(lvBadgeBox, LV_OBJ_FLAG_CLICKABLE);
+
+    // In-progress spinner, ahead of the text (waiting for NFC, weighing,
+    // sending). Motion says "working" faster than any wording.
+    lvBadgeSpinner = lv_spinner_create(lvBadgeBox, 1000, 60);
+    lv_obj_set_size(lvBadgeSpinner, 18, 18);
+    lv_obj_set_style_arc_width(lvBadgeSpinner, 3, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(lvBadgeSpinner, 3, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(lvBadgeSpinner, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(lvBadgeSpinner, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(lvBadgeSpinner, lv_color_white(), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(lvBadgeSpinner, LV_OPA_TRANSP, 0);
+    lv_obj_add_flag(lvBadgeSpinner, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(lvBadgeSpinner, LV_OBJ_FLAG_CLICKABLE);
+
+    lvTopLeftLabel = lv_label_create(lvBadgeBox);
 
     // ---- Top-center: avatar + name, self-centering row ----
     lv_obj_t *topCenterRow = lv_obj_create(lvScreen);
@@ -12617,7 +13346,8 @@ static void lvglBuildMainScreen() {
     lv_obj_set_size(mainCard, 440, CARD_H);
     lv_obj_set_pos(mainCard, 20, CARD_Y);
     lv_obj_set_style_bg_color(mainCard, LVCOL_CARD, 0);
-    lv_obj_set_style_border_width(mainCard, 0, 0);
+    lv_obj_set_style_border_color(mainCard, LVCOL_BORDER, 0);
+    lv_obj_set_style_border_width(mainCard, 1, 0);
     lv_obj_set_style_radius(mainCard, 14, 0);
     lv_obj_clear_flag(mainCard, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -12669,28 +13399,47 @@ static void lvglBuildMainScreen() {
 
     // Brand/material: inline row under the weight (hidden unless a tag is active) --
     // used to be a separate top-right card, moved here per user request.
+    // Two stacked lines, not one: [dot + brand] then the material on its own
+    // full-width line. Sharing a row gave the material 92 px and every real
+    // name ("PLA High Speed") arrived pre-truncated — moved below per user
+    // annotation, where the full 224 px column is available.
     lvBrandCard = lv_obj_create(mainCard);
     lv_obj_remove_style_all(lvBrandCard);
     lv_obj_set_size(lvBrandCard, 224, LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(lvBrandCard, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(lvBrandCard, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(lvBrandCard, 8, 0);
-    lv_obj_set_pos(lvBrandCard, 0, 78);
+    lv_obj_set_flex_flow(lvBrandCard, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(lvBrandCard, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(lvBrandCard, 2, 0);
+    lv_obj_set_pos(lvBrandCard, 0, 72);
     lv_obj_clear_flag(lvBrandCard, LV_OBJ_FLAG_SCROLLABLE);
 
-    lvBrandCircle = lv_obj_create(lvBrandCard);
+    lv_obj_t *brandRow = lv_obj_create(lvBrandCard);
+    lv_obj_remove_style_all(brandRow);
+    lv_obj_set_size(brandRow, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(brandRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(brandRow, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(brandRow, 8, 0);
+    lv_obj_clear_flag(brandRow, LV_OBJ_FLAG_SCROLLABLE);
+
+    lvBrandCircle = lv_obj_create(brandRow);
     lv_obj_set_size(lvBrandCircle, 20, 20);
     lv_obj_set_style_radius(lvBrandCircle, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(lvBrandCircle, 0, 0);
     lv_obj_clear_flag(lvBrandCircle, LV_OBJ_FLAG_SCROLLABLE);
 
-    lvBrandLabel = lv_label_create(lvBrandCard);
+    lvBrandLabel = lv_label_create(brandRow);
     lv_obj_set_style_text_color(lvBrandLabel, LVCOL_TEXT, 0);
     lv_obj_set_style_text_font(lvBrandLabel, &gFont20, 0);
+    // Ellipsis, not amputation: "PLA High Speed" used to become "PLA High S"
+    // via a hard substring(0,10). max_width keeps short names content-sized.
+    lv_label_set_long_mode(lvBrandLabel, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_max_width(lvBrandLabel, 190, 0);
 
     lvMaterialLabel = lv_label_create(lvBrandCard);
     lv_obj_set_style_text_font(lvMaterialLabel, &gFont16, 0);
     lv_obj_set_style_text_color(lvMaterialLabel, LVCOL_MUTED, 0);
+    lv_label_set_long_mode(lvMaterialLabel, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_max_width(lvMaterialLabel, 224, 0);
+    lv_obj_set_style_text_align(lvMaterialLabel, LV_TEXT_ALIGN_CENTER, 0);
 
     lv_obj_t *vdiv = lv_obj_create(mainCard);
     lv_obj_remove_style_all(vdiv);
@@ -12771,6 +13520,9 @@ static void lvglBuildMainScreen() {
     lv_obj_center(tareCol);
     lv_obj_clear_flag(tareCol, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(tareCol, LV_OBJ_FLAG_CLICKABLE);
+    // The static "0.0" is deliberate: it is the zero-button iconography every
+    // kitchen scale uses, not a live readout. (A UI review flagged it as
+    // lying data; rejected — see docs/reviews/2026-08-08-ui-ux-tactile.md.)
     lv_obj_t *tareValueLabel = lv_label_create(tareCol);
     lv_label_set_text(tareValueLabel, "0.0");
     lv_obj_set_style_text_color(tareValueLabel, LVCOL_TEXT, 0);
@@ -12831,18 +13583,42 @@ static void lvglUpdateMainScreen(float weight, const String& uid, OledState stat
     bool tagActive = (lastUIDLeft.length() > 0 || lastUIDRight.length() > 0)
                   || (wfPhase == WF_DONE && gLastManufacturer.length() > 0 && gLastManufacturer != "--");
 
+    // Session outcomes outrank "remove material": SENDING/SYNCED/ERROR were
+    // unreachable before — a read UID forced the orange label the instant it
+    // existed, so the user never saw the send confirmed (or fail). The states
+    // existed; this is what lets them be seen.
+    bool sessionStatus = (state == OLED_STATE_SENDING || state == OLED_STATE_SUCCESS ||
+                          state == OLED_STATE_ERROR   || state == OLED_STATE_CANCELLED ||
+                          state == OLED_STATE_WEIGH_ERROR);
+
     // ---- Top-left: remove-material label vs. status pill ----
-    if (tagActive) {
-        lv_obj_set_style_bg_opa(lvTopLeftLabel, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(lvTopLeftLabel, LVCOL_ORANGE, 0);
+    bool spin = false;   // spinner ahead of the badge text on "in progress" states
+    // "Remove" is the session's LAST word, never its first: it appears only
+    // once the weight is sent and "Synced!" has had its 2 s (wfPhase reaches
+    // WF_DONE). A read UID alone used to flip it on mid-weighing — telling
+    // the user to remove a spool the scale was still measuring.
+    if (tagActive && wfPhase == WF_DONE && !sessionStatus) {
+        lv_obj_set_style_bg_opa(lvBadgeBox, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(lvBadgeBox, LVCOL_ORANGE, 0);
         lv_obj_set_style_text_color(lvTopLeftLabel, LVCOL_TEXT, 0);
         lv_label_set_text(lvTopLeftLabel, t(I18N_REMOVE_MATERIAL));
     } else {
+        spin = (state == OLED_STATE_WEIGHING || state == OLED_STATE_UID_DETECTED ||
+                state == OLED_STATE_SENDING  || state == OLED_STATE_NO_TAG);
         const char *statusLbl;
         lv_color_t statusBg, statusFg;
+        // With no account, the weigh workflow never starts (the IDLE→SCANNING
+        // transition requires firebaseAuth), so the resting badge must say WHY
+        // rather than promising a "Ready" it cannot honour. Blue "connecting"
+        // covers the few seconds a saved account takes to sign back in at
+        // boot — same tri-state as the Settings account row.
+        bool accountPending = (!firebaseAuth && firebaseRefreshToken.length() > 0);
         switch (state) {
             case OLED_STATE_IDLE:
-                statusLbl = t(I18N_READY);   statusBg = LVCOL_GREEN; statusFg = LVCOL_TEXT; break;
+                if (firebaseAuth)          { statusLbl = t(I18N_READY);           statusBg = LVCOL_GREEN;  }
+                else if (accountPending)   { statusLbl = t(I18N_WIFI_CONNECTING); statusBg = LVCOL_ACCENT; }
+                else                       { statusLbl = t(I18N_NO_ACCOUNT);      statusBg = LVCOL_RED;    }
+                statusFg = LVCOL_TEXT; break;
             case OLED_STATE_WEIGHING:
             case OLED_STATE_UID_DETECTED:
                 statusLbl = t(I18N_WEIGHING); statusBg = LVCOL_ACCENT; statusFg = LVCOL_TEXT; break;
@@ -12852,13 +13628,28 @@ static void lvglUpdateMainScreen(float weight, const String& uid, OledState stat
                 statusLbl = t(I18N_SYNCED);  statusBg = LVCOL_GREEN; statusFg = LVCOL_TEXT; break;
             case OLED_STATE_ERROR:
                 statusLbl = t(I18N_ERROR);   statusBg = LVCOL_RED;   statusFg = LVCOL_TEXT; break;
+            case OLED_STATE_NO_TAG:
+                statusLbl = t(I18N_NO_TAG_DETECTED); statusBg = LVCOL_ORANGE; statusFg = LVCOL_TEXT; break;
+            case OLED_STATE_CANCELLED:
+                statusLbl = t(I18N_WEIGH_CANCELLED); statusBg = LVCOL_ORANGE; statusFg = LVCOL_TEXT; break;
+            case OLED_STATE_WEIGH_ERROR:
+                statusLbl = t(I18N_WEIGH_ERROR); statusBg = LVCOL_RED; statusFg = LVCOL_TEXT; break;
+            case OLED_STATE_AUTOTARE:
+                statusLbl = t(I18N_AUTO_TARE); statusBg = LVCOL_ACCENT; statusFg = LVCOL_TEXT; break;
             default:
-                statusLbl = t(I18N_READY);   statusBg = LVCOL_GREEN; statusFg = LVCOL_TEXT;
+                if (firebaseAuth)          { statusLbl = t(I18N_READY);           statusBg = LVCOL_GREEN;  }
+                else if (accountPending)   { statusLbl = t(I18N_WIFI_CONNECTING); statusBg = LVCOL_ACCENT; }
+                else                       { statusLbl = t(I18N_NO_ACCOUNT);      statusBg = LVCOL_RED;    }
+                statusFg = LVCOL_TEXT;
         }
-        lv_obj_set_style_bg_opa(lvTopLeftLabel, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(lvTopLeftLabel, statusBg, 0);
+        lv_obj_set_style_bg_opa(lvBadgeBox, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(lvBadgeBox, statusBg, 0);
         lv_obj_set_style_text_color(lvTopLeftLabel, statusFg, 0);
         lv_label_set_text(lvTopLeftLabel, statusLbl);
+    }
+    if (lvBadgeSpinner) {
+        if (spin) lv_obj_clear_flag(lvBadgeSpinner, LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_add_flag(lvBadgeSpinner, LV_OBJ_FLAG_HIDDEN);
     }
 
     // ---- Pairing badge ----
@@ -12909,10 +13700,8 @@ static void lvglUpdateMainScreen(float weight, const String& uid, OledState stat
             circleColor = (uint32_t)strtol(gLastColor.substring(hi + 1, hi + 7).c_str(), nullptr, 16);
         }
         lv_obj_set_style_bg_color(lvBrandCircle, lv_color_hex(circleColor), 0);
-        String brandStr = gLastManufacturer.length() > 10 ? gLastManufacturer.substring(0, 10) : gLastManufacturer;
-        String matStr   = gLastMaterial.length() > 10 ? gLastMaterial.substring(0, 10) : gLastMaterial;
-        lv_label_set_text(lvBrandLabel, brandStr.c_str());
-        lv_label_set_text(lvMaterialLabel, matStr.c_str());
+        lv_label_set_text(lvBrandLabel, gLastManufacturer.c_str());
+        lv_label_set_text(lvMaterialLabel, gLastMaterial.c_str());
     } else {
         lv_obj_add_flag(lvBrandCard, LV_OBJ_FLAG_HIDDEN);
     }
@@ -12990,7 +13779,10 @@ static void lvglUpdateMainScreen(float weight, const String& uid, OledState stat
     }
     lv_obj_set_style_text_color(lvWifiLabel, wifiConnected ? LVCOL_GREEN : LVCOL_RED, 0);
     {
-        lv_color_t cloudCol = firebaseAuth ? LVCOL_GREEN : LVCOL_RED;
+        // Blue while a saved account is still signing in: red there used to
+        // claim "no account" through every boot's first seconds.
+        lv_color_t cloudCol = firebaseAuth ? LVCOL_GREEN
+                            : (firebaseRefreshToken.length() > 0 ? LVCOL_ACCENT : LVCOL_RED);
         lv_obj_set_style_bg_color(lvCloudDome1, cloudCol, 0);
         lv_obj_set_style_bg_color(lvCloudDome2, cloudCol, 0);
         lv_obj_set_style_bg_color(lvCloudBase, cloudCol, 0);
@@ -13079,9 +13871,13 @@ static void lvglUpdateMainScreen(float weight, const String& uid, OledState stat
 // Pausing is cheap — the remote screen freezes for a moment — so the floor sits
 // high and is crossed often and harmlessly. Hanging up is the expensive one, so
 // its threshold sits well clear of the floor.
-#define LIVE_HEAP_HARD    26000
-#define LIVE_HEAP_FLOOR   40000
-#define LIVE_HEAP_RESUME  52000
+// Raised (2026-08-09) so viewers hang up BEFORE TLS becomes impossible:
+// mbedTLS wants ~33 KB of contiguous heap, and "pause capture" keeps the
+// viewers' sockets and buffers alive — pausing alone left largest-block at
+// 31.7 KB and every cloud call (pairing, profile, sends) failing silently.
+#define LIVE_HEAP_HARD    44000
+#define LIVE_HEAP_FLOOR   56000
+#define LIVE_HEAP_RESUME  66000
 // After hanging up, wait for the heap to stay healthy for this long before
 // listening again. Without it the feature reconnects the instant it recovers,
 // takes its memory back, crosses the floor again and hangs up — measured as a
@@ -13485,6 +14281,19 @@ static bool liveHandleRequest(int fd) {
         liveSend(fd, LIVE_204, strlen(LIVE_204));
         return true;
     }
+    // Pretty entry: the six-character code as the path — /J6fxda — which is
+    // what the LAN screen prints. The page itself is served here (no redirect
+    // hop, the URL stays as typed); its JS reads the code from the path. The
+    // path never leaves the device, so alnum-checking is just tidiness.
+    if (strlen(path) == 7 && path[0] == '/') {
+        bool clean = true;
+        for (int i = 1; i < 7 && clean; i++) clean = isalnum((unsigned char)path[i]);
+        if (clean) {
+            bool ok = liveServePage(fd);
+            if (!ok) { close(fd); return false; }
+            return true;
+        }
+    }
     liveSend(fd, LIVE_404, strlen(LIVE_404));
     return true;
 }
@@ -13659,7 +14468,7 @@ static bool liveStartListening() {
 static void liveTask(void *) {
     uint32_t seen = 0, lastSweep = 0, lastPing = 0;
     for (;;) {
-        bool want = gLanLiveView && wifiConnected && gDisplayReady;
+        bool want = gLanLiveView && wifiConnected && gDisplayReady && !gLivePaused;
 
         // Yield rather than starve the rest of the firmware. The scale is a
         // scale first; this is a bench tool. See the threshold comments above
@@ -13858,8 +14667,8 @@ void setup() {
     Serial.printf("[BOOT] reset reason=%d\n", (int)esp_reset_reason());
     if (LED_PIN >= 0) pinMode(LED_PIN, OUTPUT);
     #if !RFID_DIAG_DISABLE_DISPLAY_STACK
-    pinMode(LCD_BL, OUTPUT);
-    digitalWrite(LCD_BL, LOW); // backlight off until display init confirmed OK
+    ledcAttach(LCD_BL, 5000, 8);   // PWM instead of on/off: dimmable backlight
+    ledcWrite(LCD_BL, 0);          // dark until display init confirmed OK
     #endif
 
     prefs.begin("config", true);
@@ -13869,8 +14678,13 @@ void setup() {
     firebaseRefreshToken = prefs.getString("fbRefresh",     "");
     firebaseUid          = prefs.getString("fbUid",         "");
     calibrationFactor    = prefs.getFloat("calFactor", calibrationFactor);
+    // No "language" key = factory-fresh NVS = the boot right after a
+    // web-installer flash (its merged image wipes NVS; OTA and normal
+    // reflashes keep it). That is the trigger for the first-boot flow.
+    gFirstRunPending     = !prefs.isKey("language");
     gLanguage            = (Language)prefs.getUChar("language", LANG_EN);
     gVolume              = prefs.getUChar("volume",     50);
+    gBrightness          = prefs.getUChar("brightness", 100);
     gMute                = prefs.getBool ("mute",       false);
     gSoundTheme          = prefs.getUChar("soundTheme", 0);
     servoEnabled         = prefs.getBool("servoEnabled",   false);
@@ -13919,7 +14733,7 @@ void setup() {
     } else {
         gDisplayReady = true;
         // Canvas handles rotation — no setRotation() needed here
-        digitalWrite(LCD_BL, HIGH); // backlight on now that display is ready
+        applyBrightness(gBrightness); // backlight on, at the saved brightness
         Serial.printf("[LCD] begin OK w=%d h=%d\n", gfx->width(), gfx->height());
         setupTouchI2C();  // AXS5106L on Wire1 (SDA=8, SCL=7, addr=0x3B)
         _touchI2CReady = true;
@@ -14013,6 +14827,41 @@ void loop() {
     return;
 #endif
     if (lvglReady) lv_timer_handler();
+    if (gFirstRunPending) {
+        // Factory-fresh device (web-installer flash): walk the owner through
+        // language → WiFi → account before anything else, iPhone-style.
+        gFirstRunPending = false;
+        runFirstBootOnboarding();
+        if (lvScreen) lv_obj_invalidate(lvScreen);
+    }
+    {
+        // First-calibration reminder: a never-calibrated scale weighs
+        // garbage. The sentinel is the calFactor NVS key — written by the
+        // wizard and by /api/calibration, erased by the factory reset. Ask
+        // once the main screen is up, then every 5 minutes until a
+        // calibration lands; never during an active weigh session.
+        static bool     sCalDone     = false;
+        static uint32_t sCalPromptAt = 0;       // armed 2 s after Home first shows
+        if (!sCalDone && gBootComplete && sCalPromptAt == 0)
+            sCalPromptAt = millis() + 2000;
+        if (!sCalDone && gBootComplete && wfPhase == WF_IDLE && sCalPromptAt != 0
+            && millis() >= sCalPromptAt
+            && lvScreen != nullptr && lv_scr_act() == lvScreen) {
+            prefs.begin("config", true);
+            sCalDone = prefs.isKey("calFactor");
+            prefs.end();
+            if (!sCalDone) {
+                if (obPrompt(OB_ICON_CAL, t(I18N_CAL_PROMPT_Q), t(I18N_CAL_PROMPT_SUB), t(I18N_CALIBRATE), true)) {
+                    runCalibrationWizard();
+                    prefs.begin("config", true);
+                    sCalDone = prefs.isKey("calFactor");
+                    prefs.end();
+                }
+                if (lvScreen) lv_obj_invalidate(lvScreen);
+            }
+            sCalPromptAt = millis() + 300000UL;
+        }
+    }
     if (gSettingsRequested) {
         gSettingsRequested = false;
         runSettingsMenu();
@@ -14044,6 +14893,17 @@ void loop() {
         gWebServerStarting = true;
         Serial.println("[HTTP] Starting server from main loop");
         startWebServerNow();
+    }
+
+    // The boot deferrals are ceilings, not targets: they exist so a struggling
+    // boot never fights TLS for heap, not to make a healthy one wait. The
+    // moment WiFi has an IP, pull both gates close — a saved account then
+    // signs in right behind the connection instead of half a minute later.
+    static bool gBootGatesPulled = false;
+    if (!gBootGatesPulled && WiFi.isConnected()) {
+        gBootGatesPulled = true;
+        if (gCloudBootReadyAtMs    > millis() + 1000) gCloudBootReadyAtMs    = millis() + 1000;
+        if (gFirebaseBootReadyAtMs > millis() + 3000) gFirebaseBootReadyAtMs = millis() + 3000;
     }
 
     if (ENABLE_BACKGROUND_TASKS && !gBackgroundTasksStarted && millis() >= gCloudBootReadyAtMs) {
@@ -14133,8 +14993,12 @@ void loop() {
         // Renew the idToken every 30 minutes in the background so it is never
         // stale. ensureFirebaseToken() is a no-op if the token is still fresh.
         static uint32_t lastTokenRenew = 0;
+        // Signed in: renew every 30 min. NOT signed in: retry every 30 s —
+        // one failed first attempt used to leave the account disconnected
+        // until the next half-hour tick.
         if (WiFi.isConnected() && isFirebaseConfigured()
-            && (lastTokenRenew == 0 || (millis() - lastTokenRenew) > 1800000UL)) {
+            && (lastTokenRenew == 0
+                || (millis() - lastTokenRenew) > (firebaseAuth ? 1800000UL : 30000UL))) {
             bool firstBoot = (lastTokenRenew == 0);
             lastTokenRenew = millis();
             gTokenRenewPending   = true;
@@ -14602,7 +15466,12 @@ void loop() {
     // handler for genuine negative drift now -- it already requires far
     // longer sustained negative readings than any placement/removal
     // transient produces.
-    if (weight < 0.0f) weight = 0.0f;
+    // No negative clamp: the display shows the real reading, sign included.
+    // The clamp that used to sit here had two costs — it hid genuine tare
+    // drift from the user (who saw a scale "stuck at 0"), and, sitting above
+    // the negative-drift auto-tare block below, it made that block dead code
+    // (weight could never test < 0). The drift handler announces itself on
+    // screen now, so a negative readout is visible, explained, and short-lived.
 
     if (!isolateSingleRfidRead) {
         // Auto-tare logic:
@@ -14657,6 +15526,7 @@ void loop() {
                 resetWeightFilters();
                 lastNegTareMs    = millis();
                 negWeightSinceMs = 0;
+                currentOledState = OLED_STATE_AUTOTARE; oledStateChangeMs = millis();
                 netLog("AUTOTARE neg-drift=" + String(weight, 1) + "g corrected");
                 Serial.printf("[AUTOTARE] Negative drift %.2fg corrected\n", weight);
             }
@@ -14754,6 +15624,23 @@ void loop() {
         if (sendPhase == "countdown" && currentOledState != OLED_STATE_SENDING) {
             currentOledState = OLED_STATE_SENDING; oledStateChangeMs = now;
         }
+        // The badge says "Weighing..." from the moment a session opens — the
+        // 4-6 s where it used to sit on "Ready" were the workflow's biggest
+        // silence. Only an upgrade from IDLE: UID_DETECTED and later states
+        // must not be stomped.
+        if ((sendPhase == "scanning" || sendPhase == "stabilizing") &&
+            currentOledState == OLED_STATE_IDLE) {
+            currentOledState = OLED_STATE_WEIGHING; oledStateChangeMs = now;
+        }
+        if (currentOledState == OLED_STATE_WEIGHING &&
+            !(sendPhase == "scanning" || sendPhase == "stabilizing" ||
+              sendPhase == "countdown" || sendPhase == "send")) {
+            currentOledState = OLED_STATE_IDLE;
+        }
+        // "No TigerTag" holds as long as the item sits there; it leaves with it.
+        if (currentOledState == OLED_STATE_NO_TAG && fabs(weight) < MIN_WEIGHT_TO_SEND_G) {
+            currentOledState = OLED_STATE_IDLE;
+        }
         bool keepInfoOnScreen = (fabs(weight) >= MIN_WEIGHT_TO_SEND_G) &&
                                 (lastUID.length() > 0 || gLastManufacturer != "--" || gLastMaterial != "--" || gLastColor != "--" || gLastRackPosition.length() > 0);
 
@@ -14769,12 +15656,22 @@ void loop() {
         if (!keepInfoOnScreen &&
             (currentOledState == OLED_STATE_UID_DETECTED ||
              currentOledState == OLED_STATE_SUCCESS ||
-             currentOledState == OLED_STATE_ERROR) &&
+             currentOledState == OLED_STATE_ERROR ||
+             currentOledState == OLED_STATE_CANCELLED ||
+             currentOledState == OLED_STATE_WEIGH_ERROR ||
+             currentOledState == OLED_STATE_AUTOTARE) &&
             holdExpired) {
             currentOledState = (sendPhase == "countdown") ? OLED_STATE_SENDING : OLED_STATE_IDLE;
         }
         if (sendPhase == "send" && currentOledState != OLED_STATE_SENDING) {
             currentOledState = OLED_STATE_SENDING; oledStateChangeMs = now;
+        }
+        // SUCCESS hands over to "remove" after its 2 s even while the spool
+        // (and its info) is still on the scale — the generic hold above only
+        // decays once the screen has nothing left worth keeping.
+        if (currentOledState == OLED_STATE_SUCCESS &&
+            (now - oledStateChangeMs > OLED_MESSAGE_DURATION_MS)) {
+            currentOledState = OLED_STATE_IDLE;
         }
 
         // Screensaver: activates after 5 minutes of inactivity

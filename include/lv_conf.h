@@ -75,10 +75,21 @@
  *====================*/
 
 /*Default display refresh period. LVG will redraw changed areas with this period time*/
-#define LV_DISP_DEF_REFR_PERIOD 30      /*[ms]*/
+/* 16 ms, not the stock 30: the Settings list scrolls under the finger, and at
+ * 33 fps a drag visibly stutters. LVGL only redraws when something is dirty,
+ * so an idle weigh screen costs the same as before. */
+#define LV_DISP_DEF_REFR_PERIOD 16      /*[ms]*/
 
 /*Input device read period in milliseconds*/
-#define LV_INDEV_DEF_READ_PERIOD 30     /*[ms]*/
+/* 10 ms: a scroll drag is only as smooth as the touch samples feeding it —
+ * at 30 ms the finger position updates behind the redraws it drives. */
+#define LV_INDEV_DEF_READ_PERIOD 10     /*[ms]*/
+
+/* 6 px, not the stock 10: how far a press may travel before LVGL calls it a
+ * scroll instead of a click. On this panel a finger drag was reaching the
+ * click path (see lvglTouchCb's grace window) — engaging the scroll sooner
+ * makes list rows harder to fire by accident while swiping. */
+#define LV_INDEV_DEF_SCROLL_LIMIT 6     /*[px]*/
 
 /*Use a custom tick source that tells the elapsed time in milliseconds.
  *It removes the need to manually update the tick with `lv_tick_inc()`)*/

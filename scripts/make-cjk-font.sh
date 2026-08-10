@@ -36,6 +36,18 @@ cd "$ROOT"
 WORK="${TMPDIR:-/tmp}/tigerscale-cjk"
 OTF="$WORK/NotoSansSC-Medium.otf"
 FONT_URL="https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/SubsetOTF/SC/NotoSansSC-Medium.otf"
+# FontAwesome Free (fonts are SIL OFL 1.1) supplies the handful of icon glyphs
+# LVGL's built-in symbol set lacks — the padlock (U+F023) the WiFi picker
+# shows on encrypted networks, and the sun (U+F185) on the brightness row. Same subset principle: only the
+# glyphs named in FA_RANGE ride along, a few hundred bytes each.
+FA="$WORK/fa-solid-900.ttf"
+FA_URL="https://github.com/FortAwesome/Font-Awesome/raw/6.5.2/webfonts/fa-solid-900.ttf"
+FA_RANGE="0xF023,0xF185"
+# Brands live in their own FontAwesome file — the Google G (U+F1A0) for the
+# sign-in button. Same pin, same license terms.
+FAB="$WORK/fa-brands-400.ttf"
+FAB_URL="https://github.com/FortAwesome/Font-Awesome/raw/6.5.2/webfonts/fa-brands-400.ttf"
+FAB_RANGE="0xF1A0"
 
 command -v npx >/dev/null || { echo "npx not found — Node.js is required" >&2; exit 1; }
 
@@ -53,6 +65,14 @@ if [ ! -f "$OTF" ]; then
   echo "==> fetching Noto Sans SC Medium"
   curl -sL --fail --retry 3 -o "$OTF" "$FONT_URL"
 fi
+if [ ! -f "$FA" ]; then
+  echo "==> fetching FontAwesome Free Solid"
+  curl -sL --fail --retry 3 -o "$FA" "$FA_URL"
+fi
+if [ ! -f "$FAB" ]; then
+  echo "==> fetching FontAwesome Free Brands"
+  curl -sL --fail --retry 3 -o "$FAB" "$FAB_URL"
+fi
 
 echo "==> collecting the characters the firmware actually uses"
 CHARS=$("$PY" scripts/cjk-chars.py)
@@ -61,6 +81,8 @@ for SZ in 14 16 20; do
   OUT="TigerTagSplashESP32/font_cjk_$SZ.c"
   npx --yes lv_font_conv \
       --font "$OTF" --symbols "$CHARS" \
+      --font "$FA" -r "$FA_RANGE" \
+      --font "$FAB" -r "$FAB_RANGE" \
       --size "$SZ" --bpp 4 --format lvgl --no-compress \
       --lv-include lvgl.h -o "$OUT"
   echo "    $OUT"

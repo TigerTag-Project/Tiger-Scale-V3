@@ -39,7 +39,8 @@ straightforward. This is a pointer, not legal advice.
 | Brand logos in `data/www/img/` | Trademarks of their respective owners (eSun, SUNLU, Rosa3D, Landu, Jamghe, R3D), included for identification of the material a tag describes. Not an endorsement, in either direction. |
 | Fonts | Montserrat, bundled inside LVGL under the SIL Open Font License 1.1 |
 | Chinese glyphs | `TigerTagSplashESP32/font_cjk_*.c`, generated from [Noto Sans SC](https://github.com/notofonts/noto-cjk) Medium (static weight, release tag `Sans2.004`) under the SIL Open Font License 1.1. Only the characters our own translations use are included, not the face. Regenerate with `bash scripts/make-cjk-font.sh`; `scripts/check-cjk-font.py` verifies coverage. |
-| `lv_font_conv` | MIT. Used at build time to produce the file above; fetched on demand, never committed. |
+| Icon glyphs | A handful of [FontAwesome Free](https://fontawesome.com) glyphs ride inside `font_cjk_*.c` — Solid (padlock U+F023, sun U+F185) and Brands (Google G, U+F1A0); the FA font files are SIL Open Font License 1.1, the icons CC BY 4.0. The Google G identifies Google's own sign-in, not an endorsement. Fetched at generation time (release `6.5.2`), never committed. |
+| `lv_font_conv` | MIT. Used at build time to produce the files above; fetched on demand, never committed. |
 
 ## Vendor documentation
 

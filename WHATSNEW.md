@@ -3,6 +3,13 @@
 The short version of every release, newest first — one scroll, no jargon.
 The full story for each version lives in [docs/release-notes/](docs/release-notes/).
 
+## v3.4.0 — updates you can trust at a glance
+
+The Update screen now shows what you run, what is waiting (amber banner,
+big blue Install), and promises out loud that WiFi, account and calibration
+survive the ride. Settings even flags a waiting update from the list —
+orange icon, "3.3.1 > 3.4.0". [Full notes](docs/release-notes/v3.4.0.md)
+
 ## v3.3.0 — the scale makes the first move
 
 No account linked? The scale now asks — a panel slides in with a single

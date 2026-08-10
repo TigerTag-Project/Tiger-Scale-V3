@@ -389,7 +389,7 @@ const char* TIGERTAG_FIREBASE_WEB_API_KEY = "AIzaSyCkxPTs_Cv0KVLqsZj-UKWWqIY0Otf
 
 // Embedded build identity — exposed via /api/status and the heartbeat so the
 // app/Studio can compare against the latest published version.json.
-#define TIGERSCALE_FW_VERSION  "3.1.3"
+#define TIGERSCALE_FW_VERSION  "3.2.0"
 #ifndef TIGERSCALE_GIT_SHA
 #define TIGERSCALE_GIT_SHA     "dev"
 #endif

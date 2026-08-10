@@ -174,6 +174,12 @@ enum LangKey : uint8_t {
     I18N_MAX_G,
     I18N_ACC_PROMPT_Q,
     I18N_ACC_CONNECT,
+    I18N_OTA_INSTALLED_VER,
+    I18N_OTA_LATEST_VER,
+    I18N_OTA_NEW_VER,
+    I18N_OTA_UPTODATE_LONG,
+    I18N_OTA_CHECK_FAILED,
+    I18N_OTA_KEEPS,
     I18N_COUNT,
 };
 
@@ -328,6 +334,12 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* MAX_G          */ "max. %d g",
           /* ACC_PROMPT_Q   */ "Connect your account",
           /* ACC_CONNECT    */ "Sign in",
+          /* OTA_INSTALLED_VER */ "Installed version",
+          /* OTA_LATEST_VER    */ "Latest version",
+          /* OTA_NEW_VER       */ "New version",
+          /* OTA_UPTODATE_LONG */ "Your TigerScale is up to date",
+          /* OTA_CHECK_FAILED  */ "Could not check for updates",
+          /* OTA_KEEPS         */ "WiFi, account and calibration are kept",
     },
     // PT (Brazilian Portuguese — Studio's "pt")
     {
@@ -476,6 +488,12 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* MAX_G          */ "max. %d g",
           /* ACC_PROMPT_Q   */ "Conecte sua conta",
           /* ACC_CONNECT    */ "Conectar",
+          /* OTA_INSTALLED_VER */ "Versao instalada",
+          /* OTA_LATEST_VER    */ "Ultima versao",
+          /* OTA_NEW_VER       */ "Nova versao",
+          /* OTA_UPTODATE_LONG */ "Sua TigerScale esta atualizada",
+          /* OTA_CHECK_FAILED  */ "Nao foi possivel verificar",
+          /* OTA_KEEPS         */ "WiFi, conta e calibracao sao mantidos",
     },
     // FR
     {
@@ -624,6 +642,12 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* MAX_G          */ "max. %d g",
           /* ACC_PROMPT_Q   */ "Connectez votre compte",
           /* ACC_CONNECT    */ "Connexion",
+          /* OTA_INSTALLED_VER */ "Version installee",
+          /* OTA_LATEST_VER    */ "Derniere version",
+          /* OTA_NEW_VER       */ "Nouvelle version",
+          /* OTA_UPTODATE_LONG */ "Votre TigerScale est a jour",
+          /* OTA_CHECK_FAILED  */ "Verification impossible",
+          /* OTA_KEEPS         */ "WiFi, compte et calibration sont conserves",
     },
     // ES
     {
@@ -772,6 +796,12 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* MAX_G          */ "max. %d g",
           /* ACC_PROMPT_Q   */ "Conecte su cuenta",
           /* ACC_CONNECT    */ "Conectar",
+          /* OTA_INSTALLED_VER */ "Version instalada",
+          /* OTA_LATEST_VER    */ "Ultima version",
+          /* OTA_NEW_VER       */ "Nueva version",
+          /* OTA_UPTODATE_LONG */ "Su TigerScale esta actualizada",
+          /* OTA_CHECK_FAILED  */ "No se pudo comprobar",
+          /* OTA_KEEPS         */ "WiFi, cuenta y calibracion se conservan",
     },
     // DE
     {
@@ -920,6 +950,12 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* MAX_G          */ "max. %d g",
           /* ACC_PROMPT_Q   */ "Konto verbinden",
           /* ACC_CONNECT    */ "Verbinden",
+          /* OTA_INSTALLED_VER */ "Installierte Version",
+          /* OTA_LATEST_VER    */ "Neueste Version",
+          /* OTA_NEW_VER       */ "Neue Version",
+          /* OTA_UPTODATE_LONG */ "Ihre TigerScale ist aktuell",
+          /* OTA_CHECK_FAILED  */ "Pruefung nicht moeglich",
+          /* OTA_KEEPS         */ "WLAN, Konto und Kalibrierung bleiben erhalten",
     },
     // ZH (Han characters, not pinyin)
     // The glyphs come from a generated subset font — scripts/make-cjk-font.sh —
@@ -1074,6 +1110,12 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* MAX_G          */ "最多 %d g",
         /* ACC_PROMPT_Q   */ "连接您的账户",
         /* ACC_CONNECT    */ "连接",
+        /* OTA_INSTALLED_VER */ "已安装版本",
+        /* OTA_LATEST_VER    */ "最新版本",
+        /* OTA_NEW_VER       */ "新版本",
+        /* OTA_UPTODATE_LONG */ "您的TigerScale已是最新",
+        /* OTA_CHECK_FAILED  */ "无法检查更新",
+        /* OTA_KEEPS         */ "WiFi、账户和校准将保留",
     },
     // IT
     {
@@ -1222,6 +1264,12 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* MAX_G          */ "max. %d g",
           /* ACC_PROMPT_Q   */ "Collega il tuo account",
           /* ACC_CONNECT    */ "Connetti",
+          /* OTA_INSTALLED_VER */ "Versione installata",
+          /* OTA_LATEST_VER    */ "Ultima versione",
+          /* OTA_NEW_VER       */ "Nuova versione",
+          /* OTA_UPTODATE_LONG */ "La tua TigerScale e aggiornata",
+          /* OTA_CHECK_FAILED  */ "Verifica non riuscita",
+          /* OTA_KEEPS         */ "WiFi, account e calibrazione sono conservati",
     },
     // PL
     {
@@ -1370,6 +1418,12 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* MAX_G          */ "max. %d g",
           /* ACC_PROMPT_Q   */ "Polacz swoje konto",
           /* ACC_CONNECT    */ "Polacz",
+          /* OTA_INSTALLED_VER */ "Zainstalowana wersja",
+          /* OTA_LATEST_VER    */ "Najnowsza wersja",
+          /* OTA_NEW_VER       */ "Nowa wersja",
+          /* OTA_UPTODATE_LONG */ "Twoja TigerScale jest aktualna",
+          /* OTA_CHECK_FAILED  */ "Nie mozna sprawdzic",
+          /* OTA_KEEPS         */ "WiFi, konto i kalibracja zostana zachowane",
     },
     // PT-PT (European Portuguese — Studio's "pt-pt")
     {
@@ -1518,6 +1572,12 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* MAX_G           */ "max. %d g",
         /* ACC_PROMPT_Q   */ "Ligue a sua conta",
         /* ACC_CONNECT    */ "Ligar",
+        /* OTA_INSTALLED_VER */ "Versao instalada",
+        /* OTA_LATEST_VER    */ "Ultima versao",
+        /* OTA_NEW_VER       */ "Nova versao",
+        /* OTA_UPTODATE_LONG */ "A sua TigerScale esta actualizada",
+        /* OTA_CHECK_FAILED  */ "Nao foi possivel verificar",
+        /* OTA_KEEPS         */ "WiFi, conta e calibracao sao mantidos",
     },
 };
 

@@ -3,6 +3,12 @@
 The short version of every release, newest first — one scroll, no jargon.
 The full story for each version lives in [docs/release-notes/](docs/release-notes/).
 
+## v3.3.0 — the scale makes the first move
+
+No account linked? The scale now asks — a panel slides in with a single
+blue Sign in button, instead of hoping you find the option in Settings.
+Dismiss it and it politely waits half an hour. [Full notes](docs/release-notes/v3.3.0.md)
+
 ## v3.2.0 — your scale learns manners
 
 - Unbox, plug in, and the scale walks you through it: pick your language,

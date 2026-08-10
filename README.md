@@ -173,7 +173,7 @@ the IDE has no equivalent for.
 | — | Dupont wires, M3 self-tapping screws | [wires](https://link.amazon/B0bl6jvMs) · [screws](https://link.amazon/B0ekzxx1E) |
 | — | 2× M4×30 and 2× M5×30 (load cell), 4× M2×6 (display) | — |
 | 1 | Small speaker | ships with the ESP32-S3 board |
-| 1 | Li-ion battery | optional — the scale runs on USB |
+| 1 | Li-ion battery | [optional](https://link.amazon/B0etKlE1i) — the scale runs on USB |
 | — | Enclosure — printable 3MF, Bambu Studio project | [download](https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/download/enclosure/TigerScale-V3-enclosure.3mf) |
 
 Full costed list with every link: **[docs/HARDWARE.md](docs/HARDWARE.md#bill-of-materials)**
@@ -197,6 +197,42 @@ That link is permanent: it always serves the current revision, so it stays valid
 when the enclosure is updated. Any slicer that reads 3MF will open the file,
 though the plate arrangement is Bambu-specific.
 
+<table align="center">
+  <tr>
+    <td align="center">
+      <img src="docs/img/assembly-front-quarter.png" width="380" alt="TigerScale V3 enclosure, front three-quarter view"><br>
+      <sub>Front three-quarter</sub>
+    </td>
+    <td align="center">
+      <img src="docs/img/assembly-rear-quarter.png" width="380" alt="TigerScale V3 enclosure, rear three-quarter view"><br>
+      <sub>Rear three-quarter</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/img/assembly-rear-quarter-close.png" width="380" alt="TigerScale V3 enclosure, rear three-quarter close-up"><br>
+      <sub>Rear three-quarter, close</sub>
+    </td>
+    <td align="center">
+      <img src="docs/img/assembly-side-elevation.png" width="380" alt="TigerScale V3 enclosure, side elevation view"><br>
+      <sub>Side elevation</sub>
+    </td>
+  </tr>
+</table>
+
+<table align="center">
+  <tr>
+    <td align="center">
+      <img src="docs/img/scale-rear-orientation.jpg" width="380" alt="TigerScale V3 assembled, correct rear orientation"><br>
+      <sub>Scale position and orientation</sub>
+    </td>
+    <td align="center">
+      <img src="docs/img/pn532-mounting-position.jpg" width="380" alt="PN532 reader mounted in its enclosure slot"><br>
+      <sub>PN532 seated in its slot</sub>
+    </td>
+  </tr>
+</table>
+
 <p align="center">
   <a href="docs/HARDWARE.md#wiring-diagram">
     <img src="docs/img/wiring-hsu.jpg" alt="TigerScale V3 wiring diagram" width="700">
@@ -205,7 +241,7 @@ though the plate arrangement is Bambu-specific.
 
 <p align="center">
   <sub><a href="docs/HARDWARE.md#wiring-diagram">Pin-by-pin wiring</a> &nbsp;·&nbsp;
-  <a href="https://app.cirkitdesigner.com/project/f1310604-82fe-4458-9baa-9507c8e95c80">Interactive schematic in Cirkit Designer</a></sub>
+  <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69">Interactive schematic in Cirkit Designer</a></sub>
 </p>
 
 Full pinout, bus topology and the wiring for each transport:

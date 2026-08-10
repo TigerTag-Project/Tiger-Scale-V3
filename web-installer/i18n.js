@@ -40,7 +40,7 @@ en: {
   badge_single: "one reader",
   wiring_btn: "Not sure? Open the wiring diagram",
   wiring_hint: "Drag to turn the board, scroll to zoom. Click a wire to follow where it goes.",
-  cirkit_credit_html: 'Edit this project interactively in <a href="https://app.cirkitdesigner.com/project/f1310604-82fe-4458-9baa-9507c8e95c80" target="_blank" rel="noopener">Cirkit Designer</a>.',
+  cirkit_credit_html: 'Edit this project interactively in <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a>.',
 
   s2_title: "Install",
   btn: "Connect and install",
@@ -76,6 +76,7 @@ en: {
   p_conn: "USB-C connector",
   p_wires: "Dupont wires",
   p_screws: "M3 self-tapping screws",
+  p_battery: "Li-ion battery (optional)",
   cart_incl: "Supplied with the board: the small speaker.",
   cart_opt: "Optional: a Li-ion battery. The scale runs on USB.",
   cart_full: "Full list with prices"
@@ -107,7 +108,7 @@ fr: {
   badge_single: "un lecteur",
   wiring_btn: "Pas sûr ? Ouvrir le schéma de câblage",
   wiring_hint: "Faites glisser pour tourner la carte, molette pour zoomer. Cliquez sur un fil pour suivre son trajet.",
-  cirkit_credit_html: 'Modifiez ce projet de façon interactive dans <a href="https://app.cirkitdesigner.com/project/f1310604-82fe-4458-9baa-9507c8e95c80" target="_blank" rel="noopener">Cirkit Designer</a>.',
+  cirkit_credit_html: 'Modifiez ce projet de façon interactive dans <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a>.',
 
   s2_title: "Installer",
   btn: "Connecter et installer",
@@ -143,6 +144,7 @@ fr: {
   p_conn: "Connecteur USB-C",
   p_wires: "Fils Dupont",
   p_screws: "Vis autotaraudeuses M3",
+  p_battery: "Batterie Li-ion (optionnel)",
   cart_incl: "Fourni avec la carte : le petit haut-parleur.",
   cart_opt: "Optionnel : une batterie Li-ion. La balance fonctionne sur USB.",
   cart_full: "Liste complète avec les prix"
@@ -174,7 +176,7 @@ de: {
   badge_single: "ein Leser",
   wiring_btn: "Unsicher? Schaltplan öffnen",
   wiring_hint: "Ziehen zum Drehen, scrollen zum Zoomen. Auf eine Leitung klicken, um ihrem Verlauf zu folgen.",
-  cirkit_credit_html: 'Dieses Projekt interaktiv bearbeiten in <a href="https://app.cirkitdesigner.com/project/f1310604-82fe-4458-9baa-9507c8e95c80" target="_blank" rel="noopener">Cirkit Designer</a>.',
+  cirkit_credit_html: 'Dieses Projekt interaktiv bearbeiten in <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a>.',
 
   s2_title: "Installieren",
   btn: "Verbinden und installieren",
@@ -210,6 +212,7 @@ de: {
   p_conn: "USB-C-Stecker",
   p_wires: "Dupont-Kabel",
   p_screws: "M3-Blechschrauben",
+  p_battery: "Li-Ionen-Akku (optional)",
   cart_incl: "Mit der Platine geliefert: der kleine Lautsprecher.",
   cart_opt: "Optional: ein Li-Ionen-Akku. Die Waage läuft über USB.",
   cart_full: "Vollständige Liste mit Preisen"
@@ -241,7 +244,7 @@ es: {
   badge_single: "un lector",
   wiring_btn: "¿No está seguro? Abra el esquema",
   wiring_hint: "Arrastre para girar la placa, use la rueda para acercar. Haga clic en un cable para seguir su recorrido.",
-  cirkit_credit_html: 'Edite este proyecto de forma interactiva en <a href="https://app.cirkitdesigner.com/project/f1310604-82fe-4458-9baa-9507c8e95c80" target="_blank" rel="noopener">Cirkit Designer</a>.',
+  cirkit_credit_html: 'Edite este proyecto de forma interactiva en <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a>.',
 
   s2_title: "Instalar",
   btn: "Conectar e instalar",
@@ -277,6 +280,7 @@ es: {
   p_conn: "Conector USB-C",
   p_wires: "Cables Dupont",
   p_screws: "Tornillos autorroscantes M3",
+  p_battery: "Batería de litio (opcional)",
   cart_incl: "Incluido con la placa: el pequeño altavoz.",
   cart_opt: "Opcional: una batería de litio. La báscula funciona con USB.",
   cart_full: "Lista completa con precios"
@@ -308,7 +312,7 @@ it: {
   badge_single: "un lettore",
   wiring_btn: "Non sei sicuro? Apri lo schema",
   wiring_hint: "Trascina per ruotare la scheda, scorri per ingrandire. Clicca un filo per seguirne il percorso.",
-  cirkit_credit_html: 'Modifica questo progetto in modo interattivo su <a href="https://app.cirkitdesigner.com/project/f1310604-82fe-4458-9baa-9507c8e95c80" target="_blank" rel="noopener">Cirkit Designer</a>.',
+  cirkit_credit_html: 'Modifica questo progetto in modo interattivo su <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a>.',
 
   s2_title: "Installa",
   btn: "Collega e installa",
@@ -344,6 +348,7 @@ it: {
   p_conn: "Connettore USB-C",
   p_wires: "Cavetti Dupont",
   p_screws: "Viti autofilettanti M3",
+  p_battery: "Batteria al litio (opzionale)",
   cart_incl: "Fornito con la scheda: il piccolo altoparlante.",
   cart_opt: "Opzionale: una batteria al litio. La bilancia funziona via USB.",
   cart_full: "Elenco completo con i prezzi"
@@ -375,7 +380,7 @@ pl: {
   badge_single: "jeden czytnik",
   wiring_btn: "Nie masz pewności? Otwórz schemat",
   wiring_hint: "Przeciągnij, aby obrócić płytkę, przewiń, aby przybliżyć. Kliknij przewód, aby prześledzić jego trasę.",
-  cirkit_credit_html: 'Edytuj ten projekt interaktywnie w <a href="https://app.cirkitdesigner.com/project/f1310604-82fe-4458-9baa-9507c8e95c80" target="_blank" rel="noopener">Cirkit Designer</a>.',
+  cirkit_credit_html: 'Edytuj ten projekt interaktywnie w <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a>.',
 
   s2_title: "Instalacja",
   btn: "Połącz i zainstaluj",
@@ -411,6 +416,7 @@ pl: {
   p_conn: "Złącze USB-C",
   p_wires: "Przewody Dupont",
   p_screws: "Wkręty samogwintujące M3",
+  p_battery: "Akumulator litowo-jonowy (opcjonalnie)",
   cart_incl: "Dostarczany z płytką: mały głośnik.",
   cart_opt: "Opcjonalnie: akumulator litowo-jonowy. Waga działa na USB.",
   cart_full: "Pełna lista z cenami"
@@ -442,7 +448,7 @@ pt: {
   badge_single: "um leitor",
   wiring_btn: "Na dúvida? Abra o diagrama",
   wiring_hint: "Arraste para girar a placa, role para aproximar. Clique em um fio para seguir o caminho dele.",
-  cirkit_credit_html: 'Edite este projeto de forma interativa no <a href="https://app.cirkitdesigner.com/project/f1310604-82fe-4458-9baa-9507c8e95c80" target="_blank" rel="noopener">Cirkit Designer</a>.',
+  cirkit_credit_html: 'Edite este projeto de forma interativa no <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a>.',
 
   s2_title: "Instalar",
   btn: "Conectar e instalar",
@@ -478,6 +484,7 @@ pt: {
   p_conn: "Conector USB-C",
   p_wires: "Fios Dupont",
   p_screws: "Parafusos autoatarraxantes M3",
+  p_battery: "Bateria de lítio (opcional)",
   cart_incl: "Vem com a placa: o alto-falante pequeno.",
   cart_opt: "Opcional: uma bateria de lítio. A balança funciona no USB.",
   cart_full: "Lista completa com preços"
@@ -509,7 +516,7 @@ pt: {
   badge_single: "um leitor",
   wiring_btn: "Sem certezas? Abra o esquema",
   wiring_hint: "Arraste para rodar a placa, use a roda para ampliar. Clique num fio para seguir o percurso.",
-  cirkit_credit_html: 'Edite este projeto de forma interactiva no <a href="https://app.cirkitdesigner.com/project/f1310604-82fe-4458-9baa-9507c8e95c80" target="_blank" rel="noopener">Cirkit Designer</a>.',
+  cirkit_credit_html: 'Edite este projeto de forma interactiva no <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a>.',
 
   s2_title: "Instalar",
   btn: "Ligar e instalar",
@@ -545,6 +552,7 @@ pt: {
   p_conn: "Ficha USB-C",
   p_wires: "Fios Dupont",
   p_screws: "Parafusos autoperfurantes M3",
+  p_battery: "Bateria de lítio (opcional)",
   cart_incl: "Fornecido com a placa: o pequeno altifalante.",
   cart_opt: "Opcional: uma bateria de lítio. A balança funciona por USB.",
   cart_full: "Lista completa com preços"
@@ -576,7 +584,7 @@ zh: {
   badge_single: "单读卡器",
   wiring_btn: "不确定？打开接线图",
   wiring_hint: "拖动可旋转电路板，滚轮缩放。点一根线可以看它接到哪里。",
-  cirkit_credit_html: '在 <a href="https://app.cirkitdesigner.com/project/f1310604-82fe-4458-9baa-9507c8e95c80" target="_blank" rel="noopener">Cirkit Designer</a> 中交互式编辑这个项目。',
+  cirkit_credit_html: '在 <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a> 中交互式编辑这个项目。',
 
   s2_title: "安装",
   btn: "连接并安装",
@@ -612,6 +620,7 @@ zh: {
   p_conn: "USB-C 接口板",
   p_wires: "杜邦线",
   p_screws: "M3 自攻螺丝",
+  p_battery: "锂电池（可选）",
   cart_incl: "随板附送：小喇叭。",
   cart_opt: "可选：锂电池。这台秤靠 USB 供电即可。",
   cart_full: "含价格的完整清单"

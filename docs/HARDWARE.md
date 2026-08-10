@@ -61,7 +61,7 @@ nothing extra and helps keep the TigerTag cloud free.
 | 1 | **USB-C connector / breakout** | [Amazon](https://link.amazon/B0aiEyjLx) |
 | — | **Dupont wires** | [Amazon](https://link.amazon/B0bl6jvMs) |
 | 1 | Small speaker for the board's SPK connector — supplied with the board, gives the beep on tag detect | — |
-| 1 | Li-ion battery — optional; charging and level reporting are handled by the on-board AXP2101 | — |
+| 1 | Li-ion battery — optional; charging and level reporting are handled by the on-board AXP2101 | [Amazon](https://link.amazon/B0etKlE1i) |
 
 > [!WARNING]
 > **The sealed USB-C-only PN532 dongles will not work.** They have no pin header, and
@@ -86,14 +86,14 @@ has a complete, costed build of the previous generation if you want a reference.
 ### Wiring diagram
 
 <p align="center">
-  <a href="https://app.cirkitdesigner.com/project/f1310604-82fe-4458-9baa-9507c8e95c80">
+  <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69">
     <img src="img/wiring-hsu.jpg" alt="TigerScale V3 wiring: ESP32-S3-Touch-LCD-3.5B, two PN532 readers over HSU, HX711 and load cell, speaker" width="820">
   </a>
 </p>
 
 <p align="center">
   <sub>The reference HSU build. Click through for the interactive, zoomable version
-  in <a href="https://app.cirkitdesigner.com/project/f1310604-82fe-4458-9baa-9507c8e95c80">Cirkit Designer</a>.</sub>
+  in <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69">Cirkit Designer</a>.</sub>
 </p>
 
 **Read the PN532 pin labels carefully.** The diagram shows each reader's 4-pin

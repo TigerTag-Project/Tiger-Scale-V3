@@ -22,6 +22,8 @@ The full story for each version lives in [docs/release-notes/](docs/release-note
   Settings.
 - Sold your scale? Settings > Factory reset wipes it clean and hands the
   next owner the same guided welcome.
+- For the curious: the live view now stays connected through account
+  pairing, so you can watch the QR screen from a browser across the room.
 
 [Full notes](docs/release-notes/v3.2.0.md)
 

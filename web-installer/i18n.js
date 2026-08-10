@@ -60,6 +60,7 @@ en: {
   trouble_t: "No reader detected?",
   trouble_b_html: 'The wiring you picked does not match the one you built. Go back to step 1, choose another and install again. Everything else is in the <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md">troubleshooting guide</a>.',
 
+  cart_stl: "Download the printable enclosure (3MF)",
   f_source: "Source", f_wiring: "Wiring", f_enclosure: "Enclosure",
   f_discord: "Discord", f_manifest: "Manifest",
   f_license: "Open source under the MIT licence",
@@ -126,6 +127,7 @@ fr: {
   trouble_t: "Aucun lecteur détecté ?",
   trouble_b_html: "Le câblage choisi ne correspond pas à celui que vous avez monté. Revenez à l'étape 1, prenez-en un autre et réinstallez. Tout le reste est dans le <a href=\"https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md\">guide de dépannage</a>.",
 
+  cart_stl: "Télécharger le boîtier à imprimer (3MF)",
   f_source: "Sources", f_wiring: "Câblage", f_enclosure: "Boîtier",
   f_discord: "Discord", f_manifest: "Manifeste",
   f_license: "Logiciel libre sous licence MIT",
@@ -192,6 +194,7 @@ de: {
   trouble_t: "Kein Leser erkannt?",
   trouble_b_html: 'Die gewählte Verdrahtung passt nicht zu der aufgebauten. Gehen Sie zurück zu Schritt 1, wählen Sie eine andere und installieren Sie erneut. Alles Weitere steht im <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md">Fehlerbehebungs-Leitfaden</a>.',
 
+  cart_stl: "Druckbares Gehäuse herunterladen (3MF)",
   f_source: "Quellcode", f_wiring: "Verdrahtung", f_enclosure: "Gehäuse",
   f_discord: "Discord", f_manifest: "Manifest",
   f_license: "Open Source unter der MIT-Lizenz",
@@ -258,6 +261,7 @@ es: {
   trouble_t: "¿Ningún lector detectado?",
   trouble_b_html: 'El cableado elegido no coincide con el que montó. Vuelva al paso 1, elija otro e instale de nuevo. Todo lo demás está en la <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md">guía de resolución de problemas</a>.',
 
+  cart_stl: "Descargar la carcasa imprimible (3MF)",
   f_source: "Código", f_wiring: "Cableado", f_enclosure: "Carcasa",
   f_discord: "Discord", f_manifest: "Manifiesto",
   f_license: "Código abierto con licencia MIT",
@@ -324,6 +328,7 @@ it: {
   trouble_t: "Nessun lettore rilevato?",
   trouble_b_html: 'Il cablaggio scelto non corrisponde a quello montato. Torna al passo 1, scegline un altro e reinstalla. Tutto il resto è nella <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md">guida alla risoluzione dei problemi</a>.',
 
+  cart_stl: "Scarica il contenitore stampabile (3MF)",
   f_source: "Sorgenti", f_wiring: "Cablaggio", f_enclosure: "Contenitore",
   f_discord: "Discord", f_manifest: "Manifesto",
   f_license: "Open source con licenza MIT",
@@ -390,6 +395,7 @@ pl: {
   trouble_t: "Nie wykryto czytnika?",
   trouble_b_html: 'Wybrane okablowanie nie odpowiada temu, które zbudowałeś. Wróć do kroku 1, wybierz inne i zainstaluj ponownie. Reszta jest w <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md">przewodniku rozwiązywania problemów</a>.',
 
+  cart_stl: "Pobierz obudowę do druku (3MF)",
   f_source: "Kod", f_wiring: "Okablowanie", f_enclosure: "Obudowa",
   f_discord: "Discord", f_manifest: "Manifest",
   f_license: "Otwarte oprogramowanie na licencji MIT",
@@ -456,6 +462,7 @@ pt: {
   trouble_t: "Nenhum leitor detectado?",
   trouble_b_html: 'A ligação escolhida não corresponde à que você montou. Volte ao passo 1, escolha outra e instale de novo. Todo o resto está no <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md">guia de solução de problemas</a>.',
 
+  cart_stl: "Baixar o gabinete imprimível (3MF)",
   f_source: "Código", f_wiring: "Ligações", f_enclosure: "Gabinete",
   f_discord: "Discord", f_manifest: "Manifesto",
   f_license: "Código aberto sob licença MIT",
@@ -522,6 +529,7 @@ pt: {
   trouble_t: "Nenhum leitor detectado?",
   trouble_b_html: 'A ligação escolhida não corresponde à que montou. Volte ao passo 1, escolha outra e instale de novo. Tudo o resto está no <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md">guia de resolução de problemas</a>.',
 
+  cart_stl: "Transferir a caixa imprimível (3MF)",
   f_source: "Código", f_wiring: "Ligações", f_enclosure: "Caixa",
   f_discord: "Discord", f_manifest: "Manifesto",
   f_license: "Código aberto sob licença MIT",
@@ -588,6 +596,7 @@ zh: {
   trouble_t: "没检测到读卡器？",
   trouble_b_html: '你选的接线方式和实际装的不一致。回到第 1 步，换一个再装一次。其余问题见<a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md">故障排查指南</a>。',
 
+  cart_stl: "下载可打印外壳 (3MF)",
   f_source: "源码", f_wiring: "接线", f_enclosure: "外壳",
   f_discord: "Discord", f_manifest: "清单",
   f_license: "基于 MIT 许可证的开源项目",

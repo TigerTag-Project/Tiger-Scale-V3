@@ -170,10 +170,10 @@ the IDE has no equivalent for.
 | 2 | PN532 **V3** NFC module — pin header **and** mode switch required | [buy](https://link.amazon/B0iTXrhjd) |
 | 1 | 5 kg load cell + HX711 | [buy](https://link.amazon/B09LOUuI1) |
 | 1 | USB-C 4-pin cable + connector | [cable](https://link.amazon/B0aoW8qQx) · [connector](https://link.amazon/B0aiEyjLx) |
-| — | Dupont wires, M3 self-tapping screws | [wires](https://link.amazon/B0bl6jvMs) · [screws](https://link.amazon/B0ekzxx1E) |
-| — | 2× M4×30 and 2× M5×30 (load cell), 4× M2×6 (display) | — |
 | 1 | Small speaker | ships with the ESP32-S3 board |
 | 1 | Li-ion battery | [optional](https://link.amazon/B0etKlE1i) — the scale runs on USB |
+| — | Dupont wires, M3 self-tapping screws | [wires](https://link.amazon/B0bl6jvMs) · [screws](https://link.amazon/B0ekzxx1E) |
+| — | 2× M4×30 and 2× M5×30 (load cell), 4× M2×6 (display) | — |
 | — | Enclosure — printable 3MF, Bambu Studio project | [download](https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/download/enclosure/TigerScale-V3-enclosure.3mf) |
 
 Full costed list with every link: **[docs/HARDWARE.md](docs/HARDWARE.md#bill-of-materials)**

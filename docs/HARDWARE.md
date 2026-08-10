@@ -59,9 +59,9 @@ nothing extra and helps keep the TigerTag cloud free.
 | 1 | **5 kg load cell + HX711 amplifier** | [Amazon](https://link.amazon/B09LOUuI1) |
 | 1 | **USB-C 4-pin cable** | [Amazon](https://link.amazon/B0aoW8qQx) |
 | 1 | **USB-C connector / breakout** | [Amazon](https://link.amazon/B0aiEyjLx) |
-| — | **Dupont wires** | [Amazon](https://link.amazon/B0bl6jvMs) |
 | 1 | Small speaker for the board's SPK connector — supplied with the board, gives the beep on tag detect | — |
 | 1 | Li-ion battery — optional; charging and level reporting are handled by the on-board AXP2101 | [Amazon](https://link.amazon/B0etKlE1i) |
+| — | **Dupont wires** | [Amazon](https://link.amazon/B0bl6jvMs) |
 
 > [!WARNING]
 > **The sealed USB-C-only PN532 dongles will not work.** They have no pin header, and

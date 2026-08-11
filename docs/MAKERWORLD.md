@@ -90,6 +90,19 @@ Works offline: brand and material identification comes from a database stored in
 the device's own flash, so identifying a tag never waits on the internet. The cloud
 account is optional.
 
+## TigerTag Studio — the other half
+
+[insert the TigerTag Studio hero image here]
+
+The scale is the hardware end of a system. **TigerTag Studio** is the desktop
+side: your whole filament inventory in one place, organised into racks and
+positions, every weighing from the scale landing in it seconds after the spool
+touches the platform. Weigh a spool on the scale, watch its remaining grams
+update in Studio across the room. One account, one language, one inventory —
+every device agrees.
+
+Get it at https://tigersystem.io
+
 ## Electronics
 
 This is a build, not a kit — you will need to solder and wire.

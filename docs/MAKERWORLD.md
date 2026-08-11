@@ -78,8 +78,10 @@ two-line character display:
 - A hardware self-test screen, including NFC reader power tuning
 - Battery level and charge state
 - Over-the-air firmware updates
-- **8 languages** in the firmware (EN · PT · FR · ES · DE · ZH · IT · PL) and a
-  9-language web UI
+- **9 languages** (EN · FR · DE · ES · IT · ZH · PT-BR · PT-PT · PL), kept in
+  sync with your TigerTag account — change it in Studio, the scale follows
+- A guided first-boot setup: language, WiFi, account, calibration — the scale
+  walks you through all of it, iPhone-style
 
 It also serves **its own web interface** on your network, so you can read the scale
 from a phone browser without installing anything.
@@ -119,8 +121,9 @@ Two readers, because a spool can carry its tag on either flange.
 **Full wiring diagram, pinout and firmware:**
 https://github.com/TigerTag-Project/Tiger-Scale-V3
 
-The firmware is MIT licensed and builds from source with PlatformIO. One command
-flashes it.
+**Flashing needs no toolchain at all**: plug the board into Chrome/Edge and the
+web installer does the rest — https://tigertag-project.github.io/Tiger-Scale-V3/
+The firmware is MIT licensed and also builds from source with PlatformIO.
 
 ## Print settings
 
@@ -155,13 +158,19 @@ https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/HARDWARE.md
 
 https://github.com/TigerTag-Project/Tiger-Scale-V3
 
+Easiest: the **web installer** — plug the board in, click Install, done:
+https://tigertag-project.github.io/Tiger-Scale-V3/
+
+Or build from source:
+
 ```bash
 git clone https://github.com/TigerTag-Project/Tiger-Scale-V3.git
 cd Tiger-Scale-V3
 bash scripts/flash.sh --fs
 ```
 
-MIT licensed. Issues, questions and improvements welcome.
+After that the scale updates itself over the air. MIT licensed. Issues,
+questions and improvements welcome.
 
 ## Community
 

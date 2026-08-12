@@ -51,6 +51,8 @@ en: {
   erase_t: "The first install wipes the board",
   erase_b: "It erases everything on it, including any saved WiFi password, and writes the bootloader, the partition table, the firmware and the web interface. That is what you want on a board you have just built.",
   erase_u_html: 'To update a scale that already works, use <b>Settings &rarr; Update</b> on its own screen. That keeps your settings.',
+  noport_t: "No COM port detected?",
+  noport_b_html: 'A driver may be missing for your system. Follow the <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/INSTALL_DRIVER_ESP32_S3.md">driver installation guide</a>.',
 
   s3_title: "Once it is done",
   a1_html: "The scale starts up and asks for <b>WiFi</b>. Choose your network on the touchscreen.",
@@ -119,6 +121,8 @@ fr: {
   erase_t: "La première installation efface la carte",
   erase_b: "Elle efface tout, y compris un mot de passe WiFi enregistré, et écrit le bootloader, la table de partitions, le micrologiciel et l'interface web. C'est bien ce que l'on veut sur une carte qu'on vient de monter.",
   erase_u_html: "Pour mettre à jour une balance qui fonctionne déjà, utilisez <b>Réglages &rarr; Mise à jour</b> sur son écran. Vos réglages sont conservés.",
+  noport_t: "Aucun port COM détecté ?",
+  noport_b_html: 'Il manque peut-être un pilote pour votre système. Suivez le <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/INSTALL_DRIVER_ESP32_S3.md">guide d\'installation du pilote</a>.',
 
   s3_title: "Une fois terminé",
   a1_html: "La balance démarre et demande le <b>WiFi</b>. Choisissez votre réseau sur l'écran tactile.",
@@ -187,6 +191,8 @@ de: {
   erase_t: "Die erste Installation löscht die Platine",
   erase_b: "Sie löscht alles, auch ein gespeichertes WLAN-Passwort, und schreibt Bootloader, Partitionstabelle, Firmware und Weboberfläche. Genau das will man auf einer frisch aufgebauten Platine.",
   erase_u_html: 'Um eine bereits laufende Waage zu aktualisieren, nutzen Sie <b>Einstellungen &rarr; Update</b> auf ihrem Bildschirm. Ihre Einstellungen bleiben erhalten.',
+  noport_t: "Kein COM-Port erkannt?",
+  noport_b_html: 'Möglicherweise fehlt ein Treiber für Ihr System. Folgen Sie der <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/INSTALL_DRIVER_ESP32_S3.md">Anleitung zur Treiberinstallation</a>.',
 
   s3_title: "Wenn es fertig ist",
   a1_html: "Die Waage startet und fragt nach <b>WLAN</b>. Wählen Sie Ihr Netz auf dem Touchscreen.",
@@ -255,6 +261,8 @@ es: {
   erase_t: "La primera instalación borra la placa",
   erase_b: "Borra todo, incluida cualquier contraseña WiFi guardada, y escribe el bootloader, la tabla de particiones, el firmware y la interfaz web. Es justo lo que se quiere en una placa recién montada.",
   erase_u_html: 'Para actualizar una báscula que ya funciona, use <b>Ajustes &rarr; Actualizar</b> en su pantalla. Conserva sus ajustes.',
+  noport_t: "¿No se detecta ningún puerto COM?",
+  noport_b_html: 'Puede que falte un controlador para su sistema. Siga la <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/INSTALL_DRIVER_ESP32_S3.md">guía de instalación del controlador</a>.',
 
   s3_title: "Cuando termine",
   a1_html: "La báscula arranca y pide el <b>WiFi</b>. Elija su red en la pantalla táctil.",
@@ -323,6 +331,8 @@ it: {
   erase_t: "La prima installazione cancella la scheda",
   erase_b: "Cancella tutto, compresa un'eventuale password WiFi salvata, e scrive bootloader, tabella delle partizioni, firmware e interfaccia web. È esattamente ciò che serve su una scheda appena montata.",
   erase_u_html: 'Per aggiornare una bilancia già funzionante usa <b>Impostazioni &rarr; Aggiornamento</b> sul suo schermo. Le impostazioni restano.',
+  noport_t: "Nessuna porta COM rilevata?",
+  noport_b_html: "Potrebbe mancare un driver per il tuo sistema. Segui la <a href=\"https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/INSTALL_DRIVER_ESP32_S3.md\">guida all'installazione del driver</a>.",
 
   s3_title: "Quando ha finito",
   a1_html: "La bilancia si avvia e chiede il <b>WiFi</b>. Scegli la tua rete sul touchscreen.",
@@ -391,6 +401,8 @@ pl: {
   erase_t: "Pierwsza instalacja czyści płytkę",
   erase_b: "Kasuje wszystko, łącznie z zapisanym hasłem WiFi, i zapisuje bootloader, tablicę partycji, firmware oraz interfejs webowy. Dokładnie tego chcesz na świeżo zmontowanej płytce.",
   erase_u_html: 'Aby zaktualizować działającą już wagę, użyj <b>Ustawienia &rarr; Aktualizacja</b> na jej ekranie. Ustawienia zostaną zachowane.',
+  noport_t: "Nie wykryto portu COM?",
+  noport_b_html: 'Może brakować sterownika dla Twojego systemu. Skorzystaj z <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/INSTALL_DRIVER_ESP32_S3.md">przewodnika instalacji sterownika</a>.',
 
   s3_title: "Gdy się skończy",
   a1_html: "Waga uruchamia się i pyta o <b>WiFi</b>. Wybierz swoją sieć na ekranie dotykowym.",
@@ -459,6 +471,8 @@ pt: {
   erase_t: "A primeira instalação apaga a placa",
   erase_b: "Ela apaga tudo, inclusive qualquer senha de WiFi salva, e grava o bootloader, a tabela de partições, o firmware e a interface web. É exatamente o que se quer numa placa recém-montada.",
   erase_u_html: 'Para atualizar uma balança que já funciona, use <b>Configurações &rarr; Atualização</b> na tela dela. Suas configurações são mantidas.',
+  noport_t: "Nenhuma porta COM detectada?",
+  noport_b_html: 'Pode faltar um driver para o seu sistema. Siga o <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/INSTALL_DRIVER_ESP32_S3.md">guia de instalação do driver</a>.',
 
   s3_title: "Quando terminar",
   a1_html: "A balança liga e pede o <b>WiFi</b>. Escolha sua rede na tela sensível ao toque.",
@@ -527,6 +541,8 @@ pt: {
   erase_t: "A primeira instalação apaga a placa",
   erase_b: "Apaga tudo, incluindo qualquer palavra-passe de WiFi guardada, e grava o bootloader, a tabela de partições, o firmware e a interface web. É exactamente o que se quer numa placa acabada de montar.",
   erase_u_html: 'Para actualizar uma balança que já funciona, use <b>Definições &rarr; Actualização</b> no ecrã dela. As suas definições mantêm-se.',
+  noport_t: "Nenhuma porta COM detetada?",
+  noport_b_html: 'Pode faltar um controlador para o seu sistema. Siga o <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/INSTALL_DRIVER_ESP32_S3.md">guia de instalação do controlador</a>.',
 
   s3_title: "Quando terminar",
   a1_html: "A balança arranca e pede o <b>WiFi</b>. Escolha a sua rede no ecrã táctil.",
@@ -595,6 +611,8 @@ zh: {
   erase_t: "第一次安装会清空电路板",
   erase_b: "它会擦掉板上所有内容，包括已保存的 WiFi 密码，然后写入引导程序、分区表、固件和网页界面。对刚装好的板子来说，这正是你要的。",
   erase_u_html: '要更新已经在用的秤，请在它自己的屏幕上用<b>设置 &rarr; 更新</b>。设置会保留。',
+  noport_t: "没有检测到 COM 端口？",
+  noport_b_html: '你的系统可能缺少驱动程序。请按照<a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/INSTALL_DRIVER_ESP32_S3.md">驱动安装指南</a>操作。',
 
   s3_title: "装完之后",
   a1_html: "秤会启动并询问 <b>WiFi</b>。在触摸屏上选择你的网络。",

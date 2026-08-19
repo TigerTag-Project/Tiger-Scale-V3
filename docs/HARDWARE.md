@@ -119,9 +119,8 @@ actually drives. The diagram shows how the reference unit is physically wired; i
 the two ever disagree, the firmware wins and the diagram needs redrawing.
 
 The printable enclosure is on
-[MakerWorld](https://makerworld.com/en/models/3161869-tigerscale-v3-best-smart-filament-scale-with-nfc)
-and published as a Bambu Studio 3MF:
-[Enclosure v1](https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/tag/enclosure). Prices and a fully costed parts list are still to come. See the
+[MakerWorld](https://makerworld.com/en/models/3161869-tigerscale-v3-best-smart-filament-scale-with-nfc#profileId-3573543)
+as a Bambu Studio 3MF project. Prices and a fully costed parts list are still to come. See the
 [V2 repository](https://github.com/TigerTag-Project/Tiger-Scale) for a complete,
 costed build of the previous generation.
 

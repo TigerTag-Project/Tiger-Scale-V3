@@ -29,7 +29,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/download/enclosure/TigerScale-V3-enclosure.3mf">
+  <a href="https://makerworld.com/en/models/3161869-tigerscale-v3-best-smart-filament-scale-with-nfc#profileId-3573543">
     <img src="assets/enclosure-button.svg" alt="Download the case (3MF)" width="270">
   </a>
 </p>
@@ -174,22 +174,21 @@ the IDE has no equivalent for.
 | 1 | Li-ion battery | [optional](https://link.amazon/B0etKlE1i) — the scale runs on USB |
 | — | Dupont wires, M3 self-tapping screws | [wires](https://link.amazon/B0bl6jvMs) · [screws](https://link.amazon/B0ekzxx1E) |
 | — | 2× M4×30 and 2× M5×30 (load cell), 4× M2×6 (display) | — |
-| — | Enclosure — printable 3MF, Bambu Studio project | [MakerWorld](https://makerworld.com/en/models/3161869-tigerscale-v3-best-smart-filament-scale-with-nfc) · [download](https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/download/enclosure/TigerScale-V3-enclosure.3mf) |
+| — | Enclosure — printable 3MF, Bambu Studio project | [MakerWorld](https://makerworld.com/en/models/3161869-tigerscale-v3-best-smart-filament-scale-with-nfc#profileId-3573543) |
 
 Full costed list with every link: **[docs/HARDWARE.md](docs/HARDWARE.md#bill-of-materials)**
 
 ### Ready to slice
 
-The enclosure is on **[MakerWorld](https://makerworld.com/en/models/3161869-tigerscale-v3-best-smart-filament-scale-with-nfc)** and as one
-**[`.3mf` project](https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/download/enclosure/TigerScale-V3-enclosure.3mf)** with the plates already laid out —
+The enclosure is on **[MakerWorld](https://makerworld.com/en/models/3161869-tigerscale-v3-best-smart-filament-scale-with-nfc#profileId-3573543)** as one `.3mf`
+Bambu Studio project with the plates already laid out —
 open it in Bambu Studio or Orca and press Slice. No orientation to set, no
 supports to place.
 
 | Part | What it is |
 |------|------------|
-| `base` | Bottom shell, carries the load cell and the HX711 |
+| `base2` | Bottom shell with the load-cell support built in, carries the load cell and the HX711 |
 | `plateau` | The platform the spool sits on |
-| `suporte` | Load-cell support |
 | `ecran` | Bezel for the 3.5" touchscreen |
 | `tampa` &middot; `tampa rfid` | Top cover and the cover over the NFC bay |
 | `traseira` | Back panel |
@@ -261,7 +260,7 @@ Full pinout, bus topology and the wiring for each transport:
 royalty, no registration.**
 
 1. Build it — bill of materials and wiring in [docs/HARDWARE.md](docs/HARDWARE.md),
-   enclosure as a [printable 3MF](https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/download/enclosure/TigerScale-V3-enclosure.3mf).
+   enclosure as a [printable 3MF](https://makerworld.com/en/models/3161869-tigerscale-v3-best-smart-filament-scale-with-nfc#profileId-3573543).
 2. Flash the official firmware from the
    [web installer](https://tigertag-project.github.io/Tiger-Scale-V3/) — it always
    serves the current release, and the scale updates itself over the air after that.

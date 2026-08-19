@@ -69,7 +69,7 @@ units:
 
 1. **Build the hardware** — the bill of materials and the wiring are in
    [`docs/HARDWARE.md`](docs/HARDWARE.md). The printable enclosure is a
-   [downloadable 3MF](https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/download/enclosure/TigerScale-V3-enclosure.3mf).
+   [downloadable 3MF](https://makerworld.com/en/models/3161869-tigerscale-v3-best-smart-filament-scale-with-nfc#profileId-3573543).
 2. **Flash the latest official firmware.** The
    [web installer](https://tigertag-project.github.io/Tiger-Scale-V3/) always
    serves the current release, and the scale updates itself over the air after

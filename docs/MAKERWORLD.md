@@ -4,15 +4,14 @@ Everything needed to publish the TigerScale V3 enclosure on
 [MakerWorld](https://makerworld.com). Copy the blocks below straight into the
 upload form.
 
-Two notes before you start. **The print settings and the model files are yours to
-fill in** — they are marked `<<TODO>>` below, because inventing a layer height or a
-print time for a model I have not sliced would be worse than leaving a gap. And
-once the model is live, **link it back**: add the MakerWorld URL to `README.md` and
-to the Bill of Materials in [HARDWARE.md](HARDWARE.md), which currently point at the
-[Enclosure v1 release](https://github.com/TigerTag-Project/Tiger-Scale-V3/releases/tag/enclosure) instead.
+One note before you start. **The print settings are yours to fill in** — they are
+marked `<<TODO>>` below, because inventing a layer height or a print time for a
+model I have not sliced would be worse than leaving a gap.
 
-The model to upload is the 3MF attached to that release — a Bambu Studio project
-with the plates already laid out.
+The listing is live, and MakerWorld is now the only place the enclosure is
+published: `README.md`, [HARDWARE.md](HARDWARE.md), `TRADEMARK.md` and the web
+installer all link there. The model itself is `TigerScale-V3-Case-1.0.1.3mf`, a
+Bambu Studio project with the plates already laid out.
 
 ---
 
@@ -227,8 +226,8 @@ awkward to tighten later.
 
 | File | Status |
 |---|---|
-| `.3mf` project, pre-arranged with plates and settings | <<TODO>> |
-| Individual `.stl` parts | <<TODO>> |
+| `.3mf` project, pre-arranged with plates and settings | `TigerScale-V3-Case-1.0.1.3mf` |
+| Individual `.stl` parts | not published — the 3MF carries every part |
 | `README` / assembly PDF | optional; the repo covers it |
 
 The V2 scale shipped a single `.3mf` containing four build variants (motor / no
@@ -265,5 +264,5 @@ data beats a render every time.
       manufacturers' scopes are quoted as they stated them; see
       `assets/partners/README.md`
 - [ ] Factory spools called **TigerTag+**, not plain TigerTag
-- [ ] **After publishing:** add the MakerWorld URL to `README.md` and to the BoM in
+- [x] **After publishing:** add the MakerWorld URL to `README.md` and to the BoM in
       `HARDWARE.md`, replacing "not yet published for V3"

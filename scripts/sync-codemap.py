@@ -33,7 +33,11 @@ INO = "TigerTagSplashESP32/TigerTagSplashESP32.ino"
 CODEMAP = "CODEMAP.md"
 
 ROW = re.compile(r"^\| `([A-Za-z_][A-Za-z0-9_]*)` \| (\d+) \| (§\S+) \|$", re.M)
-SECTION_ROW = re.compile(r"^\| (\d+|AUDIO|LVGL) \| (.*?) \| (\d+)–(\d+) \|$", re.M)
+# Section ids are numbers or names. The name list used to be spelled out
+# (AUDIO|LVGL), which silently excluded §LIVE: its row could not be parsed,
+# so the map stayed one row short of the TOC forever and the script refused
+# to regenerate any range. Match names generically instead.
+SECTION_ROW = re.compile(r"^\| (\d+|[A-Z]+) \| (.*?) \| (\d+)–(\d+) \|$", re.M)
 TOC_LINE = re.compile(r"^//   (.*?)\s+(\d+)-\s*(\d+)$")
 
 

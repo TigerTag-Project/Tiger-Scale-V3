@@ -23,26 +23,26 @@
 //   CONFIGURATION VARIABLES                               1271- 1684
 //   OLED DISPLAY                                          1685- 2450
 //   CLOUD PARSING                                         2451- 2465
-//   WIFI SETUP                                            2466- 6962
-//   LITTLEFS                                              6963- 7262
-//   FIREBASE AUTHENTICATION                               7263- 8903
-//   WEBSOCKET                                             8904- 8930
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  8931- 9065
-//   UNIFIED WS FRAME BUILDER                              9066- 9179
-//   WEIGHT FILTER HELPERS                                 9180- 9194
-//   POST-SEND STATE RESET (shared by all send paths)      9195- 9215
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9216- 9472
-//   WEB SERVER                                            9473-10758
-//   CLOUD COMMUNICATION                                  10759-10941
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10942-11448
-//   mDNS                                                 11449-11486
-//   SCALE                                                11487-11657
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11658-11775
-//   RFID                                                 11776-12712
-//   OTA — Over-the-air firmware + filesystem update    12713-13369
-//   LVGL bridge + main weigh screen                      13370-14234
-//   Remote live view: the screen out, taps back in       14235-15079
-//   SETUP & LOOP                                         15080-16230
+//   WIFI SETUP                                            2466- 6985
+//   LITTLEFS                                              6986- 7285
+//   FIREBASE AUTHENTICATION                               7286- 8926
+//   WEBSOCKET                                             8927- 8953
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  8954- 9088
+//   UNIFIED WS FRAME BUILDER                              9089- 9202
+//   WEIGHT FILTER HELPERS                                 9203- 9217
+//   POST-SEND STATE RESET (shared by all send paths)      9218- 9238
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9239- 9495
+//   WEB SERVER                                            9496-10781
+//   CLOUD COMMUNICATION                                  10782-10964
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10965-11471
+//   mDNS                                                 11472-11509
+//   SCALE                                                11510-11680
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11681-11798
+//   RFID                                                 11799-12735
+//   OTA — Over-the-air firmware + filesystem update    12736-13392
+//   LVGL bridge + main weigh screen                      13393-14288
+//   Remote live view: the screen out, taps back in       14289-15133
+//   SETUP & LOOP                                         15134-16284
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -2846,13 +2846,18 @@ static String tsPick_network() {
                 lv_obj_align(lbl, LV_ALIGN_LEFT_MID, nameX, 0);
                 lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
 
-                // The picker and the status bar read two different sources --
-                // a scan result versus the live association -- and when they
+                // The picker and the status bar read two different sources -- a
+                // scan result versus the live association -- and when they
                 // disagree the only way to tell which is lying is to see both
-                // numbers with their BSSIDs next to each other.
-                Serial.printf("[WIFI] scan %-24s %4d dBm  %s\n",
-                              WiFi.SSID(idx).c_str(), WiFi.RSSI(idx),
-                              WiFi.BSSIDstr(idx).c_str());
+                // numbers with their BSSIDs next to each other. Only the
+                // connected SSID is logged: printing every result put sixteen
+                // lines into an eighty-line in-RAM ring on every scan, flushing
+                // out the history somebody debugging had come to read.
+                if (WiFi.SSID(idx) == WiFi.SSID()) {
+                    Serial.printf("[WIFI] scan %-24s %4d dBm  %s\n",
+                                  WiFi.SSID(idx).c_str(), WiFi.RSSI(idx),
+                                  WiFi.BSSIDstr(idx).c_str());
+                }
             };
 
             // The connected network first (its strongest instance), so the
@@ -6471,7 +6476,7 @@ static void runOtaMenu() {
 // LVGL screen. Sub-screens (calibration wizard, hardware test, wifi setup,
 // etc.) are untouched raw-gfx and still called exactly as before.
 static void runSettingsMenu() {
-    enum SettingsAction { SA_NONE, SA_WIFI, SA_FIREBASE, SA_VOLUME, SA_SCREEN, SA_CALIBRATE, SA_LANGUAGE, SA_HARDWARE, SA_LAN, SA_UPDATE, SA_FACTORY, SA_BACK };
+    enum SettingsAction { SA_NONE, SA_WIFI, SA_FIREBASE, SA_VOLUME, SA_SCREEN, SA_CALIBRATE, SA_LANGUAGE, SA_HARDWARE, SA_LAN, SA_UPDATE, SA_REBOOT, SA_FACTORY, SA_BACK };
     static SettingsAction sAction;
     lv_obj_t *prevScr = nullptr;
     lv_coord_t savedScrollY = 0;   // survives sub-screen round-trips, not menu exits
@@ -6754,6 +6759,13 @@ static void runSettingsMenu() {
         makeRow(CI_LAN, nullptr, gLanLiveView ? LVCOL_GREEN : LVCOL_MUTED,
                 t(I18N_LAN_TITLE), String(t(gLanLiveView ? I18N_YES : I18N_NO)), SA_LAN);
 
+        // Restart, just above the destructive row. With a battery fitted there
+        // is no other way to power-cycle: pulling the USB cable no longer stops
+        // the scale, it just moves it onto the cell. Amber, not red -- it
+        // interrupts whatever is on screen but destroys nothing.
+        makeRow(CI_GLYPH, LV_SYMBOL_REFRESH, LVCOL_ORANGE,
+                t(I18N_REBOOT), String(""), SA_REBOOT);
+
         // Last row, deliberately: the one destructive action of this list
         // sits at the end of the scroll, red, behind an lvglConfirm.
         makeRow(CI_GLYPH, LV_SYMBOL_TRASH, LVCOL_RED,
@@ -6875,6 +6887,17 @@ static void runSettingsMenu() {
             case SA_HARDWARE:   runHardwareTest();       break;
             case SA_LAN:        runLanSettings();        break;
             case SA_UPDATE:     runOtaMenu();            break;
+            case SA_REBOOT:
+                // Confirmed like the factory row, for a different reason: this
+                // one cannot lose data, but an accidental tap mid-weighing
+                // throws away the session, and there is no undo for a restart.
+                if (lvglConfirm(t(I18N_REBOOT_Q))) {
+                    Serial.println("[RESET] restart from Settings");
+                    displayMessage(t(I18N_REBOOTING), "");
+                    delay(400);             // let the message land before the reset
+                    ESP.restart();
+                }
+                break;
             case SA_FACTORY:
                 // Full NVS erase — every namespace: config, WiFi creds, LAN
                 // code, meta cache, calibration. The next boot finds no
@@ -13557,6 +13580,7 @@ static lv_obj_t *lvBatteryBody     = nullptr;
 static lv_obj_t *lvBatteryFill     = nullptr;
 static lv_obj_t *lvBatteryBolt     = nullptr;
 static lv_obj_t *lvBatteryPctLabel = nullptr;
+static lv_obj_t *lvBatteryPctBold  = nullptr;   // 1px-offset twin, see the builder
 // The signal level is drawn the way iOS draws it: the whole glyph is always
 // there and the arcs above the current level are dimmed, never recoloured and
 // never removed. LV_SYMBOL_WIFI is one indivisible glyph, so the level comes
@@ -13753,10 +13777,28 @@ static void lvglBuildMainScreen() {
     // The percentage now occupies the centre of the outline, so the bolt cannot
     // live there any more -- it sits in the row, to the right of the glyph, in
     // the space the old "12%" label used to take.
+    // Drawn twice, one pixel apart, because LVGL ships Montserrat in a single
+    // weight and has no synthetic bold: at 12px the doubled stroke is what makes
+    // the figure read as bold. Generating a real bold face would cost flash for
+    // three digits. The twin also centres the pair -- one copy alone put the ink
+    // half a pixel left of the interior's middle, the two together land on it.
+    lvBatteryPctBold = lv_label_create(lvBatteryBody);
+    lv_obj_set_style_text_font(lvBatteryPctBold, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lvBatteryPctBold, LVCOL_TEXT, 0);
+    // The pair is nudged one pixel left of geometric centre on purpose. LVGL
+    // centres the text BOX, and Montserrat's digits are proportional: "1" has a
+    // wide advance with its stem pushed to the right of it, so the visible ink
+    // drifts right by a pixel or two as soon as a 1 appears -- "61" measured 8px
+    // of interior on its left against 6 on its right. One pixel left puts values
+    // containing a 1 dead centre and leaves the others within half a pixel,
+    // which is the floor for an odd-width ink in an even-width box.
+    lv_obj_align(lvBatteryPctBold, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_clear_flag(lvBatteryPctBold, LV_OBJ_FLAG_CLICKABLE);
+
     lvBatteryPctLabel = lv_label_create(lvBatteryBody);
     lv_obj_set_style_text_font(lvBatteryPctLabel, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lvBatteryPctLabel, LVCOL_TEXT, 0);
-    lv_obj_center(lvBatteryPctLabel);
+    lv_obj_align(lvBatteryPctLabel, LV_ALIGN_CENTER, -1, 0);
     lv_obj_clear_flag(lvBatteryPctLabel, LV_OBJ_FLAG_CLICKABLE);
 
     lvBatteryBolt = lv_img_create(statusRow);
@@ -14186,11 +14228,16 @@ static void lvglUpdateMainScreen(float weight, const String& uid, OledState stat
                 // behaviour a phone has and batVbus alone can never express.
                 bool charging = batChg;
 
-                // Fill colour, phone convention: green while current flows in, red
-                // at or below 20%, plain white otherwise.
+                // Fill colour, phone convention: green while current flows in,
+                // red at or below 20%, accent blue otherwise. None of the three
+                // is white, and that is the point -- the number is drawn over
+                // this fill and has to stay legible whether a digit lands on the
+                // fill or on the dark interior beside it. A white fill made a
+                // white numeral impossible and forced the dark-numeral rule that
+                // hid a digit outright (see below).
                 lv_color_t fillCol = charging       ? LVCOL_GREEN
                                    : (batPct <= 20) ? LVCOL_RED
-                                                    : LVCOL_TEXT;
+                                                    : LVCOL_ACCENT;
 
                 // Width is the level. Never let it round down to nothing: an icon
                 // with no fill at all reads as "broken", not as "nearly empty".
@@ -14201,14 +14248,21 @@ static void lvglUpdateMainScreen(float weight, const String& uid, OledState stat
                 lv_obj_set_style_bg_color(lvBatteryFill, fillCol, 0);
                 lv_obj_set_size(lvBatteryFill, fillW, BAT_FILL_H);
 
-                // The number sits on top of the fill. Once the fill has swept past
-                // the middle of the glyph it is the background the digits stand on,
-                // so they have to flip dark -- white on white is the failure mode
-                // this rule exists to avoid.
-                bool overFill = (fillW >= BAT_FILL_MAX_W / 2);
-                lv_obj_set_style_text_color(lvBatteryPctLabel,
-                                            overFill ? LVCOL_BG : LVCOL_TEXT, 0);
+                // The number is always white. It used to flip dark once the fill
+                // passed the halfway mark, which was wrong in a way that showed a
+                // false reading rather than an ugly one: the fill boundary can
+                // fall in the MIDDLE of a two-digit number. At 55% the fill
+                // reached 13 of 24 pixels, the whole label turned dark, and the
+                // second digit -- sitting past the fill, on the dark interior --
+                // vanished. The panel read "5" on a battery at 55%.
+                //
+                // One colour for the numeral is only possible because no fill is
+                // white any more; white reads on green, on red, on accent and on
+                // the dark interior alike.
+                lv_obj_set_style_text_color(lvBatteryPctLabel, LVCOL_TEXT, 0);
+                lv_obj_set_style_text_color(lvBatteryPctBold, LVCOL_TEXT, 0);
                 lv_label_set_text_fmt(lvBatteryPctLabel, "%u", batPct);
+                lv_label_set_text_fmt(lvBatteryPctBold, "%u", batPct);
 
                 if (charging) lv_obj_clear_flag(lvBatteryBolt, LV_OBJ_FLAG_HIDDEN);
                 else          lv_obj_add_flag(lvBatteryBolt, LV_OBJ_FLAG_HIDDEN);

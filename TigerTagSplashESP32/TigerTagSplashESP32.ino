@@ -17,32 +17,32 @@
 //   ---------------------------------------------------- -----------
 //   HARDWARE CONFIGURATION                                 231-  386
 //   OTA CONFIGURATION                                      387-  409
-//   FORWARD DECLARATIONS                                   410-  562
-//   WEIGHT ROUNDING                                        563-  582
-//   GLOBAL OBJECTS                                         583- 1075
-//   CONFIGURATION VARIABLES                               1076- 1479
-//   OLED DISPLAY                                          1480- 2219
-//   CLOUD PARSING                                         2220- 2234
-//   WIFI SETUP                                            2235- 6694
-//   LITTLEFS                                              6695- 6994
-//   FIREBASE AUTHENTICATION                               6995- 8617
-//   WEBSOCKET                                             8618- 8644
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  8645- 8779
-//   UNIFIED WS FRAME BUILDER                              8780- 8870
-//   WEIGHT FILTER HELPERS                                 8871- 8885
-//   POST-SEND STATE RESET (shared by all send paths)      8886- 8906
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  8907- 9163
-//   WEB SERVER                                            9164-10449
-//   CLOUD COMMUNICATION                                  10450-10632
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10633-11139
-//   mDNS                                                 11140-11177
-//   SCALE                                                11178-11348
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11349-11466
-//   RFID                                                 11467-12403
-//   OTA — Over-the-air firmware + filesystem update    12404-13060
-//   LVGL bridge + main weigh screen                      13061-13881
-//   Remote live view: the screen out, taps back in       13882-14726
-//   SETUP & LOOP                                         14727-15875
+//   FORWARD DECLARATIONS                                   410-  640
+//   WEIGHT ROUNDING                                        641-  660
+//   GLOBAL OBJECTS                                         661- 1270
+//   CONFIGURATION VARIABLES                               1271- 1684
+//   OLED DISPLAY                                          1685- 2450
+//   CLOUD PARSING                                         2451- 2465
+//   WIFI SETUP                                            2466- 6962
+//   LITTLEFS                                              6963- 7262
+//   FIREBASE AUTHENTICATION                               7263- 8903
+//   WEBSOCKET                                             8904- 8930
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  8931- 9065
+//   UNIFIED WS FRAME BUILDER                              9066- 9179
+//   WEIGHT FILTER HELPERS                                 9180- 9194
+//   POST-SEND STATE RESET (shared by all send paths)      9195- 9215
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9216- 9472
+//   WEB SERVER                                            9473-10758
+//   CLOUD COMMUNICATION                                  10759-10941
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10942-11448
+//   mDNS                                                 11449-11486
+//   SCALE                                                11487-11657
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11658-11775
+//   RFID                                                 11776-12712
+//   OTA — Over-the-air firmware + filesystem update    12713-13369
+//   LVGL bridge + main weigh screen                      13370-14234
+//   Remote live view: the screen out, taps back in       14235-15079
+//   SETUP & LOOP                                         15080-16230
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -498,7 +498,7 @@ static void drawHomeIcon(int16_t ix, int16_t iy, uint16_t color);
 static void drawScaleIcon(int16_t ix, int16_t iy, uint16_t color);
 static void drawVolumeIcon(int16_t ix, int16_t iy, uint8_t type, uint16_t color);
 static void drawSettingsIcon(int16_t cx, int16_t cy, uint16_t color, uint16_t bg);
-static void drawBatteryIcon(int16_t bx, int16_t by, uint8_t pct, bool vbus);
+static void drawBatteryIcon(int16_t bx, int16_t by, uint8_t pct, bool charging);
 // AXP2101: read one register via Wire1 (SDA=8, SCL=7)
 static uint8_t axpRead(uint8_t reg) {
     Wire1.beginTransmission(AXP2101_ADDR);
@@ -507,16 +507,94 @@ static uint8_t axpRead(uint8_t reg) {
     Wire1.requestFrom((uint8_t)AXP2101_ADDR, (uint8_t)1);
     return Wire1.available() ? Wire1.read() : 0xFF;
 }
-// Returns battery % (0-100), 255 = no battery, 254 = AXP not found
-// Returns VBUS status via out param
-static uint8_t axpBatteryPercent(bool &vbusOut) {
-    uint8_t st = axpRead(0x00); // STATUS1: bit5=vbus, bit3=bat present
-    if (st == 0xFF) { vbusOut = false; return 254; }
-    vbusOut = (st >> 5) & 0x01;
-    if (!((st >> 3) & 0x01)) return 255; // battery not present
-    uint8_t pct = axpRead(0xA4);         // coulometer percentage 0-100
-    return (pct > 100) ? 100 : pct;
+// The battery answer, in one place. It used to live as static locals inside
+// lvglUpdateMainScreen(), which only runs while the main weigh screen is on
+// screen -- so telemetry froze the moment anyone opened Settings. Polled from
+// the main loop instead, and read by the screen, the WebSocket frame and the
+// Firestore heartbeat alike.
+struct BatteryState {
+    bool    present  = false;
+    bool    vbus     = false;
+    bool    charging = false;
+    uint8_t percent  = 0;
+    bool    known    = false;   // false until the first successful read
+};
+static BatteryState gBattery;
+
+// Two cadences, because the two halves cost different amounts and change at
+// completely different speeds. Plugging a cable is an instant event somebody is
+// watching for, so the two state registers are read at 4 Hz -- 8 bytes a second
+// on Wire1. The coulometer moves over minutes and stays on 30 s, refreshed at
+// once whenever the cable state flips, which is exactly when it matters.
+static void pollBatteryState() {
+    static uint32_t stateMs = 0, levelMs = 0;
+    const uint32_t now = millis();
+    if (stateMs == 0 || now - stateMs >= 250) {
+        stateMs = now;
+        const bool wasChg = gBattery.charging, wasVbus = gBattery.vbus;
+        gBattery.present = axpChargeState(gBattery.vbus, gBattery.charging);
+        gBattery.known   = true;
+        if (gBattery.charging != wasChg || gBattery.vbus != wasVbus) levelMs = 0;
+    }
+    if (gBattery.present && (levelMs == 0 || now - levelMs >= 30000)) {
+        levelMs = now;
+        gBattery.percent = axpBatteryLevel();
+    }
+    if (!gBattery.present) gBattery.percent = 0;
 }
+
+// Cheap half of the battery question: two 1-byte registers, no coulometer.
+// Plugging or unplugging a cable is an instant event somebody is watching for,
+// so this is the part that gets polled several times a second. Returns whether
+// a battery is present at all.
+// vbus and "charging" are not the same question, which is the whole point of
+// reading STATUS2 as well: VBUS only says a cable is plugged in, and a full
+// battery on a live cable has vbus=1 while charging nothing. A phone drops the
+// bolt at that moment and so do we -- an icon that claims to be charging
+// forever is an icon nobody reads.
+static bool axpChargeState(bool &vbusOut, bool &chargingOut) {
+    uint8_t st = axpRead(0x00);                 // STATUS1: bit5=vbus, bit3=bat present
+    if (st == 0xFF) { vbusOut = false; chargingOut = false; return false; }
+    vbusOut = (st >> 5) & 0x01;
+    if (!((st >> 3) & 0x01)) { chargingOut = false; return false; }
+    uint8_t st2 = axpRead(0x01);                // STATUS2 bits[2:0]: charger state machine
+    chargingOut = (st2 != 0xFF) ? ((st2 & 0x07) <= 0x03) : vbusOut;
+    return true;
+}
+// Expensive half, relatively speaking, and the one that moves in minutes rather
+// than instantly: the coulometer's own percentage.
+static uint8_t axpBatteryLevel() {
+    uint8_t p = axpRead(0xA4);
+    return (p > 100) ? 100 : p;
+}
+// Connect by SSID and let the driver choose the best BSSID for it.
+//
+// The ESP32 caches the BSSID of its last association in NVS and returns to that
+// exact radio on every reconnect, indefinitely. On a network with several access
+// points sharing an SSID -- a mesh, or one router broadcasting sibling SSIDs from
+// the same radios -- a scale that first associated across the house stays pinned
+// there. The bench unit sat at -79 dBm on CC:BA:BD:83:47:90 while the identical
+// SSID was available at -35 dBm on 10:5A:95:74:DE:50 one metre away, and a full
+// power cycle changed nothing: the cached BSSID outlives the reboot.
+//
+// Erasing the stored config before begin() is what forces a fresh scan and a new
+// choice. It costs one scan per connect; keeping the cache cost 44 dB.
+
+static void wifiBeginBestAp(const char* ssid, const char* pass) {
+    WiFi.disconnect(true, true);   // drop the association and erase the stored config
+    delay(50);
+    WiFi.mode(WIFI_STA);
+    // Erasing the cache is necessary but not sufficient. The driver's default is
+    // WIFI_FAST_SCAN, which stops at the FIRST access point advertising the SSID
+    // and never compares signals -- so on a multi-AP network it picks whichever
+    // radio it happened to hear first. Asking for a full sweep sorted by signal
+    // is what actually makes "connect to Stargate" mean "connect to the nearest
+    // Stargate". It costs a full-channel scan on connect.
+    WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+    WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
+    WiFi.begin(ssid, pass);
+}
+
 static Language showLanguageMenu(float weight, const String& uid, OledState state);
 void resetWeightFilters();
 static void finishRfidSession(PN532Reader &reader);
@@ -613,6 +691,123 @@ Arduino_Canvas *gfx = new Arduino_Canvas(320, 480, panel, 0, 0, ROTATION);
 #define LVCOL_GREEN  lv_color_hex(0x3BA55D)
 #define LVCOL_YELLOW lv_color_hex(0xF2B705)
 #define LVCOL_ORANGE lv_color_hex(0xE8821E)
+
+// ---- WiFi signal, drawn identically everywhere ------------------------------
+//
+// One pictogram and one scale for the whole firmware: the weigh screen's status
+// bar and the network picker call the same two functions below, so they cannot
+// drift into showing the same signal differently. They used to -- the status bar
+// had a wave on five levels and the picker had five vertical bars on six.
+//
+// Sized to the montserrat_14 glyph box. LV_SYMBOL_WIFI is one indivisible glyph,
+// so a level is drawn by stacking the SAME glyph twice: a dimmed copy for the
+// full outline, and a full-opacity copy inside a clip box whose height reveals
+// only the lit arcs. iOS does the same thing -- the shape never changes, only
+// the opacity above the current level. Drawing a second, segmented icon would
+// have been easier and would have changed the shape; this cannot, because it is
+// literally the same character.
+//
+// The clip heights are measured from the bottom of the glyph box and land
+// between arcs, never through one: the arcs are stacked vertically, so a
+// horizontal cut either takes a whole arc or none of it.
+// Taller and wider than the glyph's own box on purpose: at 16x17 the top arc
+// was clipped and the icon read as a broken drawing. The clip heights below are
+// measured from the BOTTOM and the label is bottom-anchored, so growing the box
+// upward reveals more without moving any threshold.
+static const int WIFI_ICON_W = 20;
+static const int WIFI_ICON_H = 21;
+// Four states, not five, because LV_SYMBOL_WIFI is drawn with exactly THREE
+// pieces -- an outer arc, an inner arc and the dot -- so it can express "off"
+// plus three degrees and no more. A five-level scale was tried first and forced
+// one cut through the middle of the outer arc, leaving its apex dimmed while its
+// shoulders were lit: the wave read as chopped off at the top. Measured against
+// the panel, the ink sits at these offsets from the bottom of the label box, and
+// the heights below fall in the gaps between pieces rather than across one.
+static const uint8_t kWifiLevelClipH[4] = { 0, 5, 10, WIFI_ICON_H };
+
+// 0..3. Integer truncation on purpose: it is what fixes the bands 20 dBm apart.
+// The same arithmetic is documented in docs/TELEMETRY.md so Studio Manager and
+// the scale describe one signal the same way.
+static inline int wifiLevelFromRssi(int rssi) {
+    if (rssi > -40)  rssi = -40;
+    if (rssi < -100) rssi = -100;
+    int lv = (rssi + 100) * 3 / 60;
+    return (lv < 0) ? 0 : (lv > 3 ? 3 : lv);
+}
+
+// Builds the icon into `parent`. The three handles are only needed by a caller
+// that updates it later; a picker row can pass nullptr and forget them.
+static lv_obj_t *lvglBuildWifiWave(lv_obj_t *parent,
+                                   lv_obj_t **dimOut, lv_obj_t **clipOut, lv_obj_t **litOut) {
+    lv_obj_t *wrap = lv_obj_create(parent);
+    lv_obj_remove_style_all(wrap);
+    lv_obj_set_size(wrap, WIFI_ICON_W, WIFI_ICON_H);
+    lv_obj_clear_flag(wrap, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *dim = lv_label_create(wrap);
+    lv_label_set_text(dim, LV_SYMBOL_WIFI);
+    lv_obj_align(dim, LV_ALIGN_BOTTOM_MID, 0, 0);
+
+    lv_obj_t *clip = lv_obj_create(wrap);
+    lv_obj_remove_style_all(clip);
+    lv_obj_set_size(clip, WIFI_ICON_W, WIFI_ICON_H);
+    lv_obj_align(clip, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_clear_flag(clip, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *lit = lv_label_create(clip);
+    lv_label_set_text(lit, LV_SYMBOL_WIFI);
+    lv_obj_align(lit, LV_ALIGN_BOTTOM_MID, 0, 0);
+
+    if (dimOut)  *dimOut  = dim;
+    if (clipOut) *clipOut = clip;
+    if (litOut)  *litOut  = lit;
+    return wrap;
+}
+
+// level 0..4; connected=false paints the whole glyph solid red, which is what
+// the status bar has always done for "no network" and is a different statement
+// from "dreadful network".
+static void lvglSetWifiWaveLevel(lv_obj_t *dim, lv_obj_t *clip, lv_obj_t *lit,
+                                 int level, bool connected) {
+    if (!dim || !clip || !lit) return;
+    if (!connected) {
+        lv_obj_set_style_text_color(dim, LVCOL_RED, 0);
+        lv_obj_set_style_text_opa(dim, LV_OPA_COVER, 0);
+        lv_obj_add_flag(clip, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    if (level < 0) level = 0;
+    if (level > 3) level = 3;
+    if (level >= 3) {
+        // Full signal: one uniform glyph, no stacking. The clip box can only
+        // ever cover the ink it reaches, so at max level the top of the outer
+        // arc stayed on the dimmed copy and the wave read as cut off at the top.
+        // There is nothing to dim at full strength -- paint the single copy lit,
+        // which is also exactly what the connected network's bubble does.
+        lv_obj_set_style_text_color(dim, LVCOL_GREEN, 0);
+        lv_obj_set_style_text_opa(dim, LV_OPA_COVER, 0);
+        lv_obj_add_flag(clip, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_set_style_text_color(dim, LVCOL_GREEN, 0);
+    // 30% is the iOS figure and it works on a black status bar; on the picker's
+    // grey cards the unlit arcs vanished entirely. 50% reads on both.
+    lv_obj_set_style_text_opa(dim, LV_OPA_50, 0);
+    lv_obj_set_style_text_color(lit, LVCOL_GREEN, 0);
+    lv_obj_set_style_text_opa(lit, LV_OPA_COVER, 0);
+    if (level == 0) {
+        lv_obj_add_flag(clip, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_clear_flag(clip, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_height(clip, kWifiLevelClipH[level]);
+    // Re-align after the resize: the constructor's alignment is not re-run on a
+    // size change, and the box must stay pinned to the bottom or the lit arcs
+    // drift off the dim ones.
+    lv_obj_align(clip, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_align(lit, LV_ALIGN_BOTTOM_MID, 0, 0);
+}
+
 static bool lvglReady = false;
 
 // Chinese glyphs. The built-in Montserrat faces are Latin-only, which is why
@@ -1329,6 +1524,16 @@ static uint32_t gLastHeartbeatScheduleMs = 0;
 static bool     gFirstHeartbeatDone = false;  // legacy compat
 static bool     gNtpSynced          = false;
 const uint32_t  HEARTBEAT_INTERVAL_MS = 30000;
+// Screen off is a reported state, not an absence. The scale stays fully awake in
+// the screensaver -- CPU at speed, WiFi associated -- so it keeps checking in,
+// just an order of magnitude less often. A dashboard can then say "in standby"
+// instead of inferring "gone" from a timestamp that stopped moving, and the
+// radio does ten times less work while nobody is looking at the thing.
+const uint32_t  HEARTBEAT_INTERVAL_SLEEP_MS = 300000;   // 5 min, backlight off
+static bool     gScreenOff = false;
+static inline uint32_t heartbeatIntervalMs() {
+    return gScreenOff ? HEARTBEAT_INTERVAL_SLEEP_MS : HEARTBEAT_INTERVAL_MS;
+}
 const uint32_t  CLOUD_BOOT_DELAY_MS   = 12000;
 static uint32_t gCloudBootReadyAtMs   = 0;
 const uint32_t  FIREBASE_BOOT_DELAY_MS = 30000;
@@ -1525,6 +1730,10 @@ static void applyBrightness(uint8_t pct) {
 static void runScreensaver() {
     if (!gDisplayReady || gfx == nullptr) return;
     Serial.println("[SS] Screen sleep: backlight off");
+    // Announce the transition rather than letting it be inferred from silence:
+    // one beat now, carrying power_state="screen_off", then the slow cadence.
+    gScreenOff = true;
+    if (WiFi.isConnected()) { gLastHeartbeatScheduleMs = millis(); gHeartbeatPending = true; }
     { int16_t tx, ty; while (tsRead(tx, ty)) delay(10); } // drain any lingering touch
 
     gfx->fillScreen(0x0000);
@@ -1541,8 +1750,26 @@ static void runScreensaver() {
             Serial.println("[SS] wake: weight change");
             break;
         }
+
+        // loop() is parked in here, so the periodic work it owns has to be
+        // driven from inside. Nothing is actually asleep: the CPU runs at full
+        // speed, WiFi stays associated (setSleep(false) is forced at startup)
+        // and only the backlight is off. Leaving this out is what made a scale
+        // in screensaver read as disconnected in Firestore -- it was still
+        // there and still reachable, its heartbeat scheduler simply never ran.
+        // sendScaleHeartbeat() itself lives on cloudWorkerTask and never
+        // stopped, so raising the flag is all that is missing.
+        pollBatteryState();
+        if (WiFi.isConnected()
+            && (millis() - gLastHeartbeatScheduleMs) >= heartbeatIntervalMs()) {
+            gLastHeartbeatScheduleMs = millis();
+            gHeartbeatPending = true;
+        }
+
         delay(30);
     }
+    gScreenOff = false;
+    if (WiFi.isConnected()) { gLastHeartbeatScheduleMs = millis(); gHeartbeatPending = true; }
     applyBrightness(gBrightness);
     Serial.println("[SS] Screen wake");
 }
@@ -1768,9 +1995,13 @@ static void drawSettingsIcon(int16_t cx, int16_t cy, uint16_t color, uint16_t bg
 
 // Battery icon: minimal outline body 48×26, terminal 5×14 on right, single
 // proportional fill bar (no segmented rainbow bars — matches the flat light theme).
-// pct: 0-100 = battery %, 254 = unknown, 255 = USB/VBUS. vbus = charger detected.
-// Fill colour: COL_ACCENT normally, red only when critically low (<=15%), COL_ACCENT + bolt when charging.
-static void drawBatteryIcon(int16_t bx, int16_t by, uint8_t pct, bool vbus) {
+// pct: 0-100 = battery %, 254 = unknown, 255 = no battery. charging = current is
+// actually flowing into the cell (STATUS2), not merely "a cable is plugged in".
+// Fill colour follows the phone convention the LVGL icon uses: green while
+// charging, blue on battery, red at or below 20%. The fill is ALWAYS the real
+// percentage — it used to be forced to 100% while charging, which hid the very
+// number the icon exists to show.
+static void drawBatteryIcon(int16_t bx, int16_t by, uint8_t pct, bool charging) {
     const int16_t BW=48, BH=26, TW=5, TH=14;
     // Body: thin outline only (hollow), no card fill
     gfx->drawRoundRect(bx, by, BW, BH, 4, COL_TEXT);
@@ -1788,14 +2019,16 @@ static void drawBatteryIcon(int16_t bx, int16_t by, uint8_t pct, bool vbus) {
         return;
     }
 
-    bool charging = (pct == 255 || vbus);
-    uint8_t level = charging ? 100 : pct;
-    uint16_t fillCol = (!charging && level <= 15) ? (uint16_t)0xF800 : COL_ACCENT;
+    uint8_t level = (pct == 255) ? 100 : pct;
+    uint16_t fillCol = charging          ? (uint16_t)0x3D2B   // green, charging (RGB565 of LVCOL_GREEN #3BA55D)
+                     : (level <= 20)     ? (uint16_t)0xF800   // red, low
+                                         : COL_ACCENT;
     int16_t fillW = (int16_t)((int32_t)innerW * level / 100);
     if (fillW < 3) fillW = 3; // always show a sliver so the icon reads as "a battery"
     gfx->fillRoundRect(innerX, innerY, fillW, innerH, 2, fillCol);
 
-    // Lightning bolt overlay when USB / charging
+    // Lightning bolt overlay while current is flowing in. It disappears once the
+    // charger reports "done", the same way a phone drops it at 100% on the cable.
     if (charging) {
         int16_t bcx = bx + BW/2, bcy = by + BH/2;
         gfx->fillTriangle(bcx+4, bcy-8, bcx-4, bcy+1, bcx+1, bcy+1, COL_ON_ACCENT);
@@ -2165,18 +2398,16 @@ void displayWeightWithState(float weight, const String& uid, OledState state) {
     // --- Control buttons: BAT | TARA | SETTINGS ---
     // Battery icon (far left, vertically centred in bar)
     {
-        static uint8_t  batPct    = 254;
-        static bool     batVbus   = false;
-        static uint32_t batLastMs = 0;
-        if (millis() - batLastMs > 30000 || batLastMs == 0) {
-            batLastMs = millis();
-            batPct = axpBatteryPercent(batVbus);
-        }
-        // If USB CDC detected and AXP not yet read, treat as USB
+        // Same shared state as the LVGL path. This fallback used to keep its own
+        // 30 s poll, which meant the two drawings of the same icon could
+        // disagree -- a divergence in standby code is found at the worst moment.
+        uint8_t    batPct = gBattery.known ? (gBattery.present ? gBattery.percent : 255) : 254;
+        const bool batChg = gBattery.charging;
+        // AXP unreadable and a USB CDC host attached: there is no cell to show.
         if (batPct == 254 && (bool)Serial) { batPct = 255; }
         const int16_t ICON_H=26;
         const int16_t bx = 8, by = BTN_Y + (BTN_H - ICON_H) / 2;
-        drawBatteryIcon(bx, by, batPct, batVbus);
+        drawBatteryIcon(bx, by, batPct, batChg);
     }
     // WiFi icon — standalone, no pill, next to battery
     {
@@ -2420,7 +2651,6 @@ static void tsBtn(int16_t x, int16_t y, int16_t w, int16_t h,
 // fixed 6-row window with up/down paging buttons.
 static String tsPick_network() {
     const int RH = 48, RGAP = 5;
-    const int barH[5] = {4, 6, 8, 10, 12};
     enum PickAction { PA_NONE, PA_SELECT, PA_SCAN, PA_CANCEL };
     static PickAction sPickAction;
     static int        sPickIdx;
@@ -2504,6 +2734,9 @@ static String tsPick_network() {
         lv_obj_set_style_text_font(scanMsg, &gFont20, 0);
 
         Serial.println("[WIFI] tsPick: starting scan");
+        Serial.printf("[WIFI] assoc %-23s %4d dBm  %s  ch=%d\n",
+                      WiFi.SSID().c_str(), WiFi.RSSI(),
+                      WiFi.BSSIDstr().c_str(), WiFi.channel());
         WiFi.scanNetworks(true);  // async — the spinner animates instead of the UI freezing
         int n;
         while ((n = WiFi.scanComplete()) == WIFI_SCAN_RUNNING && sPickAction == PA_NONE) { lv_timer_handler(); delay(30); }
@@ -2547,51 +2780,79 @@ static String tsPick_network() {
                 lv_obj_set_user_data(row, (void *)(intptr_t)idx);
                 lv_obj_add_event_cb(row, selectCb, LV_EVENT_CLICKED, nullptr);
 
-                int nameX = 10;
+                // macOS layout: the signal glyph leads the row, ahead of the
+                // name, and the connected network wears it in a filled accent
+                // bubble instead of a separate tick. One marker, not two.
+                const int ICON_X = 10;
+                const int BUBBLE = 26;
+                int nameX = ICON_X + BUBBLE + 8;
                 if (current) {
-                    lv_obj_t *chk = lv_label_create(row);
-                    lv_label_set_text(chk, LV_SYMBOL_OK);
-                    lv_obj_set_style_text_color(chk, LVCOL_GREEN, 0);
-                    lv_obj_align(chk, LV_ALIGN_LEFT_MID, 10, 0);
-                    lv_obj_clear_flag(chk, LV_OBJ_FLAG_CLICKABLE);
-                    nameX = 34;
+                    lv_obj_t *bubble = lv_obj_create(row);
+                    lv_obj_remove_style_all(bubble);
+                    lv_obj_set_size(bubble, BUBBLE, BUBBLE);
+                    lv_obj_set_style_bg_color(bubble, LVCOL_ACCENT, 0);
+                    lv_obj_set_style_bg_opa(bubble, LV_OPA_COVER, 0);
+                    lv_obj_set_style_radius(bubble, LV_RADIUS_CIRCLE, 0);
+                    lv_obj_align(bubble, LV_ALIGN_LEFT_MID, ICON_X, 0);
+                    lv_obj_clear_flag(bubble, LV_OBJ_FLAG_SCROLLABLE);
+                    lv_obj_clear_flag(bubble, LV_OBJ_FLAG_CLICKABLE);
+                    // Solid white inside the bubble, no level: macOS does not
+                    // modulate the connected network's badge, and dimmed white
+                    // on accent blue reads as a rendering fault rather than as a
+                    // signal level. The live level lives in the status bar.
+                    lv_obj_t *g = lv_label_create(bubble);
+                    lv_label_set_text(g, LV_SYMBOL_WIFI);
+                    lv_obj_set_style_text_color(g, LVCOL_TEXT, 0);
+                    // Geometric centring, measured against the panel: 7px of
+                    // bubble above the ink and 7px below. An optical nudge was
+                    // tried and reverted -- shifting down to balance the glyph's
+                    // top-heavy mass left 8px above and 5px below, and the gap it
+                    // opened at the top read as the wave being cut off.
+                    lv_obj_center(g);
+                    lv_obj_clear_flag(g, LV_OBJ_FLAG_CLICKABLE);
+                } else {
+                    lv_obj_t *sigDim = nullptr, *sigClip = nullptr, *sigLit = nullptr;
+                    lv_obj_t *sig = lvglBuildWifiWave(row, &sigDim, &sigClip, &sigLit);
+                    lv_obj_align(sig, LV_ALIGN_LEFT_MID,
+                                 ICON_X + (BUBBLE - WIFI_ICON_W) / 2, 0);
+                    lv_obj_clear_flag(sig, LV_OBJ_FLAG_CLICKABLE);
+                    lvglSetWifiWaveLevel(sigDim, sigClip, sigLit,
+                                         wifiLevelFromRssi(WiFi.RSSI(idx)), true);
                 }
 
                 bool enc = (WiFi.encryptionType(idx) != WIFI_AUTH_OPEN);
                 if (enc) {
                     // The real FontAwesome padlock, carried by the CJK subset
                     // fonts — the hand-drawn primitive version it replaces
-                    // never looked like a lock. Sits just left of the signal
-                    // bars: name ......... [lock] [signal].
+                    // never looked like a lock. Now the last thing on the row:
+                    // [signal] name ......... [lock].
                     lv_obj_t *lock = lv_label_create(row);
                     lv_label_set_text(lock, TT_SYMBOL_LOCK);
                     lv_obj_set_style_text_color(lock, LVCOL_MUTED, 0);
                     lv_obj_set_style_text_font(lock, &gFont16, 0);
-                    lv_obj_align(lock, LV_ALIGN_RIGHT_MID, -40, 0);
+                    lv_obj_align(lock, LV_ALIGN_RIGHT_MID, -12, 0);
                     lv_obj_clear_flag(lock, LV_OBJ_FLAG_CLICKABLE);
                 }
 
                 lv_obj_t *lbl = lv_label_create(row);
                 lv_label_set_text(lbl, WiFi.SSID(idx).c_str());
                 lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
-                lv_obj_set_width(lbl, 330 - (nameX - 10));
+                // Width recomputed for the new order: the icon column is now on
+                // the left and the lock is flush right, so the name gets the gap
+                // between them. Left as the old constant, long SSIDs ran under
+                // the padlock.
+                lv_obj_set_width(lbl, 400 - nameX - (enc ? 34 : 12));
                 lv_obj_set_style_text_color(lbl, LVCOL_TEXT, 0);
                 lv_obj_align(lbl, LV_ALIGN_LEFT_MID, nameX, 0);
                 lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
 
-                int bars = map(constrain(WiFi.RSSI(idx), -100, -40), -100, -40, 0, 5);
-                for (int b = 0; b < 5; b++) {
-                    int bh = barH[b];
-                    lv_obj_t *bar = lv_obj_create(row);
-                    lv_obj_remove_style_all(bar);
-                    lv_obj_set_size(bar, 3, bh);
-                    lv_obj_set_style_bg_color(bar, b < bars ? LVCOL_GREEN : LVCOL_BORDER, 0);
-                    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-                    lv_obj_set_style_radius(bar, 1, 0);
-                    lv_obj_align(bar, LV_ALIGN_RIGHT_MID, -8 - (4 - b) * 5, 6 - bh / 2);
-                    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
-                    lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
-                }
+                // The picker and the status bar read two different sources --
+                // a scan result versus the live association -- and when they
+                // disagree the only way to tell which is lying is to see both
+                // numbers with their BSSIDs next to each other.
+                Serial.printf("[WIFI] scan %-24s %4d dBm  %s\n",
+                              WiFi.SSID(idx).c_str(), WiFi.RSSI(idx),
+                              WiFi.BSSIDstr(idx).c_str());
             };
 
             // The connected network first (its strongest instance), so the
@@ -3042,6 +3303,13 @@ static void lvglStyleScrollbar(lv_obj_t *list) {
     lv_obj_set_style_width(list, 6, LV_PART_SCROLLBAR);
     lv_obj_set_style_radius(list, 3, LV_PART_SCROLLBAR);
     lv_obj_set_style_pad_right(list, 2, LV_PART_SCROLLBAR);
+    // Reserve the track. The scrollbar is drawn inside the object's right edge,
+    // so with the callers' own 6px of content padding the rows ran under it --
+    // 6px of clearance against a bar that occupies 8 (6 wide + 2 of margin).
+    // Setting it here rather than at each call site keeps every scrollable view
+    // consistent by construction; all three set their padding just before this
+    // call, so this deliberately wins.
+    lv_obj_set_style_pad_right(list, 12, LV_PART_MAIN);
 }
 
 static void lvglAddStatusBadge(lv_obj_t *col, bool ok) {
@@ -3080,7 +3348,7 @@ static bool wifiTouchConfigure() {
         lv_obj_t *countLbl = lvglAddCenteredLabel(col, "", LVCOL_MUTED, &gFont14);
         lv_scr_load(connScr);
 
-        WiFi.begin(ssid.c_str(), pass.c_str());
+        wifiBeginBestAp(ssid.c_str(), pass.c_str());
         uint32_t t0 = millis();
         while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) {
             lv_label_set_text_fmt(countLbl, "%us...", (unsigned)((millis() - t0) / 1000));
@@ -6657,7 +6925,7 @@ void setupWiFi() {
     if (storedSsid.length() > 0) {
         if (!gBootComplete) bootProgress(35, "Connecting WiFi...");
         else displayMessage("Connecting WiFi...", storedSsid.c_str());
-        WiFi.begin(storedSsid.c_str(), storedPass.c_str());
+        wifiBeginBestAp(storedSsid.c_str(), storedPass.c_str());
         uint32_t t0 = millis();
         while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) {
             if (!gBootComplete) {
@@ -8147,6 +8415,33 @@ void sendScaleHeartbeat() {
     else               fields["wifi_signal_dbm"]["nullValue"]    = "NULL_VALUE";
     addMask("wifi_signal_dbm");
 
+    // -- 1b. battery — toujours envoyé ---------------------------------------
+    // Ces quatre champs vivaient dans le bloc `isFull`, donc n'étaient écrits
+    // qu'au boot : `power_source` valait "usb" en dur et les deux autres null,
+    // quoi que fasse la balance. L'état d'une batterie change en permanence, il
+    // appartient au battement, pas à l'instantané de démarrage.
+    fields["battery_present"]["booleanValue"] = gBattery.present;
+    addMask("battery_present");
+
+    if (gBattery.present) {
+        fields["battery_percent"]["integerValue"] = String((int)gBattery.percent);
+        fields["is_charging"]["booleanValue"]     = gBattery.charging;
+    } else {
+        // null, pas zéro : « pas de batterie » et « batterie à plat » sont deux
+        // états différents et un tableau de bord doit pouvoir les distinguer.
+        fields["battery_percent"]["nullValue"] = "NULL_VALUE";
+        fields["is_charging"]["nullValue"]     = "NULL_VALUE";
+    }
+    addMask("battery_percent");
+    addMask("is_charging");
+
+    fields["power_source"]["stringValue"] = gBattery.vbus ? "usb" : "battery";
+    addMask("power_source");
+
+    // "screen_off" is a live scale with its backlight down, not a missing one.
+    fields["power_state"]["stringValue"] = gScreenOff ? "screen_off" : "active";
+    addMask("power_state");
+
     // -- 2. current_spool_uid_1 — delta --------------------------------------
     if (isFull || lastUID != gLastSentUID1) {
         if (lastUID.length() > 0) fields["current_spool_uid_1"]["stringValue"] = lastUID;
@@ -8226,15 +8521,6 @@ void sendScaleHeartbeat() {
     if (isFull) {
         fields["fw_version"]["stringValue"]    = TIGERSCALE_FW_VERSION;
         addMask("fw_version");
-
-        fields["power_source"]["stringValue"]  = "usb";
-        addMask("power_source");
-
-        fields["battery_percent"]["nullValue"] = "NULL_VALUE";
-        addMask("battery_percent");
-
-        fields["is_charging"]["nullValue"]     = "NULL_VALUE";
-        addMask("is_charging");
 
         fields["mdns_hostname"]["stringValue"] = gMdnsName + ".local";
         addMask("mdns_hostname");
@@ -8798,6 +9084,12 @@ static String buildWsFrame(float weight, bool full) {
         bool   cloud           = false;
         bool   firebaseAuth    = false;
         bool   dbUpdating      = false;
+        bool   batPresent      = false;
+        bool   batCharging     = false;
+        int    batPercent      = INT_MIN;   // INT_MIN = never sent yet
+        int    wifiRssi        = INT_MIN;
+        String powerSource     = "\x01";    // sentinel — matches no real value
+        String powerState      = "\x01";
         bool   init            = false;
     } last;
 
@@ -8822,6 +9114,17 @@ static String buildWsFrame(float weight, bool full) {
     bool   curCloud   = WiFi.isConnected();
     bool   curFbAuth  = firebaseAuth;
     bool   curDbUpd   = (bool)gDbUpdateRunning;
+    // battery_percent is meaningless without a cell, and 0 would read as "flat"
+    // rather than "absent" -- so it goes out as -1 and battery_present says why.
+    bool   curBatPres = gBattery.present;
+    bool   curBatChg  = gBattery.charging;
+    int    curBatPct  = gBattery.present ? (int)gBattery.percent : -1;
+    String curPwrSrc  = gBattery.vbus ? "usb" : "battery";
+    String curPwrStat = gScreenOff ? "screen_off" : "active";
+    // Same figure the heartbeat sends, so the two channels cannot describe the
+    // same link differently. 0 means "not connected", as getWiFiSignalDbm() has
+    // always defined it.
+    int    curRssi    = getWiFiSignalDbm();
 
     // -- Delta fields — included only when the value changed ------------------
     StaticJsonDocument<1024> doc;
@@ -8843,6 +9146,12 @@ static String buildWsFrame(float weight, bool full) {
     WS_D_B("cloud",           curCloud,     last.cloud)
     WS_D_B("firebaseAuth",    curFbAuth,    last.firebaseAuth)
     WS_D_B("db_updating",     curDbUpd,     last.dbUpdating)
+    WS_D_B("battery_present", curBatPres,   last.batPresent)
+    WS_D_B("is_charging",     curBatChg,    last.batCharging)
+    WS_D_I("battery_percent", curBatPct,    last.batPercent)
+    WS_D_S("power_source",    curPwrSrc,    last.powerSource)
+    WS_D_S("power_state",     curPwrStat,   last.powerState)
+    WS_D_I("wifi_signal_dbm", curRssi,      last.wifiRssi)
 #undef WS_D_I
 #undef WS_D_S
 #undef WS_D_B
@@ -13239,11 +13548,25 @@ static lv_obj_t *lvTareCaption     = nullptr; // static "TARE" caption, re-set o
 static lv_obj_t *lvSettingsCaption = nullptr; // static "Settings" caption, re-set on language change
 // Battery icon: outline body + terminal nub + up to 3 bars / bolt (matches the
 // user-supplied battery-*.svg set: rounded rect outline, no fill).
+// Body is 28x18 with a 2px border, and LVGL v8 places children relative to the
+// content area -- i.e. already inside the border -- so the fill's own box is
+// 24x14 and (0,0) is the top-left pixel of the interior.
+static const int BAT_FILL_MAX_W = 24;
+static const int BAT_FILL_H     = 14;
 static lv_obj_t *lvBatteryBody     = nullptr;
-static lv_obj_t *lvBatteryBar[3]   = { nullptr, nullptr, nullptr };
+static lv_obj_t *lvBatteryFill     = nullptr;
 static lv_obj_t *lvBatteryBolt     = nullptr;
 static lv_obj_t *lvBatteryPctLabel = nullptr;
-static lv_obj_t *lvWifiLabel       = nullptr;
+// The signal level is drawn the way iOS draws it: the whole glyph is always
+// there and the arcs above the current level are dimmed, never recoloured and
+// never removed. LV_SYMBOL_WIFI is one indivisible glyph, so the level comes
+// from stacking the SAME glyph twice -- a dim copy underneath, a full-opacity
+// copy on top inside a clip box whose height reveals only the lit arcs. Drawing
+// a second, segmented icon would have been easier and would have changed the
+// shape; this cannot, because it is literally the same character.
+static lv_obj_t *lvWifiLabel       = nullptr;   // dim copy: the full outline
+static lv_obj_t *lvWifiClip        = nullptr;   // clip box, height = level
+static lv_obj_t *lvWifiLit         = nullptr;   // full-opacity copy inside it
 // Cloud icon: two overlapping domes + flat base (matches the user-supplied
 // clouds-cloud-svgrepo-com.svg silhouette).
 static lv_obj_t *lvCloudDome1      = nullptr;
@@ -13342,8 +13665,7 @@ static void lvglBuildMainScreen() {
 
     // Order: wifi, cloud, battery (battery last -- rightmost -- per user
     // request; it used to be first/leftmost).
-    lvWifiLabel = lv_label_create(statusRow);
-    lv_label_set_text(lvWifiLabel, LV_SYMBOL_WIFI);
+    lvglBuildWifiWave(statusRow, &lvWifiLabel, &lvWifiClip, &lvWifiLit);
 
     // Account: head over shoulders, after account.svg in Tiger RFID Connect.
     //
@@ -13381,11 +13703,15 @@ static void lvglBuildMainScreen() {
     lv_obj_set_size(lvCloudBase, 0, 0);
     lv_obj_clear_flag(lvCloudBase, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Battery: outline body (no fill, like the SVG) + terminal nub + 3 bar
-    // segments + a bolt line, all pre-created and toggled via HIDDEN in update.
-    // Sized to comfortably fit the montserrat_14 bolt glyph inside the outline
-    // (a 12px-tall body clipped/overflowed the glyph -- see photo feedback).
-    const int BAT_W = 24, BAT_H = 18;
+    // Battery: outline body + terminal nub + one proportional fill + the charge
+    // percentage written inside the outline, phone-style. The three discrete bar
+    // segments this replaced could only say ">66 / >33 / >10", and were hidden
+    // outright while charging -- so the icon showed no level at all on the cable,
+    // which is the one moment you want to watch it climb.
+    //
+    // 28px wide, not 24: the label is montserrat_12 and "100" needs ~21px of the
+    // 24px interior. montserrat_14 would need ~26px and does not fit at all.
+    const int BAT_W = 28, BAT_H = 18;
     lvBatteryBody = lv_obj_create(statusRow);
     lv_obj_set_size(lvBatteryBody, BAT_W, BAT_H);
     lv_obj_set_style_bg_opa(lvBatteryBody, LV_OPA_TRANSP, 0);
@@ -13394,6 +13720,10 @@ static void lvglBuildMainScreen() {
     lv_obj_set_style_radius(lvBatteryBody, 3, 0);
     lv_obj_set_style_pad_all(lvBatteryBody, 0, 0);
     lv_obj_clear_flag(lvBatteryBody, LV_OBJ_FLAG_SCROLLABLE);
+    // The terminal nub below sits 4px past the right edge, i.e. outside the
+    // content area. Without this the parent clips it away and the icon renders
+    // as a plain rectangle -- which is exactly what the panel showed.
+    lv_obj_add_flag(lvBatteryBody, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 
     lv_obj_t *batTerminal = lv_obj_create(lvBatteryBody);
     lv_obj_remove_style_all(batTerminal);
@@ -13403,16 +13733,16 @@ static void lvglBuildMainScreen() {
     lv_obj_align(batTerminal, LV_ALIGN_RIGHT_MID, 4, 0);
     lv_obj_clear_flag(batTerminal, LV_OBJ_FLAG_SCROLLABLE);
 
-    const int barX[3] = { 3, 11, 19 }; // symmetric: 3px margin on both sides of the 24px-wide body
-    for (int i = 0; i < 3; i++) {
-        lvBatteryBar[i] = lv_obj_create(lvBatteryBody);
-        lv_obj_remove_style_all(lvBatteryBar[i]);
-        lv_obj_set_size(lvBatteryBar[i], 2, 10);
-        lv_obj_set_style_bg_color(lvBatteryBar[i], LVCOL_YELLOW, 0);
-        lv_obj_set_style_bg_opa(lvBatteryBar[i], LV_OPA_COVER, 0);
-        lv_obj_set_pos(lvBatteryBar[i], barX[i], 4);
-        lv_obj_clear_flag(lvBatteryBar[i], LV_OBJ_FLAG_SCROLLABLE);
-    }
+    // The fill is created at full width and resized in the update; its width is
+    // the only thing that carries the level, so nothing here is ever hidden.
+    lvBatteryFill = lv_obj_create(lvBatteryBody);
+    lv_obj_remove_style_all(lvBatteryFill);
+    lv_obj_set_size(lvBatteryFill, BAT_FILL_MAX_W, BAT_FILL_H);
+    lv_obj_set_style_bg_color(lvBatteryFill, LVCOL_TEXT, 0);
+    lv_obj_set_style_bg_opa(lvBatteryFill, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(lvBatteryFill, 1, 0);
+    lv_obj_set_pos(lvBatteryFill, 0, 0);
+    lv_obj_clear_flag(lvBatteryFill, LV_OBJ_FLAG_SCROLLABLE);
 
     // Both the LV_SYMBOL_CHARGE glyph (asymmetric ink in its own advance box)
     // and a hand-rotated bar (missing transform pivot, rendered outside the
@@ -13420,14 +13750,19 @@ static void lvglBuildMainScreen() {
     // pre-rasterized bitmap (icon_bolt.h, same RGB565-baked-in-background
     // technique as the boot logo) sidesteps both classes of bug entirely --
     // lv_obj_center() on a fixed-size image is unambiguous.
-    lvBatteryBolt = lv_img_create(lvBatteryBody);
+    // The percentage now occupies the centre of the outline, so the bolt cannot
+    // live there any more -- it sits in the row, to the right of the glyph, in
+    // the space the old "12%" label used to take.
+    lvBatteryPctLabel = lv_label_create(lvBatteryBody);
+    lv_obj_set_style_text_font(lvBatteryPctLabel, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lvBatteryPctLabel, LVCOL_TEXT, 0);
+    lv_obj_center(lvBatteryPctLabel);
+    lv_obj_clear_flag(lvBatteryPctLabel, LV_OBJ_FLAG_CLICKABLE);
+
+    lvBatteryBolt = lv_img_create(statusRow);
     lv_img_set_src(lvBatteryBolt, &gIconBoltDsc);
-    lv_obj_center(lvBatteryBolt);
     lv_obj_clear_flag(lvBatteryBolt, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(lvBatteryBolt, LV_OBJ_FLAG_HIDDEN);
-
-    lvBatteryPctLabel = lv_label_create(statusRow);
-    lv_obj_set_style_text_color(lvBatteryPctLabel, LVCOL_TEXT, 0);
 
     // ---- Main card: weight (left) + container/filament/rack/position rows (right) ----
     const int CARD_Y = 50, CARD_H = 150;
@@ -13812,13 +14147,10 @@ static void lvglUpdateMainScreen(float weight, const String& uid, OledState stat
 
     // ---- Bottom bar: battery / wifi / cloud / volume ----
     {
-        static uint8_t  batPct    = 254;
-        static bool     batVbus   = false;
-        static uint32_t batLastMs = 0;
-        if (millis() - batLastMs > 30000 || batLastMs == 0) {
-            batLastMs = millis();
-            batPct = axpBatteryPercent(batVbus);
-        }
+        // Read, never polled here: pollBatteryState() owns the cadence and runs
+        // from the main loop, so this stays correct on every screen.
+        const uint8_t batPct = gBattery.present ? gBattery.percent : 255;
+        const bool    batChg = gBattery.charging;
         // batPct == 254 means the AXP2101 couldn't be read at all (not just
         // "no battery", which is its own distinct 255 code). On hardware with
         // no battery wired up, that I2C read can fail outright instead of
@@ -13830,43 +14162,64 @@ static void lvglUpdateMainScreen(float weight, const String& uid, OledState stat
         // for plain USB power with no monitor open.
         // No battery wired: show nothing at all.
         //
-        // axpBatteryPercent() returns 255 for "battery not present" and 254 for
+        // batPct is 255 for "battery not present" and 254 for
         // "AXP2101 unreadable", which on this hardware only happens when there
         // is no battery either. Both used to be treated as "charging over USB",
         // so a scale with no battery permanently displayed an outline and a
         // charging bolt — an indicator for hardware it does not have.
         bool hasBattery = (batPct <= 100);
-        if (hasBattery) {
-            lv_obj_clear_flag(lvBatteryBody, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_clear_flag(lvBatteryPctLabel, LV_OBJ_FLAG_HIDDEN);
 
-            bool charging = batVbus;   // only meaningful once a battery is there
-            int  bars;      // 0-3 lit bars, left slot first -- they deplete right-to-left as % drops
-            lv_color_t barCol;
-            if (charging)              { bars = 0; barCol = LVCOL_YELLOW; }
-            else if (batPct > 66)      { bars = 3; barCol = LVCOL_YELLOW; }
-            else if (batPct > 33)      { bars = 2; barCol = LVCOL_YELLOW; }
-            else if (batPct > 10)      { bars = 1; barCol = LVCOL_YELLOW; }
-            else                       { bars = 1; barCol = LVCOL_RED; } // low-battery warning: 1 red bar, not an empty icon
+        // At 4 Hz, pushing the same values into LVGL every pass would invalidate
+        // the status bar forever for nothing. Everything below runs only on a
+        // real transition -- which, plugged in and idle, is almost never.
+        static int shownPct = -1, shownChg = -1, shownHas = -1;
+        const bool batteryViewChanged = ((int)batPct  != shownPct)
+                                     || ((int)batChg  != shownChg)
+                                     || ((int)hasBattery != shownHas);
+        if (batteryViewChanged) {
+            shownPct = batPct; shownChg = batChg; shownHas = hasBattery;
+            if (hasBattery) {
+                lv_obj_clear_flag(lvBatteryBody, LV_OBJ_FLAG_HIDDEN);
 
-            // Outline always stays white regardless of charge state -- only the
-            // bar fill (and the low-battery red) carries the color signal now.
-            lv_obj_set_style_border_color(lvBatteryBody, LVCOL_TEXT, 0);
-            for (int i = 0; i < 3; i++) {
-                lv_obj_set_style_bg_color(lvBatteryBar[i], barCol, 0);
-                if (!charging && i < bars) lv_obj_clear_flag(lvBatteryBar[i], LV_OBJ_FLAG_HIDDEN);
-                else                       lv_obj_add_flag(lvBatteryBar[i], LV_OBJ_FLAG_HIDDEN);
+                // batChg is the charger's own state machine, so the bolt goes out
+                // when the cell is full even though the cable is still in -- the
+                // behaviour a phone has and batVbus alone can never express.
+                bool charging = batChg;
+
+                // Fill colour, phone convention: green while current flows in, red
+                // at or below 20%, plain white otherwise.
+                lv_color_t fillCol = charging       ? LVCOL_GREEN
+                                   : (batPct <= 20) ? LVCOL_RED
+                                                    : LVCOL_TEXT;
+
+                // Width is the level. Never let it round down to nothing: an icon
+                // with no fill at all reads as "broken", not as "nearly empty".
+                int fillW = (BAT_FILL_MAX_W * (int)batPct) / 100;
+                if (fillW < 2) fillW = 2;
+
+                lv_obj_set_style_border_color(lvBatteryBody, LVCOL_TEXT, 0);
+                lv_obj_set_style_bg_color(lvBatteryFill, fillCol, 0);
+                lv_obj_set_size(lvBatteryFill, fillW, BAT_FILL_H);
+
+                // The number sits on top of the fill. Once the fill has swept past
+                // the middle of the glyph it is the background the digits stand on,
+                // so they have to flip dark -- white on white is the failure mode
+                // this rule exists to avoid.
+                bool overFill = (fillW >= BAT_FILL_MAX_W / 2);
+                lv_obj_set_style_text_color(lvBatteryPctLabel,
+                                            overFill ? LVCOL_BG : LVCOL_TEXT, 0);
+                lv_label_set_text_fmt(lvBatteryPctLabel, "%u", batPct);
+
+                if (charging) lv_obj_clear_flag(lvBatteryBolt, LV_OBJ_FLAG_HIDDEN);
+                else          lv_obj_add_flag(lvBatteryBolt, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_add_flag(lvBatteryBody, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(lvBatteryBolt, LV_OBJ_FLAG_HIDDEN);
             }
-            if (charging) lv_obj_clear_flag(lvBatteryBolt, LV_OBJ_FLAG_HIDDEN);
-            else          lv_obj_add_flag(lvBatteryBolt, LV_OBJ_FLAG_HIDDEN);
-
-            lv_label_set_text_fmt(lvBatteryPctLabel, "%u%%", batPct);
-        } else {
-            lv_obj_add_flag(lvBatteryBody, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(lvBatteryPctLabel, LV_OBJ_FLAG_HIDDEN);
         }
     }
-    lv_obj_set_style_text_color(lvWifiLabel, wifiConnected ? LVCOL_GREEN : LVCOL_RED, 0);
+    lvglSetWifiWaveLevel(lvWifiLabel, lvWifiClip, lvWifiLit,
+                         wifiLevelFromRssi(getWiFiSignalDbm()), wifiConnected);
     {
         // Blue while a saved account is still signing in: red there used to
         // claim "no account" through every boot's first seconds.
@@ -14981,6 +15334,8 @@ void loop() {
     static uint32_t lastAliveLogMs = 0;
     static uint32_t lastHeartbeatMs = 0;
 
+    pollBatteryState();
+
     if (millis() - lastHeartbeatMs >= 5000) {
         lastHeartbeatMs = millis();
         Serial.printf("[HB] up=%lus heap=%u wifi=%d disp=%d\n",
@@ -15114,7 +15469,7 @@ void loop() {
         }
 
         // Firestore heartbeat every 30 seconds.
-        if (WiFi.isConnected() && (millis() - gLastHeartbeatScheduleMs) >= HEARTBEAT_INTERVAL_MS) {
+        if (WiFi.isConnected() && (millis() - gLastHeartbeatScheduleMs) >= heartbeatIntervalMs()) {
             gLastHeartbeatScheduleMs = millis();
             gHeartbeatPending = true;
         }

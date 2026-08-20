@@ -55,9 +55,13 @@ Firestore under `users/{uid}/scales/{mac}`:
 | WiFi signal strength, IP address | diagnostics shown in the app |
 | Calibration factor | so a replacement device can be restored |
 | Last-heartbeat timestamp | online/offline indicator |
+| Battery level, charge state, power source | shown in the app; null when no battery is fitted |
+| Screen state | so standby is not mistaken for a scale that went offline |
 
 The heartbeat sends only fields that changed since the last one, with a full
-snapshot on connect and periodically after that.
+snapshot on connect and periodically after that. Every field, its exact type and
+what each value means: **[docs/TELEMETRY.md](TELEMETRY.md)** — the reference for
+anything reading a scale rather than owning one.
 
 Timestamps are set by the server, not the device — the ESP32 has no battery-backed
 clock and needs no NTP for this.

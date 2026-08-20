@@ -218,7 +218,7 @@
 /*Montserrat fonts with ASCII range and some symbols using bpp = 4*/
 #define LV_FONT_MONTSERRAT_8  0
 #define LV_FONT_MONTSERRAT_10 0
-#define LV_FONT_MONTSERRAT_12 0
+#define LV_FONT_MONTSERRAT_12 1  /* battery glyph: the % sits inside a 28x18 outline; _14 is too wide for "100" */
 #define LV_FONT_MONTSERRAT_14 1
 #define LV_FONT_MONTSERRAT_16 1
 #define LV_FONT_MONTSERRAT_18 0

@@ -287,6 +287,7 @@ Full terms: **[TRADEMARK.md](TRADEMARK.md)**.
 | **[docs/HARDWARE.md](docs/HARDWARE.md)** | Pinout, buses, wiring per transport |
 | **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** | When something doesn't work |
 | **[docs/CLOUD.md](docs/CLOUD.md)** | What's sent, what's stored, how to wipe it |
+| **[docs/TELEMETRY.md](docs/TELEMETRY.md)** | Every reported field, for anything reading a scale |
 | **[docs/FIRMWARE.md](docs/FIRMWARE.md)** | Internals, for contributors |
 | **[docs/USB_HOST_POSTMORTEM.md](docs/USB_HOST_POSTMORTEM.md)** | Why USB NFC is impossible here |
 | **[CODEMAP.md](CODEMAP.md)** | Section and function map of the firmware |

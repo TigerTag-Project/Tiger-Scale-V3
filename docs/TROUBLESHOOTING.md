@@ -121,6 +121,12 @@ pio device monitor
 The `esp32_exception_decoder` filter is enabled in `platformio.ini`, so
 backtraces come out with function names attached.
 
+## The flasher shows no COM port at all
+
+The board never appears in the list, so there is nothing to select. That is a
+missing driver or a charge-only USB cable, not a fault in the scale — per-OS
+instructions are in [SERIAL-PORT.md](SERIAL-PORT.md).
+
 ## Nothing on the serial console
 
 `ARDUINO_USB_CDC_ON_BOOT=1` must be set — it is, in every env — otherwise

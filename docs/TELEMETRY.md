@@ -4,6 +4,8 @@ What a TigerScale reports about itself, on which channel, how often, and what
 each value actually means. This is the integration reference — for Tiger Studio
 Manager, for a dashboard, for anything reading a scale's state.
 
+[`docs/API.md`](API.md) answers the other half: the scale's own HTTP endpoints
+and its WebSocket, for anything on the same network as the device.
 [`docs/CLOUD.md`](CLOUD.md) answers the privacy question: what leaves the device
 and how to wipe it. This file answers the integration question: the exact field
 names and their semantics. When the firmware changes a field, this file changes
@@ -19,6 +21,24 @@ in the same commit.
 They carry the same battery and power fields under the same names, so a value
 means the same thing whichever side you read it from. Everything below applies to
 both unless a row says otherwise.
+
+**Which channel to read, and why.** The split is deliberate, not historical:
+
+- **Firestore carries what moves slowly and must be reachable from anywhere** —
+  battery, power, signal, firmware, account, counters. A scale only has to be
+  connected; the reader does not have to be on the same network, and does not
+  have to hold a socket open per scale.
+- **The WebSocket carries what moves fast and is needed at once** — the live
+  weight, the tag being read, the workflow phase.
+
+Tiger Studio Manager already works this way: it reads `battery_percent`,
+`is_charging`, `power_source`, `power_state` and `wifi_signal_dbm` from the
+Firestore document, and `weight`, `netWeight`, `containerWeight`, `scaleStatus`,
+`brand`, `material` and `color` from the socket.
+
+The power fields are on the WebSocket as well, and that is not redundancy for its
+own sake: the scale's own web UI has no Firestore access at all, and the socket
+is its only channel.
 
 ## Cadence
 

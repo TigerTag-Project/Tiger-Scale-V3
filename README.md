@@ -289,6 +289,7 @@ Full terms: **[TRADEMARK.md](TRADEMARK.md)**.
 | **[docs/SERIAL-PORT.md](docs/SERIAL-PORT.md)** | No COM port when flashing: drivers per OS |
 | **[docs/CLOUD.md](docs/CLOUD.md)** | What's sent, what's stored, how to wipe it |
 | **[docs/TELEMETRY.md](docs/TELEMETRY.md)** | Every reported field, for anything reading a scale |
+| **[docs/API.md](docs/API.md)** | The scale's own HTTP and WebSocket API, on the LAN |
 | **[docs/FIRMWARE.md](docs/FIRMWARE.md)** | Internals, for contributors |
 | **[docs/USB_HOST_POSTMORTEM.md](docs/USB_HOST_POSTMORTEM.md)** | Why USB NFC is impossible here |
 | **[CODEMAP.md](CODEMAP.md)** | Section and function map of the firmware |

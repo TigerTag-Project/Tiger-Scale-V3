@@ -15,34 +15,34 @@
 //
 //   TABLE OF CONTENTS                                     line range
 //   ---------------------------------------------------- -----------
-//   HARDWARE CONFIGURATION                                 231-  386
-//   OTA CONFIGURATION                                      387-  409
-//   FORWARD DECLARATIONS                                   410-  640
-//   WEIGHT ROUNDING                                        641-  660
-//   GLOBAL OBJECTS                                         661- 1270
-//   CONFIGURATION VARIABLES                               1271- 1684
-//   OLED DISPLAY                                          1685- 2450
-//   CLOUD PARSING                                         2451- 2465
-//   WIFI SETUP                                            2466- 6985
-//   LITTLEFS                                              6986- 7285
-//   FIREBASE AUTHENTICATION                               7286- 8926
-//   WEBSOCKET                                             8927- 8953
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  8954- 9088
-//   UNIFIED WS FRAME BUILDER                              9089- 9202
-//   WEIGHT FILTER HELPERS                                 9203- 9217
-//   POST-SEND STATE RESET (shared by all send paths)      9218- 9238
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9239- 9495
-//   WEB SERVER                                            9496-10781
-//   CLOUD COMMUNICATION                                  10782-10964
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10965-11471
-//   mDNS                                                 11472-11509
-//   SCALE                                                11510-11680
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11681-11798
-//   RFID                                                 11799-12735
-//   OTA — Over-the-air firmware + filesystem update    12736-13392
-//   LVGL bridge + main weigh screen                      13393-14288
-//   Remote live view: the screen out, taps back in       14289-15133
-//   SETUP & LOOP                                         15134-16284
+//   HARDWARE CONFIGURATION                                 230-  385
+//   OTA CONFIGURATION                                      386-  408
+//   FORWARD DECLARATIONS                                   409-  639
+//   WEIGHT ROUNDING                                        640-  659
+//   GLOBAL OBJECTS                                         660- 1268
+//   CONFIGURATION VARIABLES                               1269- 1680
+//   OLED DISPLAY                                          1681- 2446
+//   CLOUD PARSING                                         2447- 2461
+//   WIFI SETUP                                            2462- 6981
+//   LITTLEFS                                              6982- 7281
+//   FIREBASE AUTHENTICATION                               7282- 8922
+//   WEBSOCKET                                             8923- 8949
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  8950- 9084
+//   UNIFIED WS FRAME BUILDER                              9085- 9198
+//   WEIGHT FILTER HELPERS                                 9199- 9213
+//   POST-SEND STATE RESET (shared by all send paths)      9214- 9234
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9235- 9331
+//   WEB SERVER                                            9332-10141
+//   CLOUD COMMUNICATION                                  10142-10324
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10325-10831
+//   mDNS                                                 10832-10869
+//   SCALE                                                10870-11040
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11041-11158
+//   RFID                                                 11159-12095
+//   OTA — Over-the-air firmware + filesystem update    12096-12752
+//   LVGL bridge + main weigh screen                      12753-13648
+//   Remote live view: the screen out, taps back in       13649-14493
+//   SETUP & LOOP                                         14494-15638
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -62,7 +62,6 @@ enum OledState : uint8_t {
 #include <lvgl.h>
 #include <WiFi.h>
 #include <lwip/sockets.h>         // live view talks BSD sockets, not AsyncTCP — see §LIVE
-#include <WebServer.h>
 #include <WiFiClientSecure.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
@@ -1262,7 +1261,6 @@ PN532Reader rfid2(PN532_2_SS);
 Servo spoolServo;
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
-WebServer syncServer(80);
 Preferences prefs;
 bool gDisplayReady = false;
 static bool gUseLvglMainScreen = true;  // LVGL main-screen migration (2026-07-28); flip to false to revert to raw gfx drawing
@@ -1539,8 +1537,6 @@ static uint32_t gCloudBootReadyAtMs   = 0;
 const uint32_t  FIREBASE_BOOT_DELAY_MS = 30000;
 static uint32_t gFirebaseBootReadyAtMs = 0;
 static const bool ENABLE_HTTP_SERVER = true;
-static const bool USE_SYNC_WEBSERVER = false;
-static const bool MINIMAL_HTTP_DIAG = false;
 static const bool ENABLE_BACKGROUND_TASKS = true;
 static const bool ENABLE_FIREBASE_BACKGROUND = true;
 static const bool ENABLE_DB_BACKGROUND = false;
@@ -9308,53 +9304,6 @@ static void handleWeightPushBody(AsyncWebServerRequest *request,
     }
 }
 
-static void syncSendJson(int code, const String& body) {
-    syncServer.send(code, "application/json", body);
-}
-
-static String syncRequestBody() {
-    if (syncServer.hasArg("plain")) return syncServer.arg("plain");
-    if (syncServer.hasArg("body"))  return syncServer.arg("body");
-    if (syncServer.args() == 1)     return syncServer.arg(0);
-    return String();
-}
-
-static String syncMimeTypeForPath(const String& path) {
-    if (path.endsWith(".html") || path.endsWith(".html.gz")) return "text/html; charset=utf-8";
-    if (path.endsWith(".css")  || path.endsWith(".css.gz"))  return "text/css";
-    if (path.endsWith(".js")   || path.endsWith(".js.gz"))   return "application/javascript";
-    if (path.endsWith(".json") || path.endsWith(".json.gz")) return "application/json";
-    if (path.endsWith(".png")) return "image/png";
-    if (path.endsWith(".ico")) return "image/x-icon";
-    if (path.endsWith(".svg")) return "image/svg+xml";
-    if (path.endsWith(".txt")) return "text/plain; charset=utf-8";
-    return "application/octet-stream";
-}
-
-static bool syncServeFsPath(const String& fsPath, const char* cacheControl = "no-store") {
-    String path = fsPath;
-    bool gzip = false;
-    if (!LittleFS.exists(path)) {
-        if (LittleFS.exists(path + ".gz")) {
-            path += ".gz";
-            gzip = true;
-        } else {
-            return false;
-        }
-    } else if (path.endsWith(".gz")) {
-        gzip = true;
-    }
-
-    File f = LittleFS.open(path, "r");
-    if (!f) return false;
-
-    if (cacheControl && cacheControl[0]) syncServer.sendHeader("Cache-Control", cacheControl);
-    if (gzip) syncServer.sendHeader("Content-Encoding", "gzip");
-    syncServer.streamFile(f, syncMimeTypeForPath(path));
-    f.close();
-    return true;
-}
-
 static const char POLL_PATCH_JS[] PROGMEM = R"==(
 <script>
 (function(){
@@ -9379,705 +9328,30 @@ static const char POLL_PATCH_JS[] PROGMEM = R"==(
 </script>
 )==";
 
-static bool syncServeStaticUri(const String& uri) {
-    if (uri == "/") {
-        if (LittleFS.exists("/www/index.html")) {
-            File f = LittleFS.open("/www/index.html", "r");
-            if (f) {
-                String html = f.readString();
-                f.close();
-                int pos = html.lastIndexOf("</body>");
-                if (pos > 0) {
-                    html = html.substring(0, pos) + String(POLL_PATCH_JS) + html.substring(pos);
-                } else {
-                    html += String(POLL_PATCH_JS);
-                }
-                syncServer.sendHeader("Cache-Control", "no-store");
-                syncServer.send(200, "text/html; charset=utf-8", html);
-                return true;
-            }
-        }
-        String ip   = WiFi.localIP().toString();
-        String mdns = gMdnsName + ".local";
-        String html =
-            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            "<title>TigerScale</title>"
-            "<style>body{font-family:sans-serif;max-width:480px;margin:40px auto;padding:0 16px}"
-            "h1{color:#e67e22}table{width:100%;border-collapse:collapse}"
-            "td{padding:6px 8px;border-bottom:1px solid #eee}td:first-child{font-weight:bold;width:40%}"
-            ".warn{background:#fff3cd;border:1px solid #ffc107;padding:12px;border-radius:6px;margin:16px 0}"
-            "</style></head><body>"
-            "<h1>TigerScale</h1>"
-            "<div class='warn'>&#9888; Web UI not found in flash.</div>"
-            "<h2>Device Info</h2><table>"
-            "<tr><td>IP</td><td><b>" + ip + "</b></td></tr>"
-            "<tr><td>mDNS</td><td>" + mdns + "</td></tr>"
-            "<tr><td>WiFi</td><td>" + WiFi.SSID() + "</td></tr>"
-            "<tr><td>API status</td><td><a href='/api/status'>/api/status</a></td></tr>"
-            "<tr><td>Session</td><td><a href='/api/session'>/api/session</a></td></tr>"
-            "<tr><td>History</td><td><a href='/api/history'>/api/history</a></td></tr>"
-            "</table></body></html>";
-        syncServer.send(200, "text/html; charset=utf-8", html);
-        return true;
-    }
-
-    if (uri.startsWith("/api/")) return false;
-    return syncServeFsPath("/www" + uri,
-                           (uri == "/favicon.ico" || uri == "/favicon.png") ? "max-age=86400" : "no-store");
-}
-
-static void handleWeightPushBodySync(bool allowUidOverride) {
-    StaticJsonDocument<192> doc;
-    String body = syncRequestBody();
-    if (deserializeJson(doc, body) || !doc.containsKey("weight")) {
-        syncSendJson(400, "{\"error\":\"missing weight\"}");
-        return;
-    }
-    float w  = doc["weight"].as<float>();
-    int   wi = roundWeight(w);
-
-    if (!ensureFirebaseToken()) {
-        syncSendJson(401, "{\"error\":\"not authenticated\"}");
-        return;
-    }
-
-    bool ok = false;
-    if (allowUidOverride && doc.containsKey("uid")) {
-        String uidOverride = String(doc["uid"] | "");
-        uidOverride.trim();
-        if (uidOverride.length() > 0) {
-            #if ENABLE_LEGACY_API_BRIDGE
-            ok = sendSingleUidToCloud(uidOverride, wi, "REST/weight");
-            #else
-            String prevUid1 = lastUID;
-            String prevUid2 = lastUID2;
-            lastUID = normalizeUidHex(uidOverride);
-            lastUID2 = "";
-            ok = pushWeightToCloud(wi);
-            if (!ok) {
-                lastUID = prevUid1;
-                lastUID2 = prevUid2;
-            }
-            #endif
-        } else {
-            if (!hasAnyDetectedUid()) {
-                syncSendJson(400, "{\"error\":\"missing uid (present a tag)\"}");
-                return;
-            }
-            ok = pushWeightToCloud(wi);
-        }
-    } else {
-        if (!hasAnyDetectedUid()) {
-            syncSendJson(400, "{\"error\":\"missing uid (present a tag)\"}");
-            return;
-        }
-        ok = pushWeightToCloud(wi);
-    }
-
-    if (ok) {
-        int shown = wi;
-        if (gLastNetValid) {
-            currentWeight = gLastNetWeight;
-            shown = roundWeight(gLastNetWeight);
-            gLastNetValid = true;
-        } else {
-            currentWeight = (float)wi;
-            gLastNetValid = false;
-        }
-        resetAfterSuccessfulSend(shown);
-        syncSendJson(200, "{\"status\":\"ok\"}");
-    } else {
-        syncSendJson(502, "{\"error\":\"upstream sync failed\"}");
-    }
-}
-
 // ============================================================================
 // §19 — WEB SERVER
 // ============================================================================
 
 void setupWebServer() {
-    if (USE_SYNC_WEBSERVER) {
-        Serial.println("[HTTP] Sync WebServer mode enabled");
 
-        syncServer.on("/", HTTP_GET, []() {
-            syncServeStaticUri("/");
-        });
 
-        syncServer.on("/api/reset-wifi", HTTP_POST, []() {
-            syncSendJson(200, "{\"status\":\"resetting\"}");
-            delay(500);
-            prefs.begin("ts-wifi", false); prefs.clear(); prefs.end();
-            ESP.restart();
-        });
-
-        syncServer.on("/api/factory-reset", HTTP_POST, []() {
-            syncSendJson(200, "{\"status\":\"factory reset\"}");
-            delay(500);
-            prefs.begin("config", false);
-            prefs.clear();
-            prefs.end();
-            prefs.begin("ts-wifi", false); prefs.clear(); prefs.end();
-            ESP.restart();
-        });
-
-        syncServer.on("/api/status", HTTP_GET, []() {
-            DynamicJsonDocument doc(2048);
-            int displayWeight         = (currentWeight < MIN_WEIGHT_TO_SEND_G) ? 0 : roundWeight(currentWeight);
-            int containerWeight       = (gLastContainer > 0.0f) ? (int)roundf(gLastContainer) : 0;
-            int netWeight             = (containerWeight > 0 && displayWeight > containerWeight)
-                                      ? (displayWeight - containerWeight) : 0;
-            doc["weight"]             = displayWeight;
-            doc["rawWeight"]          = (float)((int)(currentWeight * 100)) / 100.0f;
-            doc["netWeight"]          = netWeight;
-            doc["uid"]                = lastUID;
-            doc["uid_hex"]            = lastUIDHex;
-            doc["uid2"]               = lastUID2;
-            doc["uid2_hex"]           = lastUID2Hex;
-            doc["uid_left"]           = lastUIDLeft;
-            doc["uid_right"]          = lastUIDRight;
-            doc["uid_twin"]           = lastUIDTwin;
-            doc["wifi"]               = WiFi.SSID();
-            doc["ip"]                 = WiFi.localIP().toString();
-            doc["mdns"]               = gMdnsName + ".local";
-            doc["cloud"]              = WiFi.isConnected();
-            doc["firebaseConfigured"] = isFirebaseConfigured();
-            doc["firebaseAuth"]       = firebaseAuth;
-            doc["firebaseEmail"]      = firebaseEmail;
-            if (firebaseDisplayName.length()) doc["firebaseDisplayName"] = firebaseDisplayName;
-            doc["calibrationFactor"] = calibrationFactor;
-            doc["servoEnabled"]      = false;
-            doc["uptime_ms"]         = millis();
-            doc["uptime_s"]          = millis() / 1000;
-            doc["fw_version"]        = TIGERSCALE_FW_VERSION;
-            doc["fw_git_sha"]        = TIGERSCALE_GIT_SHA;
-            doc["ota_status"]        = gOtaStatus;
-            doc["ota_progress"]      = gOtaProgress;
-            if (gOtaMessage.length())   doc["ota_message"] = gOtaMessage;
-            if (gOtaLatestVer.length()) doc["ota_latest"]  = gOtaLatestVer;
-
-            String stc;
-            if      (sendPhase == "scanning"    && sendCountdown >= 0) stc = "scanning:" + String(sendCountdown);
-            else if (sendPhase == "stabilizing" && sendCountdown >= 0) stc = "stable:" + String(sendCountdown);
-            else if (sendPhase == "countdown"   && sendCountdown >= 0) stc = String(sendCountdown);
-            else stc = sendPhase;
-            doc["scaleStatus"] = stc;
-
-            const char* wfPhaseStr = (wfPhase == WF_SCANNING)    ? "scanning"
-                                    : (wfPhase == WF_STABLE_WAIT) ? "stable_wait"
-                                    : (wfPhase == WF_SENDING)     ? "sending"
-                                    : (wfPhase == WF_DONE)        ? "done"
-                                    : "";
-            doc["wfPhase"]           = wfPhaseStr;
-            doc["wfSlope"]           = (int)wfCurrentSlope;
-            doc["containerWeight"]   = wfContainerFetched ? (int)wfContainerWeight : containerWeight;
-            doc["brand"]             = gLastManufacturer;
-            doc["material"]          = gLastMaterial;
-            doc["color"]             = gLastColor;
-            doc["sessionId"]         = gCurrentSessionId;
-            doc["sessionAgeMs"]      = (gCurrentSessionStartedAtMs > 0) ? (millis() - gCurrentSessionStartedAtMs) : 0;
-            doc["sessionStartWeight"] = gCurrentSessionStartWeight;
-            doc["lastSentAtMs"]      = gLastMeasurementSentAtMs;
-            doc["lastSentAgeMs"]     = (gLastMeasurementSentAtMs > 0) ? (millis() - gLastMeasurementSentAtMs) : -1;
-            doc["lastSentWeight"]    = gLastMeasurementSentWeight;
-            doc["lastSentUid1"]      = gLastMeasurementSentUid1;
-            doc["lastSentUid2"]      = gLastMeasurementSentUid2;
-            doc["lastSentStatus"]    = gLastMeasurementSentStatus;
-            doc["sessionsStarted"]   = gSessionCounter;
-            doc["sendOkCount"]       = gSuccessfulSendCount;
-            doc["sendFailCount"]     = gFailedSendCount;
-            doc["rfidReadOkCount"]   = gRfidReadOkCount;
-            doc["rfidReadFailCount"] = gRfidReadFailCount;
-            doc["autoTareCount"]     = gAutoTareCount;
-            doc["workflowResetCount"] = gWorkflowResetCount;
-            doc["eventPushPending"]  = gEventPushPending;
-            doc["eventPushOkCount"]  = gEventPushOkCount;
-            doc["eventPushFailCount"] = gEventPushFailCount;
-            doc["db_ok"]             = (!gBrandDb.empty() && !gMaterialDb.empty());
-            doc["db_updating"]       = (bool)gDbUpdateRunning;
-            doc["db_brands"]         = (int)gBrandDb.size();
-            doc["db_materials"]      = (int)gMaterialDb.size();
-            doc["db_checked_s"]      = (gLastDbCheckMs > 0) ? (int32_t)((millis() - gLastDbCheckMs) / 1000) : -1;
-            String out; serializeJson(doc, out);
-            syncSendJson(200, out);
-        });
-
-        syncServer.on("/api/session", HTTP_GET, []() {
-            StaticJsonDocument<768> doc;
-            doc["sessionId"] = gCurrentSessionId;
-            doc["sessionAgeMs"] = (gCurrentSessionStartedAtMs > 0) ? (millis() - gCurrentSessionStartedAtMs) : 0;
-            doc["sessionStartWeight"] = gCurrentSessionStartWeight;
-            doc["workflowPhase"] = workflowPhaseToString();
-            doc["sendPhase"] = sendPhase;
-            doc["sendCountdown"] = sendCountdown;
-            doc["currentWeight"] = currentWeight;
-            doc["stableCandidate"] = isnan(stableCandidate) ? 0.0f : stableCandidate;
-            doc["stableSinceMs"] = stableSinceMs;
-            doc["scanStartedMs"] = wfScanStartMs;
-            doc["stableWaitStartedMs"] = wfStableWaitStartMs;
-            doc["containerWeight"] = wfContainerFetched ? wfContainerWeight : gLastContainer;
-            doc["containerFetched"] = wfContainerFetched;
-            doc["peakWeight"] = wfPeakWeight;
-            doc["currentSlope"] = wfCurrentSlope;
-            doc["uid1"] = lastUID;
-            doc["uid2"] = lastUID2;
-            doc["uidLeft"] = lastUIDLeft;
-            doc["uidRight"] = lastUIDRight;
-            doc["uidTwin"] = lastUIDTwin;
-            doc["autoTarePending"] = autoTarePending;
-            doc["rfidLocked"] = rfidLockedForCurrentLoad;
-            doc["readyWasZero"] = gReadyWasZero;
-            doc["sessionsStarted"] = gSessionCounter;
-            doc["sendOkCount"] = gSuccessfulSendCount;
-            doc["sendFailCount"] = gFailedSendCount;
-            doc["rfidReadOkCount"] = gRfidReadOkCount;
-            doc["rfidReadFailCount"] = gRfidReadFailCount;
-            doc["autoTareCount"] = gAutoTareCount;
-            doc["workflowResetCount"] = gWorkflowResetCount;
-            doc["eventPushPending"] = gEventPushPending;
-            doc["eventPushOkCount"] = gEventPushOkCount;
-            doc["eventPushFailCount"] = gEventPushFailCount;
-            JsonObject lastSend = doc.createNestedObject("lastSend");
-            lastSend["atMs"] = gLastMeasurementSentAtMs;
-            lastSend["ageMs"] = (gLastMeasurementSentAtMs > 0) ? (millis() - gLastMeasurementSentAtMs) : -1;
-            lastSend["weight"] = gLastMeasurementSentWeight;
-            lastSend["uid1"] = gLastMeasurementSentUid1;
-            lastSend["uid2"] = gLastMeasurementSentUid2;
-            lastSend["status"] = gLastMeasurementSentStatus;
-            String out; serializeJson(doc, out);
-            syncSendJson(200, out);
-        });
-
-        syncServer.on("/api/history", HTTP_GET, []() {
-            DynamicJsonDocument doc(8192);
-            JsonArray arr = doc.to<JsonArray>();
-            int total = min(gEventCount, EVENT_LOG_SIZE);
-            int start = (gEventHead - total + EVENT_LOG_SIZE) % EVENT_LOG_SIZE;
-            for (int i = 0; i < total; i++) {
-                int idx = (start + i) % EVENT_LOG_SIZE;
-                JsonObject ev = arr.createNestedObject();
-                ev["ms"] = gEventMsLog[idx];
-                ev["ageMs"] = (gEventMsLog[idx] > 0) ? (millis() - gEventMsLog[idx]) : 0;
-                ev["type"] = gEventTypeLog[idx];
-                ev["message"] = gEventMsgLog[idx];
-                ev["uid1"] = gEventUid1Log[idx];
-                ev["uid2"] = gEventUid2Log[idx];
-                if (!isnan(gEventWeightLog[idx])) ev["weight"] = gEventWeightLog[idx];
-                ev["phase"] = workflowPhaseToString();
-            }
-            String out; serializeJson(doc, out);
-            syncSendJson(200, out);
-        });
-
-        syncServer.on("/api/ota/check", HTTP_GET, []() {
-            bool ok = otaFetchLatest();
-            StaticJsonDocument<384> rsp;
-            rsp["success"] = ok;
-            rsp["current"] = TIGERSCALE_FW_VERSION;
-            rsp["current_sha"] = TIGERSCALE_GIT_SHA;
-            rsp["latest"] = gOtaLatestVer;
-            rsp["latest_sha"] = gOtaLatestSha;
-            // Non-empty when the manifest also publishes the web UI image, so a
-            // caller can tell a firmware-only release from a full one.
-            if (gOtaLittlefsUrl.length()) rsp["latest_littlefs_sha"] = gOtaLittlefsSha;
-            rsp["update_available"] = (ok && gOtaLatestVer.length() > 0
-                                       && gOtaLatestVer != String(TIGERSCALE_FW_VERSION));
-            String s; serializeJson(rsp, s);
-            syncSendJson(ok ? 200 : 502, s);
-        });
-
-        syncServer.on("/api/ota/update", HTTP_POST, []() {
-            DynamicJsonDocument doc(2048);
-            if (deserializeJson(doc, syncRequestBody())) {
-                syncSendJson(400, "{\"error\":\"bad json\"}");
-                return;
-            }
-            String fwUrl = String(doc["firmware_url"] | "");
-            String fsUrl = String(doc["littlefs_url"] | "");
-            String fwSha = String(doc["firmware_sha256"] | "");
-            String fsSha = String(doc["littlefs_sha256"] | "");
-            if (fwUrl.length() == 0 && fsUrl.length() == 0) {
-                syncSendJson(400, "{\"error\":\"firmware_url or littlefs_url required\"}");
-                return;
-            }
-            // Same as the async handler: the download belongs on its own task.
-            if (!otaStartJob(fwUrl, fwSha, fsUrl, fsSha)) {
-                syncSendJson(500, "{\"error\":\"could not start OTA task\"}");
-                return;
-            }
-            syncSendJson(202, "{\"status\":\"started\"}");
-        });
-
-        syncServer.on("/api/firebase/auth", HTTP_POST, []() {
-            StaticJsonDocument<256> doc;
-            String rawBody = syncRequestBody();
-            String email;
-            String password;
-            if (rawBody.length() > 0) {
-                if (deserializeJson(doc, rawBody)) {
-                    syncSendJson(400, "{\"success\":false,\"error\":\"bad json\"}");
-                    return;
-                }
-                email = String(doc["email"] | "");
-                password = String(doc["password"] | "");
-            } else {
-                email = syncServer.arg("email");
-                password = syncServer.arg("password");
-            }
-            email.trim(); password.trim(); email.toLowerCase();
-            if (email.length() == 0 || password.length() == 0) {
-                syncSendJson(400, "{\"success\":false,\"error\":\"email and password required\"}");
-                return;
-            }
-            bool accountChanged = (firebaseEmail != email);
-            firebaseEmail = email; firebasePassword = password;
-            if (accountChanged) {
-                firebaseIdToken = ""; firebaseRefreshToken = "";
-                firebaseTokenMs = 0; firebaseAuth = false;
-            }
-            prefs.begin("config", false);
-            prefs.putString("fbEmail", firebaseEmail);
-            prefs.putString("fbPass", firebasePassword);
-            prefs.end();
-            bool signedIn = firebaseSignIn();
-            StaticJsonDocument<192> rsp;
-            rsp["success"] = signedIn;
-            rsp["configured"] = true;
-            rsp["accountChanged"] = accountChanged;
-            rsp["email"] = firebaseEmail;
-            rsp["auth"] = signedIn;
-            String s; serializeJson(rsp, s);
-            syncSendJson(signedIn ? 200 : 401, s);
-        });
-
-        syncServer.on("/api/firebase/status", HTTP_GET, []() {
-            char buf[128];
-            snprintf(buf, sizeof(buf),
-                     "{\"configured\":%s,\"auth\":%s,\"email\":\"%s\"}",
-                     isFirebaseConfigured() ? "true" : "false",
-                     firebaseAuth ? "true" : "false",
-                     firebaseEmail.c_str());
-            syncSendJson(200, buf);
-        });
-
-        syncServer.on("/api/firebase/logout", HTTP_POST, []() {
-            firebaseEmail = ""; firebasePassword = "";
-            firebaseIdToken = ""; firebaseRefreshToken = "";
-            firebaseUid = ""; firebaseTokenMs = 0; firebaseAuth = false;
-            firebaseDisplayName = "";
-            prefs.begin("config", false);
-            prefs.remove("fbEmail"); prefs.remove("fbPass");
-            prefs.remove("fbDisplayName");
-            prefs.remove("fbRefresh"); prefs.remove("fbUid");
-            prefs.end();
-            syncSendJson(200, "{\"success\":true,\"configured\":false,\"auth\":false}");
-        });
-
-        syncServer.on("/api/firebase/token", HTTP_POST, []() {
-            DynamicJsonDocument doc(4096);
-            if (deserializeJson(doc, syncRequestBody())) {
-                syncSendJson(400, "{\"success\":false,\"error\":\"bad json\"}");
-                return;
-            }
-            String idToken = String(doc["idToken"] | "");
-            String refreshToken = String(doc["refreshToken"] | "");
-            String uid = String(doc["uid"] | "");
-            String email = String(doc["email"] | "");
-            String dispName = String(doc["displayName"] | "");
-            if (idToken.length() == 0 || refreshToken.length() == 0 || uid.length() == 0) {
-                syncSendJson(400, "{\"success\":false,\"error\":\"missing tokens\"}");
-                return;
-            }
-            firebaseIdToken = idToken;
-            firebaseRefreshToken = refreshToken;
-            firebaseUid = uid;
-            firebaseEmail = email;
-            firebaseDisplayName = dispName;
-            firebasePassword = "";
-            firebaseTokenMs = millis();
-            firebaseAuth = true;
-            prefs.begin("config", false);
-            prefs.putString("fbEmail", firebaseEmail);
-            prefs.putString("fbDisplayName", firebaseDisplayName);
-            prefs.remove("fbPass");
-            prefs.putString("fbRefresh", firebaseRefreshToken);
-            prefs.putString("fbUid", firebaseUid);
-            prefs.end();
-            initScaleFirestoreSync();
-            gNeedFullHeartbeat = true;
-            gLastHeartbeatMs = 0;
-            StaticJsonDocument<192> rsp;
-            rsp["success"] = true;
-            rsp["configured"] = true;
-            rsp["auth"] = true;
-            rsp["uid"] = firebaseUid;
-            rsp["email"] = firebaseEmail;
-            String s; serializeJson(rsp, s);
-            syncSendJson(200, s);
-        });
-
-        #if ENABLE_LEGACY_API_BRIDGE
-        syncServer.on("/api/set-apikey", HTTP_POST, []() {
-            StaticJsonDocument<128> doc;
-            if (deserializeJson(doc, syncRequestBody())) {
-                syncSendJson(400, "{\"success\":false,\"error\":\"bad json\"}");
-                return;
-            }
-            String key = String(doc["apiKey"] | "");
-            key.trim();
-            if (key.length() == 0) {
-                syncSendJson(400, "{\"success\":false,\"error\":\"apiKey required\"}");
-                return;
-            }
-            apiKey = key;
-            prefs.begin("config", false);
-            prefs.putString("apiKey", apiKey);
-            prefs.end();
-            StaticJsonDocument<128> rsp;
-            rsp["success"] = true;
-            rsp["apiKey"] = apiKey.substring(0, 4) + "...";
-            String s; serializeJson(rsp, s);
-            syncSendJson(200, s);
-        });
-        #endif
-
-        syncServer.on("/api/ping", HTTP_GET, []() {
-            syncServer.send(200, "text/plain", "pong");
-        });
-
-        syncServer.on("/api/servo-toggle", HTTP_POST, []() {
-            servoEnabled = false;
-            hwMotorConnected = false;
-            hwMotorSpeed = 0;
-            syncSendJson(200, "{\"servoEnabled\":false}");
-        });
-
-        syncServer.on("/api/hw/config", HTTP_GET, []() {
-            normalizeRfidHwConfig();
-            char buf[160];
-            snprintf(buf, sizeof(buf),
-                     "{\"rfidCount\":%u,\"rfidSide\":\"%s\",\"motorConnected\":false,\"motorEnabled\":false,\"motorSpeed\":0}",
-                     hwRfidCount, hwRfidSide == 1 ? "right" : "left");
-            syncSendJson(200, buf);
-        });
-
-        syncServer.on("/api/hw/config", HTTP_POST, []() {
-            StaticJsonDocument<160> doc;
-            if (deserializeJson(doc, syncRequestBody())) {
-                syncSendJson(400, "{\"error\":\"bad json\"}");
-                return;
-            }
-            if (doc.containsKey("rfidCount")) hwRfidCount = doc["rfidCount"].as<uint8_t>();
-            if (doc.containsKey("rfidSide")) {
-                const char* side = doc["rfidSide"] | "left";
-                hwRfidSide = (strcmp(side, "right") == 0) ? 1 : 0;
-            }
-            normalizeRfidHwConfig();
-            hwMotorConnected = false;
-            servoEnabled = false;
-            hwMotorSpeed = 0;
-            prefs.begin("config", false);
-            prefs.putUChar("hwRfidCnt", hwRfidCount);
-            prefs.putUChar("hwRfidSide", hwRfidSide);
-            prefs.putBool("hwMotorConn", false);
-            prefs.putBool("servoEnabled", false);
-            prefs.putUChar("hwMotorSpd", 0);
-            prefs.end();
-            char buf[160];
-            snprintf(buf, sizeof(buf),
-                     "{\"rfidCount\":%u,\"rfidSide\":\"%s\",\"motorConnected\":false,\"motorEnabled\":false,\"motorSpeed\":0}",
-                     hwRfidCount, hwRfidSide == 1 ? "right" : "left");
-            syncSendJson(200, buf);
-        });
-
-        syncServer.on("/api/servo/test", HTTP_POST, []() {
-            syncSendJson(403, "{\"error\":\"motor removed on this scale\"}");
-        });
-
-        syncServer.on("/api/logs", HTTP_GET, []() {
-            String out = "[";
-            int total = min(gNetLogCount, NET_LOG_SIZE);
-            int start = (gNetLogHead - total + NET_LOG_SIZE) % NET_LOG_SIZE;
-            for (int i = 0; i < total; i++) {
-                int idx = (start + i) % NET_LOG_SIZE;
-                if (i > 0) out += ",";
-                String entry = gNetLogs[idx];
-                entry.replace("\"", "'");
-                out += "\"" + entry + "\"";
-            }
-            out += "]";
-            syncSendJson(200, out);
-        });
-
-        syncServer.on("/api/logs", HTTP_DELETE, []() {
-            gNetLogHead = 0; gNetLogCount = 0;
-            syncSendJson(200, "{\"cleared\":true}");
-        });
-
-        syncServer.on("/api/logs/clear", HTTP_POST, []() {
-            gNetLogHead = 0; gNetLogCount = 0;
-            syncSendJson(200, "{\"cleared\":true}");
-        });
-
-        syncServer.on("/api/workflow/stop", HTTP_POST, []() {
-            wfPhase = WF_IDLE;
-            resetSlopeBuffer();
-            stopServoSearch();
-            lastUID = ""; lastUID2 = ""; lastUIDHex = ""; lastUID2Hex = "";
-            lastUIDLeft = ""; lastUIDRight = ""; lastUIDTwin = ""; gTwinFetchDone = false; gTwinFetchPending = false; gTwinFetchUID = ""; gTwinFetchResult = "";
-            firstUidDetectedMs = 0; firstUidPauseUntilMs = 0;
-            stableSinceMs = 0; stableCandidate = NAN;
-            wfContainerWeight = 0.0f; wfContainerFetched = false;
-            sendPhase = "idle"; sendCountdown = -1;
-            syncSendJson(200, "{\"status\":\"stopped\"}");
-        });
-
-        syncServer.on("/api/rfid/test", HTTP_GET, []() {
-            String uidL = rfidTestLastUidLeft.length()  > 0 ? "\"" + rfidTestLastUidLeft  + "\"" : "null";
-            String uidR = rfidTestLastUidRight.length() > 0 ? "\"" + rfidTestLastUidRight + "\"" : "null";
-            String resp = "{\"active\":" + String(rfidTestActive ? "true" : "false") +
-                          ",\"reader_left\":" + String(gRfid2Present ? "true" : "false") +
-                          ",\"reader_right\":" + String(gRfid1Present ? "true" : "false") +
-                          ",\"uid_left\":" + uidL +
-                          ",\"uid_right\":" + uidR + "}";
-            syncSendJson(200, resp);
-        });
-
-        syncServer.on("/api/rfid/test", HTTP_POST, []() {
-            StaticJsonDocument<64> doc;
-            if (deserializeJson(doc, syncRequestBody())) {
-                syncSendJson(400, "{\"error\":\"bad json\"}");
-                return;
-            }
-            bool stop = doc["stop"] | false;
-            bool reset = doc["reset"] | false;
-            if (reset) {
-                rfidTestLastUidLeft = "";
-                rfidTestLastUidRight = "";
-                syncSendJson(200, "{\"active\":false,\"uid_left\":null,\"uid_right\":null}");
-                return;
-            }
-            if (stop) {
-                rfidTestActive = false;
-                rfidTestLastUidLeft = "";
-                rfidTestLastUidRight = "";
-                syncSendJson(200, "{\"active\":false,\"uid_left\":null,\"uid_right\":null}");
-                return;
-            }
-            rfidTestLastUidLeft = "";
-            rfidTestLastUidRight = "";
-            rfidTestActive = true;
-            if (!rfidAntennasOn) rfidAntennaSetAll(true);
-            syncSendJson(200, "{\"active\":true,\"uid_left\":null,\"uid_right\":null}");
-        });
-
-        syncServer.on("/api/update-db", HTTP_POST, []() {
-            if (!WiFi.isConnected()) {
-                syncSendJson(503, "{\"error\":\"wifi not connected\"}");
-                return;
-            }
-            if (gDbUpdateRunning) {
-                syncSendJson(409, "{\"error\":\"update already in progress\"}");
-                return;
-            }
-            gLastDbCheckMs = millis();
-            gDbUpdateRunning = true;
-            xTaskCreatePinnedToCore(dbUpdateTaskFn, "dbUpdate", 8192, nullptr, 1, nullptr, 0);
-            syncSendJson(202, "{\"status\":\"checking\",\"message\":\"DB update started, check logs\"}");
-        });
-
-        syncServer.on("/api/weight", HTTP_POST, []() {
-            handleWeightPushBodySync(true);
-        });
-
-        syncServer.on("/api/push-weight", HTTP_POST, []() {
-            handleWeightPushBodySync(false);
-        });
-
-        syncServer.on("/api/tare", HTTP_POST, []() {
-            scale.tare();
-            currentWeight = 0.0f;
-            resetWeightFilters();
-            autoTarePending = false;
-            autoTareStableSinceMs = 0;
-            lastUID = ""; lastUID2 = ""; lastUIDLeft = ""; lastUIDRight = ""; lastUIDTwin = ""; gTwinFetchDone = false; gTwinFetchPending = false; gTwinFetchUID = ""; gTwinFetchResult = "";
-            float offset = scale.get_offset();
-            prefs.begin("config", false);
-            prefs.putFloat("tareFactor", offset);
-            prefs.end();
-            displayWeightWithState(currentWeight, lastUID, currentOledState);
-            syncSendJson(200, "{\"status\":\"ok\"}");
-        });
-
-        syncServer.on("/api/calibration", HTTP_POST, []() {
-            StaticJsonDocument<128> doc;
-            if (deserializeJson(doc, syncRequestBody())) {
-                syncSendJson(400, "{\"error\":\"bad json\"}");
-                return;
-            }
-            float f = 0.0f;
-            if      (doc.containsKey("factor")) f = doc["factor"].as<float>();
-            else if (doc.containsKey("value"))  f = doc["value"].as<float>();
-            if (f == 0.0f) {
-                syncSendJson(400, "{\"error\":\"invalid factor\"}");
-                return;
-            }
-            calibrationFactor = f;
-            scale.set_scale(calibrationFactor);
-            resetWeightFilters();
-            servoPausedForCalibration = true;
-            stopServoSearch();
-            prefs.begin("config", false);
-            prefs.putFloat("calFactor", calibrationFactor);
-            prefs.end();
-            displayWeightWithState(currentWeight, lastUID, currentOledState);
-            syncSendJson(200, "{\"status\":\"ok\"}");
-        });
-
-        syncServer.onNotFound([]() {
-            if (syncServer.uri() == "/ws") {
-                syncServer.send(204, "text/plain", "");
-                return;
-            }
-            if (syncServeStaticUri(syncServer.uri())) return;
-            Serial.printf("[404] %s %s\n",
-                          syncServer.method() == HTTP_GET ? "GET" :
-                          syncServer.method() == HTTP_POST ? "POST" :
-                          syncServer.method() == HTTP_DELETE ? "DELETE" :
-                          syncServer.method() == HTTP_PUT ? "PUT" : "OTHER",
-                          syncServer.uri().c_str());
-            syncServer.send(404, "text/plain", "404 Not Found");
-        });
-
-        gWebServerStartPending = true;
-        Serial.println("[HTTP] Sync server scheduled on core 0");
-        return;
-    }
-
-    if (MINIMAL_HTTP_DIAG) {
-        Serial.println("[HTTP] Minimal diagnostic mode enabled");
-
-        syncServer.on("/", HTTP_GET, []() {
-            String html =
-                "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-                "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                "<title>TigerScale Web Test</title></head><body>"
-                "<h1>TigerScale Web Test</h1>"
-                "<p>HTTP server is running.</p>"
-                "<p><a href='/api/ping'>/api/ping</a></p>"
-                "</body></html>";
-            syncServer.send(200, "text/html; charset=utf-8", html);
-        });
-
-        syncServer.on("/api/ping", HTTP_GET, []() {
-            syncServer.send(200, "application/json",
-                            "{\"ok\":true,\"mode\":\"minimal-webserver\"}");
-        });
-
-        gWebServerStartPending = true;
-        Serial.println("[HTTP] Minimal server scheduled on core 0");
-        return;
-    }
+    // CORS, deliberately partial. Without any header a browser still SENDS a
+    // simple request -- Studio Manager's POST /api/tare does reach the scale and
+    // does tare it -- but the response is withheld, so the caller can never tell
+    // a success from an unreachable scale. One header fixes that and unlocks
+    // GET /api/status and GET /api/ping for a browser client.
+    //
+    // What is NOT here matters as much: no Access-Control-Allow-Headers and no
+    // OPTIONS handler, so preflighted requests still fail. A JSON-bodied POST --
+    // /api/calibration, /api/firebase/token, /api/ota/update -- needs a preflight
+    // and therefore stays out of reach of a web page. On an API with no
+    // authentication at all, that asymmetry is the point: reads and the simple
+    // commands become usable, the ones that reconfigure the scale do not.
+    //
+    // It does widen exposure, and honestly: any page can now read the signed-in
+    // e-mail, the SSID and the MAC from /api/status. The destructive no-body
+    // POSTs were already reachable before this, header or no header.
+    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
 
     ws.onEvent(onWsEvent);
     server.addHandler(&ws);
@@ -10195,7 +9469,11 @@ void setupWebServer() {
 
     // Status - uses ArduinoJson
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request){
-        StaticJsonDocument<640> doc;
+        // 1024, not 640: the document already carried 34 members with several
+        // copied strings and sat close to its ceiling. ArduinoJson truncates a
+        // full StaticJsonDocument in silence -- the fields at the end simply stop
+        // appearing -- so growing the payload means growing this first.
+        StaticJsonDocument<1024> doc;
         doc["weight"]            = (currentWeight < MIN_WEIGHT_TO_SEND_G) ? 0 : roundWeight(currentWeight);
         doc["rawWeight"]         = (float)((int)(currentWeight * 100)) / 100.0f;  // unfiltered, for debug
         doc["uid"]               = lastUID;
@@ -10246,6 +9524,23 @@ void setupWebServer() {
         doc["db_materials"]  = (int)gMaterialDb.size();
         doc["db_checked_s"]  = (gLastDbCheckMs > 0)
                                    ? (int32_t)((millis() - gLastDbCheckMs) / 1000) : -1;
+
+        // Power and battery, same names and meanings as the WebSocket frame and
+        // the Firestore heartbeat -- see docs/API.md. HTTP carried none of it, so
+        // a client wanting a complete snapshot had to open a socket as well.
+        doc["battery_present"] = gBattery.present;
+        if (gBattery.present) {
+            doc["battery_percent"] = gBattery.percent;
+            doc["is_charging"]     = gBattery.charging;
+        } else {
+            // null, not zero: "no battery fitted" and "battery flat" are
+            // different states and a dashboard must be able to tell them apart.
+            doc["battery_percent"] = nullptr;
+            doc["is_charging"]     = nullptr;
+        }
+        doc["power_source"]    = gBattery.vbus ? "usb" : "battery";
+        doc["power_state"]     = gScreenOff ? "screen_off" : "active";
+        doc["wifi_signal_dbm"] = getWiFiSignalDbm();
         String out; serializeJson(doc, out);
         request->send(200, "application/json", out);
     });
@@ -10741,6 +10036,76 @@ void setupWebServer() {
     // The live view runs its own socket server on port 81 (§LIVE explains why
     // it cannot share this one). This redirect exists so the address printed on
     // Settings -> LAN is enough to reach it: http://<scale-ip>/live.
+    // Ported off the synchronous server when that dead implementation was
+    // removed. Both had been unreachable for as long as that server was compiled
+    // out: registered, documented, and answering 404 on every scale in the field.
+    server.on("/api/session", HTTP_GET, [](AsyncWebServerRequest *request){
+        StaticJsonDocument<768> doc;
+        doc["sessionId"] = gCurrentSessionId;
+        doc["sessionAgeMs"] = (gCurrentSessionStartedAtMs > 0) ? (millis() - gCurrentSessionStartedAtMs) : 0;
+        doc["sessionStartWeight"] = gCurrentSessionStartWeight;
+        doc["workflowPhase"] = workflowPhaseToString();
+        doc["sendPhase"] = sendPhase;
+        doc["sendCountdown"] = sendCountdown;
+        doc["currentWeight"] = currentWeight;
+        doc["stableCandidate"] = isnan(stableCandidate) ? 0.0f : stableCandidate;
+        doc["stableSinceMs"] = stableSinceMs;
+        doc["scanStartedMs"] = wfScanStartMs;
+        doc["stableWaitStartedMs"] = wfStableWaitStartMs;
+        doc["containerWeight"] = wfContainerFetched ? wfContainerWeight : gLastContainer;
+        doc["containerFetched"] = wfContainerFetched;
+        doc["peakWeight"] = wfPeakWeight;
+        doc["currentSlope"] = wfCurrentSlope;
+        doc["uid1"] = lastUID;
+        doc["uid2"] = lastUID2;
+        doc["uidLeft"] = lastUIDLeft;
+        doc["uidRight"] = lastUIDRight;
+        doc["uidTwin"] = lastUIDTwin;
+        doc["autoTarePending"] = autoTarePending;
+        doc["rfidLocked"] = rfidLockedForCurrentLoad;
+        doc["readyWasZero"] = gReadyWasZero;
+        doc["sessionsStarted"] = gSessionCounter;
+        doc["sendOkCount"] = gSuccessfulSendCount;
+        doc["sendFailCount"] = gFailedSendCount;
+        doc["rfidReadOkCount"] = gRfidReadOkCount;
+        doc["rfidReadFailCount"] = gRfidReadFailCount;
+        doc["autoTareCount"] = gAutoTareCount;
+        doc["workflowResetCount"] = gWorkflowResetCount;
+        doc["eventPushPending"] = gEventPushPending;
+        doc["eventPushOkCount"] = gEventPushOkCount;
+        doc["eventPushFailCount"] = gEventPushFailCount;
+        JsonObject lastSend = doc.createNestedObject("lastSend");
+        lastSend["atMs"] = gLastMeasurementSentAtMs;
+        lastSend["ageMs"] = (gLastMeasurementSentAtMs > 0) ? (millis() - gLastMeasurementSentAtMs) : -1;
+        lastSend["weight"] = gLastMeasurementSentWeight;
+        lastSend["uid1"] = gLastMeasurementSentUid1;
+        lastSend["uid2"] = gLastMeasurementSentUid2;
+        lastSend["status"] = gLastMeasurementSentStatus;
+        String out; serializeJson(doc, out);
+        request->send(200, "application/json", out);
+    });
+
+    server.on("/api/history", HTTP_GET, [](AsyncWebServerRequest *request){
+        DynamicJsonDocument doc(8192);
+        JsonArray arr = doc.to<JsonArray>();
+        int total = min(gEventCount, EVENT_LOG_SIZE);
+        int start = (gEventHead - total + EVENT_LOG_SIZE) % EVENT_LOG_SIZE;
+        for (int i = 0; i < total; i++) {
+            int idx = (start + i) % EVENT_LOG_SIZE;
+            JsonObject ev = arr.createNestedObject();
+            ev["ms"] = gEventMsLog[idx];
+            ev["ageMs"] = (gEventMsLog[idx] > 0) ? (millis() - gEventMsLog[idx]) : 0;
+            ev["type"] = gEventTypeLog[idx];
+            ev["message"] = gEventMsgLog[idx];
+            ev["uid1"] = gEventUid1Log[idx];
+            ev["uid2"] = gEventUid2Log[idx];
+            if (!isnan(gEventWeightLog[idx])) ev["weight"] = gEventWeightLog[idx];
+            ev["phase"] = workflowPhaseToString();
+        }
+        String out; serializeJson(doc, out);
+        request->send(200, "application/json", out);
+    });
+
     server.on("/live", HTTP_GET, [](AsyncWebServerRequest *request){
         if (!gLanLiveView) { request->send(404, "text/plain", "live view is off"); return; }
         String to = "http://" + WiFi.localIP().toString() + ":" + String(LIVE_PORT) + "/";
@@ -10766,13 +10131,8 @@ void setupWebServer() {
 
 static void startWebServerNow() {
     Serial.println("[HTTP] Starting server");
-    if (USE_SYNC_WEBSERVER || MINIMAL_HTTP_DIAG) {
-        syncServer.begin();
-        Serial.println("[HTTP] Sync WebServer started on port 80");
-    } else {
-        server.begin();
-        Serial.println("[HTTP] Async server started on port 80");
-    }
+    server.begin();
+    Serial.println("[HTTP] Async server started on port 80");
     gWebServerStarted = true;
     gWebServerStarting = false;
     gWebServerStartPending = false;
@@ -15396,10 +14756,6 @@ void loop() {
                       millis()/1000UL, ESP.getFreeHeap(), (int)WiFi.isConnected(), (int)gDisplayReady);
     }
 
-    if ((USE_SYNC_WEBSERVER || MINIMAL_HTTP_DIAG) && gWebServerStarted) {
-        syncServer.handleClient();
-    }
-
     if (millis() - lastBlink > 1000) {
         if (LED_PIN >= 0) digitalWrite(LED_PIN, !digitalRead(LED_PIN));
         lastBlink = millis();
@@ -16274,9 +15630,7 @@ void loop() {
         // NOTE: handleWeighWorkflow() runs BEFORE this block so the frame always
         //       reflects the post-workflow state (cleared UIDs, updated phase, etc.)
         { String frame = buildWsFrame(weight); if (frame.length()) ws.textAll(frame); }
-        if (!USE_SYNC_WEBSERVER && !MINIMAL_HTTP_DIAG) {
-            ws.cleanupClients();
-        }
+        ws.cleanupClients();
         lastUpdate = millis();
     }
 

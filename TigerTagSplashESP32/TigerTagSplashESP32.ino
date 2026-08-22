@@ -25,24 +25,24 @@
 //   CLOUD PARSING                                         2500- 2514
 //   WIFI SETUP                                            2515- 7034
 //   LITTLEFS                                              7035- 7334
-//   FIREBASE AUTHENTICATION                               7335- 8980
-//   WEBSOCKET                                             8981- 9007
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9008- 9142
-//   UNIFIED WS FRAME BUILDER                              9143- 9256
-//   WEIGHT FILTER HELPERS                                 9257- 9271
-//   POST-SEND STATE RESET (shared by all send paths)      9272- 9292
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9293- 9389
-//   WEB SERVER                                            9390-10199
-//   CLOUD COMMUNICATION                                  10200-10382
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10383-10889
-//   mDNS                                                 10890-10927
-//   SCALE                                                10928-11098
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11099-11216
-//   RFID                                                 11217-12153
-//   OTA — Over-the-air firmware + filesystem update    12154-12810
-//   LVGL bridge + main weigh screen                      12811-13706
-//   Remote live view: the screen out, taps back in       13707-14551
-//   SETUP & LOOP                                         14552-15700
+//   FIREBASE AUTHENTICATION                               7335- 8994
+//   WEBSOCKET                                             8995- 9021
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9022- 9156
+//   UNIFIED WS FRAME BUILDER                              9157- 9270
+//   WEIGHT FILTER HELPERS                                 9271- 9285
+//   POST-SEND STATE RESET (shared by all send paths)      9286- 9306
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9307- 9403
+//   WEB SERVER                                            9404-10213
+//   CLOUD COMMUNICATION                                  10214-10396
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10397-10903
+//   mDNS                                                 10904-10941
+//   SCALE                                                10942-11112
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11113-11230
+//   RFID                                                 11231-12167
+//   OTA — Over-the-air firmware + filesystem update    12168-12824
+//   LVGL bridge + main weigh screen                      12825-13720
+//   Remote live view: the screen out, taps back in       13721-14565
+//   SETUP & LOOP                                         14566-15714
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -8647,6 +8647,20 @@ void sendScaleHeartbeat() {
     int code = http.POST(payload);
     String resp = http.getString();
     http.end();
+
+    // The in-RAM ring is the only way to read a scale once its cable is out, and
+    // it holds about eighty lines. A beat every 30 s would fill it in forty
+    // minutes and push out the tares, the RFID errors and the sends -- so only
+    // what a remote diagnosis actually needs goes in: every failure, and the
+    // transition beats, which are rare and carry meaning. The periodic ones say
+    // nothing that last_heartbeat_at does not already say.
+    if (code >= 200 && code < 300) {
+        if (forced) netLog("HB " + String(gScreenOff ? "screen_off" : "active")
+                         + " " + String(gBattery.vbus ? "usb" : "battery")
+                         + " forced OK");
+    } else {
+        netLog("HB FAIL " + String(code));
+    }
 
     if (code >= 200 && code < 300) {
         Serial.printf("[HEARTBEAT] OK (%d) uid_1=%s uid_2=%s\n", code,

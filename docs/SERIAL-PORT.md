@@ -21,22 +21,29 @@ If it doesn't appear: swap the USB cable and try again.
 
 ## Windows — install the driver (if no COM port appears)
 
-If the flasher shows no port, the Espressif USB driver is missing. Install it
-from Espressif's own tooling page:
+If the flasher shows no port, the Espressif USB driver is missing. Here is how
+to install it, step by step:
 
-**[dl.espressif.com/dl/idf-installer](https://dl.espressif.com/dl/idf-installer/)**
+1. **Download the tool** — click this link, it downloads `idf-env.exe` straight
+   from Espressif's own server (by default it lands in your **Downloads**
+   folder):
+   **[https://dl.espressif.com/dl/idf-env/idf-env.exe](https://dl.espressif.com/dl/idf-env/idf-env.exe)**
+2. **Open PowerShell as administrator** — click the **Start** menu, type
+   `powershell`, right-click **Windows PowerShell** and choose **Run as
+   administrator**.
+3. **Copy this single line, paste it into PowerShell, then press Enter:**
 
-Download `idf-env` from there, then run it as administrator with:
+   ```powershell
+   cd $env:USERPROFILE\Downloads; .\idf-env.exe driver install --espressif
+   ```
 
-```powershell
-.\idf-env.exe driver install --espressif
-```
+   > Saved the file somewhere other than Downloads? Replace only
+   > `$env:USERPROFILE\Downloads` with that folder — for example
+   > `C:\Users\yourname\Desktop`. The rest of the line stays the same.
 
-Then:
-
-1. Wait for it to finish (a few seconds).
-2. **Unplug and plug the board back in.**
-3. Reopen the flasher: the port (e.g. `USB JTAG/serial debug unit (COM3)`) should now appear.
+4. Wait for it to finish (a few seconds).
+5. **Unplug and plug the board back in.**
+6. Reopen the flasher: the port (e.g. `USB JTAG/serial debug unit (COM3)`) should now appear.
 
 > Downloading the tool yourself, rather than pasting a one-line command that
 > fetches and runs an executable with administrator rights, means you can see

@@ -17,32 +17,32 @@
 //   ---------------------------------------------------- -----------
 //   HARDWARE CONFIGURATION                                 230-  385
 //   OTA CONFIGURATION                                      386-  408
-//   FORWARD DECLARATIONS                                   409-  639
-//   WEIGHT ROUNDING                                        640-  659
-//   GLOBAL OBJECTS                                         660- 1268
-//   CONFIGURATION VARIABLES                               1269- 1680
-//   OLED DISPLAY                                          1681- 2446
-//   CLOUD PARSING                                         2447- 2461
-//   WIFI SETUP                                            2462- 6981
-//   LITTLEFS                                              6982- 7281
-//   FIREBASE AUTHENTICATION                               7282- 8922
-//   WEBSOCKET                                             8923- 8949
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  8950- 9084
-//   UNIFIED WS FRAME BUILDER                              9085- 9198
-//   WEIGHT FILTER HELPERS                                 9199- 9213
-//   POST-SEND STATE RESET (shared by all send paths)      9214- 9234
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9235- 9331
-//   WEB SERVER                                            9332-10141
-//   CLOUD COMMUNICATION                                  10142-10324
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10325-10831
-//   mDNS                                                 10832-10869
-//   SCALE                                                10870-11040
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11041-11158
-//   RFID                                                 11159-12095
-//   OTA — Over-the-air firmware + filesystem update    12096-12752
-//   LVGL bridge + main weigh screen                      12753-13648
-//   Remote live view: the screen out, taps back in       13649-14493
-//   SETUP & LOOP                                         14494-15638
+//   FORWARD DECLARATIONS                                   409-  680
+//   WEIGHT ROUNDING                                        681-  700
+//   GLOBAL OBJECTS                                         701- 1309
+//   CONFIGURATION VARIABLES                               1310- 1729
+//   OLED DISPLAY                                          1730- 2499
+//   CLOUD PARSING                                         2500- 2514
+//   WIFI SETUP                                            2515- 7034
+//   LITTLEFS                                              7035- 7334
+//   FIREBASE AUTHENTICATION                               7335- 8980
+//   WEBSOCKET                                             8981- 9007
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9008- 9142
+//   UNIFIED WS FRAME BUILDER                              9143- 9256
+//   WEIGHT FILTER HELPERS                                 9257- 9271
+//   POST-SEND STATE RESET (shared by all send paths)      9272- 9292
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9293- 9389
+//   WEB SERVER                                            9390-10199
+//   CLOUD COMMUNICATION                                  10200-10382
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10383-10889
+//   mDNS                                                 10890-10927
+//   SCALE                                                10928-11098
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11099-11216
+//   RFID                                                 11217-12153
+//   OTA — Over-the-air firmware + filesystem update    12154-12810
+//   LVGL bridge + main weigh screen                      12811-13706
+//   Remote live view: the screen out, taps back in       13707-14551
+//   SETUP & LOOP                                         14552-15700
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -517,6 +517,11 @@ struct BatteryState {
     bool    charging = false;
     uint8_t percent  = 0;
     bool    known    = false;   // false until the first successful read
+    // Set when the cable state changes, cleared by whoever pushes the heartbeat.
+    // Plugging or unplugging is the one power event a person performs and then
+    // watches for, so it must not wait for the next scheduled beat -- up to 30 s
+    // on an active scale, up to 5 min in standby.
+    bool    vbusChanged = false;
 };
 static BatteryState gBattery;
 
@@ -531,9 +536,40 @@ static void pollBatteryState() {
     if (stateMs == 0 || now - stateMs >= 250) {
         stateMs = now;
         const bool wasChg = gBattery.charging, wasVbus = gBattery.vbus;
-        gBattery.present = axpChargeState(gBattery.vbus, gBattery.charging);
-        gBattery.known   = true;
+
+        bool vbus = gBattery.vbus, present = gBattery.present, rawCharging = false;
+        if (axpChargeState(vbus, rawCharging, present)) {
+            gBattery.vbus    = vbus;
+            gBattery.present = present;
+            gBattery.known   = true;
+
+            // Hysteresis, and asymmetric on purpose. Near a full cell the
+            // charger genuinely alternates between constant-voltage and
+            // "done" while it tops off: reading STATUS2 faithfully at 4 Hz
+            // made the bolt flicker seventeen times in thirty-eight seconds
+            // on a battery at 94%. Charging is therefore shown at once and
+            // withdrawn only after the charger has stayed quiet for a while,
+            // which is how a phone behaves -- the bolt goes out when the
+            // charge is actually over, not between two top-off pulses.
+            static uint32_t quietSinceMs = 0;
+            if (rawCharging) {
+                quietSinceMs = 0;
+                gBattery.charging = true;
+            } else if (!present || !vbus) {
+                // No cell, or no cable: nothing ambiguous to smooth out. The
+                // delay below exists for the top-off oscillation, which can only
+                // happen while VBUS is there -- applying it here as well made
+                // unplugging take ten seconds to show, which is worse than the
+                // flicker it was meant to fix.
+                quietSinceMs = 0;
+                gBattery.charging = false;
+            } else {
+                if (quietSinceMs == 0) quietSinceMs = now;
+                if (now - quietSinceMs >= 10000) gBattery.charging = false;
+            }
+        }
         if (gBattery.charging != wasChg || gBattery.vbus != wasVbus) levelMs = 0;
+        if (gBattery.vbus != wasVbus) gBattery.vbusChanged = true;
     }
     if (gBattery.present && (levelMs == 0 || now - levelMs >= 30000)) {
         levelMs = now;
@@ -551,11 +587,16 @@ static void pollBatteryState() {
 // battery on a live cable has vbus=1 while charging nothing. A phone drops the
 // bolt at that moment and so do we -- an icon that claims to be charging
 // forever is an icon nobody reads.
-static bool axpChargeState(bool &vbusOut, bool &chargingOut) {
+// Returns false when the PMIC could not be read at all, leaving every out
+// parameter untouched: at 4 Hz on a bus shared with the touch controller an
+// occasional failed transaction is normal, and a caller that treated it as
+// "no battery" would blink the icon off for a quarter of a second.
+static bool axpChargeState(bool &vbusOut, bool &chargingOut, bool &presentOut) {
     uint8_t st = axpRead(0x00);                 // STATUS1: bit5=vbus, bit3=bat present
-    if (st == 0xFF) { vbusOut = false; chargingOut = false; return false; }
-    vbusOut = (st >> 5) & 0x01;
-    if (!((st >> 3) & 0x01)) { chargingOut = false; return false; }
+    if (st == 0xFF) return false;
+    vbusOut    = (st >> 5) & 0x01;
+    presentOut = (st >> 3) & 0x01;
+    if (!presentOut) { chargingOut = false; return true; }
     uint8_t st2 = axpRead(0x01);                // STATUS2 bits[2:0]: charger state machine
     chargingOut = (st2 != 0xFF) ? ((st2 & 0x07) <= 0x03) : vbusOut;
     return true;
@@ -1624,6 +1665,14 @@ static volatile bool  gFirestoreSyncNeeded   = false; // set on explicit login �
 static volatile bool  gLangPushPending       = false; // scale-side language change → write users/{uid}/prefs/app.lang
 static bool           gFirstRunPending       = false; // factory-fresh NVS: run the first-boot onboarding once
 static volatile bool  gHeartbeatPending      = false;
+// Set alongside gHeartbeatPending for the handful of events that must not wait:
+// entering and leaving standby, and the cable appearing or disappearing.
+// sendScaleHeartbeat() enforces a 30 s minimum between writes, which silently
+// dropped every one of those -- the flag is consumed by the cloud worker and the
+// function returns without sending, so the event is lost rather than deferred.
+// Measured: a scale entering standby 26 s after its previous beat announced it
+// to nobody, and Studio kept counting seconds against a regime that had changed.
+static volatile bool  gHeartbeatForce        = false;
 static volatile bool  gOtaPollPending        = false;
 static volatile bool  gWebServerStartPending = false;
 static volatile bool  gWebServerStarted      = false;
@@ -1729,7 +1778,7 @@ static void runScreensaver() {
     // Announce the transition rather than letting it be inferred from silence:
     // one beat now, carrying power_state="screen_off", then the slow cadence.
     gScreenOff = true;
-    if (WiFi.isConnected()) { gLastHeartbeatScheduleMs = millis(); gHeartbeatPending = true; }
+    if (WiFi.isConnected()) { gLastHeartbeatScheduleMs = millis(); gHeartbeatForce = true; gHeartbeatPending = true; }
     { int16_t tx, ty; while (tsRead(tx, ty)) delay(10); } // drain any lingering touch
 
     gfx->fillScreen(0x0000);
@@ -1756,6 +1805,10 @@ static void runScreensaver() {
         // sendScaleHeartbeat() itself lives on cloudWorkerTask and never
         // stopped, so raising the flag is all that is missing.
         pollBatteryState();
+        if (gBattery.vbusChanged) {
+            gBattery.vbusChanged = false;
+            if (WiFi.isConnected()) { gLastHeartbeatScheduleMs = millis(); gHeartbeatForce = true; gHeartbeatPending = true; }
+        }
         if (WiFi.isConnected()
             && (millis() - gLastHeartbeatScheduleMs) >= heartbeatIntervalMs()) {
             gLastHeartbeatScheduleMs = millis();
@@ -1765,7 +1818,7 @@ static void runScreensaver() {
         delay(30);
     }
     gScreenOff = false;
-    if (WiFi.isConnected()) { gLastHeartbeatScheduleMs = millis(); gHeartbeatPending = true; }
+    if (WiFi.isConnected()) { gLastHeartbeatScheduleMs = millis(); gHeartbeatForce = true; gHeartbeatPending = true; }
     applyBrightness(gBrightness);
     Serial.println("[SS] Screen wake");
 }
@@ -8397,7 +8450,12 @@ void sendScaleHeartbeat() {
         return;
 
     uint32_t now = millis();
-    if ((now - gLastHeartbeatMs) < HEARTBEAT_INTERVAL_MS) return;
+    // A forced beat bypasses the rate limit. Only transitions set it, and they
+    // are human-paced -- a cable, a screen going dark -- so there is no flood to
+    // guard against here; the limit exists for the periodic path.
+    const bool forced = gHeartbeatForce;
+    gHeartbeatForce = false;
+    if (!forced && (now - gLastHeartbeatMs) < HEARTBEAT_INTERVAL_MS) return;
     gLastHeartbeatMs = now;
 
     const bool isFull = gNeedFullHeartbeat;
@@ -14749,6 +14807,10 @@ void loop() {
     static uint32_t lastHeartbeatMs = 0;
 
     pollBatteryState();
+    if (gBattery.vbusChanged) {
+        gBattery.vbusChanged = false;
+        if (WiFi.isConnected()) { gLastHeartbeatScheduleMs = millis(); gHeartbeatForce = true; gHeartbeatPending = true; }
+    }
 
     if (millis() - lastHeartbeatMs >= 5000) {
         lastHeartbeatMs = millis();

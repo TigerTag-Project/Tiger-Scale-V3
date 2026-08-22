@@ -47,6 +47,20 @@ the backlight goes off**. A transition between those two states pushes a beat
 immediately, so entering or leaving standby shows up at once rather than at the
 next tick.
 
+**A cable event pushes one too.** The moment VBUS appears or disappears the scale
+writes, within about a second, in both directions and in standby as well —
+without it, unplugging a scale with its screen off would go unnoticed for five
+minutes. The trigger is VBUS and not `is_charging`, deliberately: a cable cannot
+oscillate, a charger regulator can.
+
+That beat is an ordinary heartbeat, so it carries **the whole power block**, not
+just the two fields that changed: `battery_present`, `battery_percent`,
+`is_charging`, `power_source` and `power_state` are written on every beat, never
+as deltas. The percentage in it is freshly read — a cable event resets the
+coulometer's own 30-second timer and the new value is taken in the same pass,
+before the beat is even scheduled. So plugging in updates the charge level at
+once rather than showing a five-minute-old figure beside a live charging status.
+
 That second cadence is the one that breaks naive dashboards. **Do not treat
 silence as offline without reading `power_state` first:**
 

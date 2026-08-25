@@ -63,6 +63,19 @@ nothing extra and helps keep the TigerTag cloud free.
 | 1 | Li-ion battery — optional; charging and level reporting are handled by the on-board AXP2101 | [Amazon](https://link.amazon/B0etKlE1i) |
 | — | **Dupont wires** | [Amazon](https://link.amazon/B0bl6jvMs) |
 
+<table align="center">
+  <tr>
+    <td align="center">
+      <img src="img/esp32-s3-touch-lcd-3.5b.jpg" width="380" alt="Waveshare ESP32-S3-Touch-LCD-3.5B board"><br>
+      <sub><strong>Warning:</strong> only the <strong>Waveshare ESP32-S3-Touch-LCD-3.5B</strong> model works — the no B version is not supported.</sub>
+    </td>
+    <td align="center">
+      <img src="img/load-cell-hx711.jpg" width="380" alt="5 kg load cell and HX711 amplifier board"><br>
+      <sub><strong>Warning:</strong> the load cell must have 2× M4 and 2× M5 tapped holes, and the HX711 board must be identical to the one shown — otherwise it will not fit in its designated slot.</sub>
+    </td>
+  </tr>
+</table>
+
 > [!WARNING]
 > **The sealed USB-C-only PN532 dongles will not work.** They have no pin header, and
 > this board cannot act as a USB host — see

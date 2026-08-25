@@ -166,7 +166,7 @@ the IDE has no equivalent for.
 
 | Qty | Component | |
 |---|-----------|---|
-| 1 | Waveshare ESP32-S3-Touch-LCD-3.5**B** — 480×320 IPS touch | [buy](https://link.amazon/B0gaANfF5) |
+| 1 | Waveshare ESP32-S3-Touch-LCD-3.5**B** — 480×320 IPS touch (the **-3.5** without the B works too) | [buy](https://link.amazon/B0gaANfF5) |
 | 2 | PN532 **V3** NFC module — pin header **and** mode switch required | [buy](https://link.amazon/B0iTXrhjd) |
 | 1 | 5 kg load cell + HX711 | [buy](https://link.amazon/B09LOUuI1) |
 | 1 | USB-C 4-pin cable + connector | [cable](https://link.amazon/B0aoW8qQx) · [connector](https://link.amazon/B0aiEyjLx) |
@@ -182,7 +182,7 @@ Full costed list with every link: **[docs/HARDWARE.md](docs/HARDWARE.md#bill-of-
   <tr>
     <td align="center">
       <img src="docs/img/esp32-s3-touch-lcd-3.5b.jpg" width="380" alt="Waveshare ESP32-S3-Touch-LCD-3.5B board"><br>
-      <sub><strong>Warning:</strong> only the <strong>Waveshare ESP32-S3-Touch-LCD-3.5B</strong> model works — the no B version is not supported.</sub>
+      <sub><strong>Both variants work, but they need different firmware.</strong> Read the silkscreen: <strong>-3.5B</strong> or <strong>-3.5</strong>. The web installer asks which one you have; the wiring and the case are the same either way.</sub>
     </td>
     <td align="center">
       <img src="docs/img/load-cell-hx711.jpg" width="380" alt="5 kg load cell and HX711 amplifier board"><br>
@@ -322,17 +322,15 @@ covers the guard scripts you should run before opening a pull request.
 
 Stated up front rather than discovered later:
 
-- **Over-the-air firmware update does not work yet — the partition table has no
-  spare app slot.** `app0` is a lone `factory` partition, so
-  `esp_ota_get_next_update_partition()` finds nowhere to write and the install fails
-  with `free=0`. Filesystem (web UI) updates over the air do work. Fixing this needs
-  a partition table with two app slots, which is a one-time USB reflash. The updater
-  detects the situation and says "Update over USB" rather than half-applying.
-- **OTA publishes one binary, built for HSU.** Once the above is fixed, a unit wired
-  for SPI or I²C that takes the published update would lose its reader until
-  reflashed over USB.
+- **Published builds assume the HSU wiring.** SPI and I²C still build from source
+  but are no longer published, so a unit wired either way must be flashed over USB
+  and should not take a published update — it would come back on the HSU build and
+  stop seeing its reader.
 - **SPI and I²C builds compile but are not bench-verified.** Only HSU has been
   confirmed end-to-end on real hardware.
+- **The ESP32-S3-Touch-LCD-3.5 build is not bench-verified either.** It is derived
+  from the official schematic and compiles; the -3.5B is the variant that has been
+  run on real hardware. A report from anyone holding a -3.5 is welcome.
 - **The local HTTP API is unauthenticated.** Anyone on your LAN can read state and
   trigger a tare.
 - **The enclosure has not been print-verified by a second builder.** The 3MF is

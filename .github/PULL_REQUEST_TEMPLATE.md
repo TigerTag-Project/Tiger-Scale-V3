@@ -12,7 +12,7 @@ Be specific about what you could and couldn't verify — this project talks to
 hardware that CI cannot reach, so "it compiles" is honest and useful, while
 implying a hardware behaviour was confirmed when only the build was is not.
 
-- [ ] Compiles: `pio run -e esp32s3_hsu`
+- [ ] Compiles: `pio run -e esp32s3_hsu_b`
 - [ ] Compiles for every env (CI does this too)
 - [ ] Tested on real hardware — which wiring? ______
 - [ ] Not testable without hardware I don't have

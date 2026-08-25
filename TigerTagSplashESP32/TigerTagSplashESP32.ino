@@ -1,7 +1,7 @@
 /*
  * TigerScale V3 — connected filament scale for the TigerTag open NFC standard.
  *
- * ESP32-S3 · AXS15231B QSPI 480x320 touch LCD (LVGL) · 2x PN532 NFC reader
+ * ESP32-S3 · 480x320 touch LCD (LVGL) · 2x PN532 NFC reader
  * HX711 load cell · AXP2101 PMIC · ES8311 audio codec · LittleFS web UI.
  *
  * The firmware version lives in one place only — TIGERSCALE_FW_VERSION in
@@ -15,34 +15,34 @@
 //
 //   TABLE OF CONTENTS                                     line range
 //   ---------------------------------------------------- -----------
-//   HARDWARE CONFIGURATION                                 230-  385
-//   OTA CONFIGURATION                                      386-  408
-//   FORWARD DECLARATIONS                                   409-  680
-//   WEIGHT ROUNDING                                        681-  700
-//   GLOBAL OBJECTS                                         701- 1309
-//   CONFIGURATION VARIABLES                               1310- 1729
-//   OLED DISPLAY                                          1730- 2499
-//   CLOUD PARSING                                         2500- 2514
-//   WIFI SETUP                                            2515- 7034
-//   LITTLEFS                                              7035- 7334
-//   FIREBASE AUTHENTICATION                               7335- 8994
-//   WEBSOCKET                                             8995- 9021
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9022- 9156
-//   UNIFIED WS FRAME BUILDER                              9157- 9270
-//   WEIGHT FILTER HELPERS                                 9271- 9285
-//   POST-SEND STATE RESET (shared by all send paths)      9286- 9306
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9307- 9403
-//   WEB SERVER                                            9404-10213
-//   CLOUD COMMUNICATION                                  10214-10396
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10397-10903
-//   mDNS                                                 10904-10941
-//   SCALE                                                10942-11112
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11113-11230
-//   RFID                                                 11231-12167
-//   OTA — Over-the-air firmware + filesystem update    12168-12824
-//   LVGL bridge + main weigh screen                      12825-13720
-//   Remote live view: the screen out, taps back in       13721-14565
-//   SETUP & LOOP                                         14566-15714
+//   HARDWARE CONFIGURATION                                 230-  423
+//   OTA CONFIGURATION                                      424-  456
+//   FORWARD DECLARATIONS                                   457-  728
+//   WEIGHT ROUNDING                                        729-  748
+//   GLOBAL OBJECTS                                         749- 1371
+//   CONFIGURATION VARIABLES                               1372- 1791
+//   OLED DISPLAY                                          1792- 2561
+//   CLOUD PARSING                                         2562- 2576
+//   WIFI SETUP                                            2577- 7128
+//   LITTLEFS                                              7129- 7428
+//   FIREBASE AUTHENTICATION                               7429- 9088
+//   WEBSOCKET                                             9089- 9115
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9116- 9250
+//   UNIFIED WS FRAME BUILDER                              9251- 9364
+//   WEIGHT FILTER HELPERS                                 9365- 9379
+//   POST-SEND STATE RESET (shared by all send paths)      9380- 9400
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9401- 9497
+//   WEB SERVER                                            9498-10311
+//   CLOUD COMMUNICATION                                  10312-10494
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10495-11001
+//   mDNS                                                 11002-11039
+//   SCALE                                                11040-11210
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11211-11328
+//   RFID                                                 11329-12265
+//   OTA — Over-the-air firmware + filesystem update    12266-12945
+//   LVGL bridge + main weigh screen                      12946-13841
+//   Remote live view: the screen out, taps back in       13842-14686
+//   SETUP & LOOP                                         14687-15835
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -230,12 +230,44 @@ uint8_t  gSoundTheme  = 0;    // 0=Beep 1=Double 2=Chime 3=Click
 // §1 — HARDWARE CONFIGURATION
 // ============================================================================
 
+// ---------------------------------------------------------------------------
+// BOARD VARIANT -- set by the build env, never at runtime.
+//
+//   TS_BOARD_NONB = 0  Waveshare ESP32-S3-Touch-LCD-3.5B  (env esp32s3_hsu_b)
+//   TS_BOARD_NONB = 1  Waveshare ESP32-S3-Touch-LCD-3.5   (env esp32s3_hsu)
+//
+// The two boards share one netlist. Comparing the official schematics net by
+// net, exactly ONE GPIO differs -- GPIO12: LCD_CS on the B, I2S_MCLK on the
+// -3.5, where the panel's chip select is instead strapped to GND through R16.
+// Everything else is identical, including the 2.54 mm header pin numbering, so
+// the PN532 / HX711 wiring and the printed enclosure are the same on both.
+//
+// What does differ is the panel itself: AXS15231B driven over QSPI with its
+// own touch controller on the B, ST7796 over plain SPI with an FT6336 touch IC
+// on the -3.5. Both touch controllers hang off Wire1 (GPIO8/7), just at
+// different addresses -- see TS_I2C_ADDR in Section 9.
+// ---------------------------------------------------------------------------
+#ifndef TS_BOARD_NONB
+#define TS_BOARD_NONB 0
+#endif
+
+#if TS_BOARD_NONB
+// -3.5 -- ST7796 over SPI. Same physical lines as the B's QSPI bus: what the
+// B calls D0/D1 are MOSI/MISO here, D2 is the data/command line, and D3 is not
+// connected at all. No CS pin: the panel's is tied low on the board.
+#define LCD_SPI_MOSI   1
+#define LCD_SPI_MISO   2
+#define LCD_SPI_DC     3
+#define LCD_SPI_SCLK   5
+#define LCD_SPI_CS    -1
+#else
 #define LCD_QSPI_CS   12
 #define LCD_QSPI_CLK   5
 #define LCD_QSPI_D0    1
 #define LCD_QSPI_D1    2
 #define LCD_QSPI_D2    3
 #define LCD_QSPI_D3    4
+#endif
 #define LCD_BL         6
 
 // BROKEN on ESP32-S3, inherited from V4 -- GPIO22 doesn't physically exist
@@ -293,8 +325,14 @@ uint8_t  gSoundTheme  = 0;    // 0=Beep 1=Double 2=Chime 3=Click
 
 // ES8311 audio codec — speaker beep on RFID detect
 // GPIO 13-16 are the only internal GPIOs not used by display/RFID/HX711/backlight/servo
-// VERIFY these against the Waveshare ESP32-S3-Touch-LCD-3.5B schematic
-#define SPK_I2S_MCLK  44   // confirmed from Waveshare demo
+// Checked against both official schematics: I2S_SCLK=13, I2S_ASDOUT=14 (mic in,
+// unused here), I2S_LRCK=15 and I2S_DSDIN=16 are the same on both boards. Only
+// MCLK moves, which is what the #if below is for.
+#if TS_BOARD_NONB
+#define SPK_I2S_MCLK  12   // -3.5: GPIO12 goes straight to the ES8311's MCLK
+#else
+#define SPK_I2S_MCLK  44   // -3.5B: fed from U0RXD through R61 (Waveshare demo)
+#endif
 #define SPK_I2S_BCLK  13
 #define SPK_I2S_WS    15
 #define SPK_I2S_DOUT  16
@@ -389,6 +427,16 @@ const char* TIGERTAG_FIREBASE_WEB_API_KEY = "AIzaSyCkxPTs_Cv0KVLqsZj-UKWWqIY0Otf
 // Embedded build identity — exposed via /api/status and the heartbeat so the
 // app/Studio can compare against the latest published version.json.
 #define TIGERSCALE_FW_VERSION  "3.7.2"
+
+// Which board this binary was built for, as it appears on the silkscreen. The
+// published manifest keys its per-board firmware entries by exactly this
+// string, and the web installer offers the same two names — so a buyer chooses
+// by looking at their board rather than by understanding a transport.
+#if TS_BOARD_NONB
+#define TIGERSCALE_BOARD_ID    "3.5"
+#else
+#define TIGERSCALE_BOARD_ID    "3.5b"
+#endif
 #ifndef TIGERSCALE_GIT_SHA
 #define TIGERSCALE_GIT_SHA     "dev"
 #endif
@@ -707,12 +755,26 @@ Arduino_GFX *panel = nullptr;
 static const uint8_t ROTATION = 1;
 Arduino_GFX *gfx = nullptr;
 #else
+#if TS_BOARD_NONB
+// -3.5 — ST7796 on a plain SPI bus. `is_shared_interface = false` because
+// nothing else sits on this bus: the SD card and the PN532s have their own.
+// The reset pin is GFX_NOT_DEFINED: LCD_RST is behind the TCA9554 expander on
+// both boards, and the driver's software reset command covers it.
+Arduino_DataBus *bus = new Arduino_ESP32SPI(
+    LCD_SPI_DC, LCD_SPI_CS, LCD_SPI_SCLK, LCD_SPI_MOSI, LCD_SPI_MISO,
+    FSPI, false
+);
+Arduino_GFX *panel = new Arduino_ST7796(bus, GFX_NOT_DEFINED, 0, true, 320, 480);
+#else
 // June 15-16 baseline: library default init, no shared bus — matches firmware_merged.bin
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
     LCD_QSPI_CS, LCD_QSPI_CLK,
     LCD_QSPI_D0, LCD_QSPI_D1, LCD_QSPI_D2, LCD_QSPI_D3
 );
 Arduino_GFX *panel = new Arduino_AXS15231B(bus, -1, 0, false, 320, 480);
+#endif
+// Same canvas and the same rotation on both boards: the panel is the same
+// 320x480 glass, only the controller in front of it changes.
 static const uint8_t ROTATION = 3;
 Arduino_Canvas *gfx = new Arduino_Canvas(320, 480, panel, 0, 0, ROTATION);
 #endif
@@ -2520,17 +2582,27 @@ static bool parseCloudNetWeights(const String& resp, float& netOut, float& rawOu
 // =========================================================================
 // TOUCH-BASED WIFI SETUP  (replaces WiFiManager captive portal)
 // =========================================================================
-// AXS15231B touch is read via the QSPI bus (SPI3_HOST), not I2C.
-// Protocol: write 8-byte command, read 8 bytes back on the same SPI bus.
-// d[2] = touch count, d[4..5] = X, d[6..7] = Y (portrait coords).
-// Coordinates mapped to landscape space for ROTATION=3.
-
-// AXS5106L touch IC — I2C on Wire1 (SDA=GPIO8, SCL=GPIO7), address 0x3B.
-// Protocol: write 11-byte QSPI command, then read 14 bytes (separate I2C transactions).
-// Source: official Waveshare esp_lcd_touch_axs15231b library.
+// Touch — I2C on Wire1 (SDA=GPIO8, SCL=GPIO7) on BOTH boards. Only the IC and
+// its address change:
+//
+//   -3.5B  AXS5106L @ 0x3B — write an 11-byte command, then read 14 bytes back
+//          in a separate transaction. Source: Waveshare's own
+//          esp_lcd_touch_axs15231b library.
+//   -3.5   FT6336   @ 0x38 — the ordinary FocalTech register file: point count
+//          at 0x02, then the first point's X/Y in 0x03..0x06.
+//
+// Both report portrait coordinates (px 0..319, py 0..479), so the landscape
+// mapping at the end of tsRead() is shared and does not vary by board.
+//
+// (An earlier comment here claimed the touch was read over the QSPI bus rather
+// than I2C. It never was — the code below has always used Wire1.)
 #define TS_SDA  8
 #define TS_SCL  7
+#if TS_BOARD_NONB
+#define TS_I2C_ADDR 0x38
+#else
 #define TS_I2C_ADDR 0x3B
+#endif
 
 static void setupTouchI2C() {
     Wire1.begin(TS_SDA, TS_SCL);
@@ -2563,10 +2635,6 @@ static void scanI2C(TwoWire &bus, const char *busName, int sda, int scl) {
     Serial.printf("[I2C] Scan done. %d device(s) found.\n", found);
 }
 
-// AXS5106L touch IC — I2C on Wire1 at TS_I2C_ADDR (0x3B).
-// Protocol (from official Waveshare esp_lcd_touch_axs15231b library):
-//   1. Write 11-byte command via I2C with STOP
-//   2. Read 14 bytes: d[1]=touch_count, d[2..5]=first point (portrait X/Y)
 static bool _touchI2CReady = false;
 
 static bool tsRead(int16_t &tx, int16_t &ty) {
@@ -2596,6 +2664,32 @@ static bool tsRead(int16_t &tx, int16_t &ty) {
 
     if (!_touchI2CReady) return false;
 
+    // Portrait coords from the IC: px 0..319, py 0..479 on both boards.
+    int16_t px, py;
+
+#if TS_BOARD_NONB
+    // FT6336 — point the register pointer at 0x02, then read five bytes:
+    //   d[0] = number of points, d[1..2] = X (12 bits), d[3..4] = Y (12 bits).
+    Wire1.beginTransmission(TS_I2C_ADDR);
+    Wire1.write((uint8_t)0x02);
+    uint8_t werr = Wire1.endTransmission();
+    if (werr != 0) {
+        static uint32_t _we = 0;
+        if (millis() - _we > 2000) { _we = millis(); Serial.printf("[TS] write NACK err=%d\n", werr); }
+        return false;
+    }
+
+    uint8_t n = Wire1.requestFrom((uint8_t)TS_I2C_ADDR, (uint8_t)5);
+    uint8_t d[5] = {};
+    for (int i = 0; i < n && i < 5; i++) d[i] = Wire1.read();
+
+    if (n < 5) return false;
+    uint8_t cnt = d[0] & 0x0F;
+    if (cnt == 0 || cnt > 2) return false;
+
+    px = ((int16_t)(d[1] & 0x0F) << 8) | d[2];
+    py = ((int16_t)(d[3] & 0x0F) << 8) | d[4];
+#else
     // Step 1: write 11-byte command required by AXS5106L
     static const uint8_t AXS_CMD[11] = {
         0xb5, 0xab, 0xa5, 0x5a, 0x00, 0x00, 0x00, 0x0e, 0x00, 0x00, 0x00
@@ -2618,9 +2712,9 @@ static bool tsRead(int16_t &tx, int16_t &ty) {
     if (d[0] == 0xFF || d[1] == 0 || d[1] > 2) return false;
     uint8_t cnt = d[1];
 
-    // Portrait coords from IC: px 0..319, py 0..479
-    int16_t px = ((int16_t)(d[2] & 0x0F) << 8) | d[3];
-    int16_t py = ((int16_t)(d[4] & 0x0F) << 8) | d[5];
+    px = ((int16_t)(d[2] & 0x0F) << 8) | d[3];
+    py = ((int16_t)(d[4] & 0x0F) << 8) | d[5];
+#endif
 
     (void)cnt;
 
@@ -9570,6 +9664,10 @@ void setupWebServer() {
         // Build identity (used by Studio + web UI to show "update available")
         doc["fw_version"]        = TIGERSCALE_FW_VERSION;
         doc["fw_git_sha"]        = TIGERSCALE_GIT_SHA;
+        // Which board this binary was built for. Support needs it before
+        // suggesting anything: the two variants look identical in a photo of
+        // the assembled scale, and only the firmware knows which one it is.
+        doc["board"]             = TIGERSCALE_BOARD_ID;
         // OTA live state
         doc["ota_status"]        = gOtaStatus;
         doc["ota_progress"]      = gOtaProgress;
@@ -12529,14 +12627,26 @@ bool otaFetchLatest() {
     //
     // With a filter, ArduinoJson skips everything not listed and only the five
     // fields below are ever allocated, so the manifest can grow without limit.
-    StaticJsonDocument<192> filter;
+    StaticJsonDocument<256> filter;
     filter["version"]      = true;
-    filter["firmware_sha"] = true;
-    filter["firmware_url"] = true;
     filter["littlefs_url"] = true;
     filter["littlefs_sha"] = true;
+#if TS_BOARD_NONB
+    // A -3.5 takes its firmware from its own section of the manifest, and has
+    // NO fallback to the flat keys. That is deliberate: the flat keys describe
+    // the -3.5B build, and a -3.5 that installed it would come up with a black
+    // screen and no way to say why.
+    filter["boards"][TIGERSCALE_BOARD_ID]["firmware_url"] = true;
+    filter["boards"][TIGERSCALE_BOARD_ID]["firmware_sha"] = true;
+#else
+    // The -3.5B reads the flat keys, exactly as every firmware ever shipped has.
+    // Nothing about this path may change: scales that have been offline for
+    // months come back and read these five fields and nothing else.
+    filter["firmware_sha"] = true;
+    filter["firmware_url"] = true;
+#endif
 
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<768> doc;
     DeserializationError jerr = deserializeJson(doc, resp, DeserializationOption::Filter(filter));
     if (jerr) {
         Serial.printf("[OTA] fetch: JSON parse failed (%s), %u bytes received\n",
@@ -12545,8 +12655,19 @@ bool otaFetchLatest() {
     }
 
     gOtaLatestVer   = String(doc["version"]      | "");
+#if TS_BOARD_NONB
+    JsonVariantConst board = doc["boards"][TIGERSCALE_BOARD_ID];
+    if (board.isNull()) {
+        Serial.printf("[OTA] fetch: manifest carries no entry for board %s\n",
+                      TIGERSCALE_BOARD_ID);
+        return false;
+    }
+    gOtaLatestSha   = String(board["firmware_sha"] | "");
+    gOtaFirmwareUrl = String(board["firmware_url"] | "");
+#else
     gOtaLatestSha   = String(doc["firmware_sha"] | "");
     gOtaFirmwareUrl = String(doc["firmware_url"] | "");
+#endif
     // Optional: a manifest may also publish the web UI image. Absent in older
     // manifests, so treat a missing key as "firmware only", never as an error.
     gOtaLittlefsUrl = String(doc["littlefs_url"] | "");
@@ -14663,7 +14784,7 @@ void setup() {
         // Canvas handles rotation — no setRotation() needed here
         applyBrightness(gBrightness); // backlight on, at the saved brightness
         Serial.printf("[LCD] begin OK w=%d h=%d\n", gfx->width(), gfx->height());
-        setupTouchI2C();  // AXS5106L on Wire1 (SDA=8, SCL=7, addr=0x3B)
+        setupTouchI2C();  // AXS5106L @0x3B (-3.5B) or FT6336 @0x38 (-3.5), both on Wire1
         _touchI2CReady = true;
         // Scan the bus that is actually wired, now that it has been begun. This
         // enumerates the touch controller (0x3B), the AXP2101 PMIC (0x34), the

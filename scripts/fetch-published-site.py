@@ -21,7 +21,7 @@ So nothing is built. The app images come from **the release assets themselves**,
 which is what makes the hashes correct by construction rather than by hope: the
 bytes hashed into `version.json` are the exact bytes the OTA will download.
 
-Two files per transport are not release assets — the bootloader and the partition
+Two files per board are not release assets — the bootloader and the partition
 table, which the installer needs but the OTA does not. Those are copied from the
 currently published site, and the script fails loudly rather than guessing if
 they are missing.
@@ -56,9 +56,9 @@ import urllib.request
 REPO = "TigerTag-Project/Tiger-Scale-V3"
 PAGES = "https://tigertag-project.github.io/Tiger-Scale-V3"
 
-# Per transport. Kept in step with TRANSPORTS in make-manifest.py; the check at
-# the end of this script fails if a manifest names a file that is not covered.
-ENVS = ["esp32s3_hsu", "esp32s3", "esp32s3_i2c"]
+# Per published board. Kept in step with BOARDS in make-manifest.py; the check
+# at the end of this script fails if a manifest names a file that is not covered.
+ENVS = ["esp32s3_hsu_b", "esp32s3_hsu"]
 
 # Needed by the web installer, never published as release assets, and identical
 # for every version unless partitions.csv or the board config changes — in which

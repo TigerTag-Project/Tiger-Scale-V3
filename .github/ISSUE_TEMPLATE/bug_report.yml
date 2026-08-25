@@ -17,7 +17,8 @@ body:
     attributes:
       label: Which build env did you flash?
       options:
-        - esp32s3_hsu (default — HSU / UART wiring)
+        - esp32s3_hsu_b (default — ESP32-S3-Touch-LCD-3.5B)
+        - esp32s3_hsu (ESP32-S3-Touch-LCD-3.5, no B)
         - esp32s3 (SPI wiring)
         - esp32s3_i2c (I2C wiring)
         - esp32s3_hsu_debug

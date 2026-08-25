@@ -13,9 +13,9 @@ name: release
 #
 # What gets published:
 #
-#   - firmware.bin and firmware.factory.bin for each of the three transports
+#   - firmware.bin and firmware.factory.bin for each of the two published boards
 #   - littlefs.bin — the web UI. Built once: it comes from data/ and is identical
-#     for every transport.
+#     for both of them.
 #   - SHA256SUMS.txt
 #   - version.json on GitHub Pages, which the device polls
 #
@@ -41,10 +41,13 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # The transport whose binary the over-the-air channel serves. HSU is the
-  # bench-verified wiring. A unit wired for SPI or I2C must be reflashed over USB
-  # with its own binary — see the known limitation in the README.
-  OTA_ENV: esp32s3_hsu
+  # The build whose binary fills the FLAT OTA keys of version.json. Every scale
+  # in the field is an ESP32-S3-Touch-LCD-3.5B and reads exactly those keys, so
+  # this must stay the -3.5B build forever; make-manifest.py refuses to generate
+  # a manifest if it is anything else. The -3.5 is served from boards["3.5"].
+  OTA_ENV: esp32s3_hsu_b
+  # Published to users, in the order the installer offers them.
+  PUBLISHED_ENVS: "esp32s3_hsu_b esp32s3_hsu"
 
 jobs:
   build:
@@ -125,12 +128,12 @@ jobs:
 
       - name: Build the web UI filesystem
         run: |
-          # Identical for every transport — it is built from data/ — so once is enough.
+          # Identical for both boards — it is built from data/ — so once is enough.
           pio run -e "$OTA_ENV" -t buildfs
 
-      - name: Build every transport
+      - name: Build every published board
         run: |
-          for e in esp32s3_hsu esp32s3 esp32s3_i2c; do
+          for e in $PUBLISHED_ENVS; do
             echo "::group::$e"
             pio run -e "$e"
             echo "::endgroup::"
@@ -139,7 +142,7 @@ jobs:
       - name: Collect the release assets
         run: |
           mkdir -p dist
-          for e in esp32s3_hsu esp32s3 esp32s3_i2c; do
+          for e in $PUBLISHED_ENVS; do
             cp ".pio/build/$e/firmware.bin"         "dist/firmware-$e.bin"
             cp ".pio/build/$e/firmware.factory.bin" "dist/firmware-$e.factory.bin"
           done
@@ -159,12 +162,12 @@ jobs:
           mkdir -p pages/firmware
           cp -R web-installer/. pages/
 
-          for e in esp32s3_hsu esp32s3 esp32s3_i2c; do
+          for e in $PUBLISHED_ENVS; do
             cp ".pio/build/$e/firmware.bin"    "pages/firmware/firmware-$e.bin"
             cp ".pio/build/$e/bootloader.bin"  "pages/firmware/bootloader-$e.bin"
             cp ".pio/build/$e/partitions.bin"  "pages/firmware/partitions-$e.bin"
           done
-          # boot_app0 and the filesystem are identical for every transport.
+          # boot_app0 and the filesystem are identical for both boards.
           cp "$(find ~/.platformio/packages/framework-arduinoespressif32/tools/partitions -name boot_app0.bin | head -1)" \
              pages/firmware/boot_app0.bin
           cp dist/littlefs.bin pages/firmware/littlefs.bin

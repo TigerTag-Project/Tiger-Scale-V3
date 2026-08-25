@@ -16,8 +16,10 @@ Firmware for a connected filament scale: put a spool carrying a TigerTag NFC tag
 on the platform, the scale reads the tag, weighs the spool, subtracts the empty
 spool's weight and syncs the net filament weight to the owner's TigerTag account.
 
-- **Board** — Waveshare ESP32-S3-Touch-LCD-3.5 (ESP32-S3, 16 MB flash, PSRAM)
-- **Display** — AXS15231B QSPI 480×320, landscape (rotation 3), LVGL v8.4
+- **Board** — Waveshare ESP32-S3-Touch-LCD-3.5**B**, or the **-3.5** without the
+  B (ESP32-S3, 16 MB flash, PSRAM). One build flag apart, see the env table below
+- **Display** — 480×320 landscape (rotation 3), LVGL v8.4. AXS15231B over QSPI on
+  the -3.5B, ST7796 over SPI on the -3.5
 - **NFC** — 2× PN532, wrapped by the `PN532Reader` class (§5)
 - **Weighing** — HX711 + load cell
 - **Power** — USB; AXP2101 PMIC reports level and charge state for the optional battery
@@ -29,7 +31,7 @@ spool's weight and syncs the net filament weight to the owner's TigerTag account
 
 | Rule | Consequence of ignoring it |
 |------|----------------------------|
-| Build the env matching the **physical wiring** — `esp32s3_hsu` for the bench-verified unit | Wrong env = firmware that detects no reader and says nothing about why. This cost a full session once. |
+| Build the env matching the **physical board and wiring** — `esp32s3_hsu_b` for the bench-verified unit | Wrong board = a scale that flashes fine and never lights its screen. Wrong transport = firmware that detects no reader and says nothing about why. The second one cost a full session once. |
 | Flash mode stays **DIO** (already set by the board config) | QIO gives a boot crash loop in `ets_loader.c` |
 | Never use `ps_malloc` | Returns null silently. Use `heap_caps_malloc(n, MALLOC_CAP_SPIRAM)` with a DRAM fallback. |
 | Keep `ARDUINO_USB_CDC_ON_BOOT=1` | Without it `Serial.println()` is invisible on the USB-C port; only `log_e()` gets through |
@@ -144,7 +146,7 @@ different versions.
 ## Build and flash
 
 ```bash
-pio run -e esp32s3_hsu          # build (reference env)
+pio run -e esp32s3_hsu_b        # build (reference env)
 bash scripts/flash.sh           # build + flash, keeps saved WiFi
 bash scripts/flash.sh --fs      # also upload the web UI to LittleFS
 bash scripts/flash.sh --monitor # then open the serial console
@@ -152,12 +154,27 @@ bash scripts/flash.sh --monitor # then open the serial console
 
 Transports are a build-time choice, never a runtime one:
 
-| env | Transport | Readers | Status |
-|-----|-----------|---------|--------|
-| `esp32s3_hsu` | UART (HSU) | 2 | reference, bench-verified |
-| `esp32s3` | SPI | 2 | compiles, not bench-verified |
-| `esp32s3_i2c` | I2C on `Wire1` | 1 | compiles, not bench-verified |
-| `esp32s3_hsu_debug` / `esp32s3_i2c_debug` | as above, plus `-DPN532DEBUG` | | byte-level PN532 tracing |
+| env | Board | Transport | Published | Status |
+|-----|-------|-----------|-----------|--------|
+| `esp32s3_hsu_b` | -3.5**B** | UART (HSU), 2 readers | yes | reference, bench-verified |
+| `esp32s3_hsu` | -3.5 | UART (HSU), 2 readers | yes | compiles, **not** bench-verified |
+| `esp32s3` | -3.5B | SPI, 2 readers | no | compiles, not bench-verified |
+| `esp32s3_i2c` | -3.5B | I2C on `Wire1`, 1 reader | no | compiles, not bench-verified |
+| `esp32s3_hsu_debug` / `esp32s3_i2c_debug` | -3.5B | as above, plus `-DPN532DEBUG` | no | byte-level PN532 tracing |
+
+**The board is a build-time choice like the transport.** The two Waveshare
+variants share a netlist and differ on exactly one GPIO (12: `LCD_CS` on the B,
+`I2S_MCLK` on the other), so the wiring and the enclosure are identical — but
+the panel controller differs (AXS15231B/QSPI vs ST7796/SPI), so the wrong image
+is a black screen with no diagnostic. `docs/HARDWARE.md#board-variants` has the
+full comparison, derived from both official schematics.
+
+**Only `esp32s3_hsu_b` may fill the flat OTA keys.** Every scale in the field is
+a -3.5B and reads `version`/`firmware_sha`/`firmware_url` from the top level of
+`version.json`; the -3.5 reads `boards["3.5"]` and deliberately has no fallback.
+`scripts/make-manifest.py` refuses to generate a manifest whose `--ota-env` is
+anything else, because that mistake would reach every scale at once and cannot
+be undone from the device.
 
 Wiring for each: [`docs/HARDWARE.md`](docs/HARDWARE.md).
 

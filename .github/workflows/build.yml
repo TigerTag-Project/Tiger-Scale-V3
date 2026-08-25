@@ -98,9 +98,10 @@ jobs:
       fail-fast: false
       matrix:
         env:
-          - esp32s3_hsu        # reference build, bench-verified
-          - esp32s3            # SPI
-          - esp32s3_i2c        # I2C on Wire1
+          - esp32s3_hsu_b      # -3.5B, published, bench-verified
+          - esp32s3_hsu        # -3.5,  published
+          - esp32s3            # SPI, not published
+          - esp32s3_i2c        # I2C on Wire1, not published
           - esp32s3_hsu_debug  # + PN532DEBUG
           - esp32s3_i2c_debug  # + PN532DEBUG
     steps:

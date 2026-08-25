@@ -3,11 +3,18 @@
 
 One file is consumed by two very different clients, which is the whole point:
 
-  - The **device**, in `otaFetchLatest()` (§25). It reads the flat top-level
+  - The **-3.5B device**, in `otaFetchLatest()` (§25). It reads the flat top-level
     `version`, `firmware_sha` and `firmware_url` keys. Those must stay exactly
-    where they are, or firmware already in the field stops seeing updates.
-  - The **web installer**, which needs every transport plus the filesystem image,
-    with offsets, so a browser can flash a blank board.
+    where they are, and must always describe the -3.5B build: every scale in the
+    field is a -3.5B, including the ones that have been unplugged for months and
+    will come back to this file expecting nothing to have moved.
+  - The **-3.5 device**, which reads `boards["3.5"]` instead and has no fallback
+    to the flat keys — installing the -3.5B image would leave it with a black
+    screen and no way to report it. Adding keys beside the flat ones is safe by
+    construction: `otaFetchLatest()` parses through an ArduinoJson filter
+    precisely so the manifest can grow.
+  - The **web installer**, which needs every published board plus the filesystem
+    image, with offsets, so a browser can flash a blank board.
 
 Both read the same generated file, so they cannot offer different versions. That
 is the alignment this script exists to guarantee — the previous arrangement had
@@ -44,12 +51,26 @@ OFFSETS = {
     "filesystem": "0x810000",
 }
 
-# Every transport that gets published, with what a human needs to pick one.
-TRANSPORTS = [
-    ("esp32s3_hsu", "hsu", 2, "UART (HSU) — reference build, bench-verified"),
-    ("esp32s3",     "spi", 2, "SPI — compiles, not bench-verified"),
-    ("esp32s3_i2c", "i2c", 1, "I2C on Wire1 — single reader, fixed 0x24 address"),
+# Every build that gets published, with what a human needs to pick one.
+#
+# The published axis is the BOARD, not the transport. Every scale in the field is
+# wired HSU, and offering SPI/I2C images only gave people a choice whose failure
+# mode is silent — firmware that finds no reader and cannot say why. Those envs
+# still build in CI so they cannot rot; they are simply not published.
+#
+# The board id is what the running firmware reports as TIGERSCALE_BOARD_ID and
+# what it looks itself up under in `boards`. It matches the silkscreen so a buyer
+# can choose by looking at the board in their hand.
+BOARDS = [
+    ("esp32s3_hsu_b", "3.5b", "ESP32-S3-Touch-LCD-3.5B", "The board whose silkscreen ends in B"),
+    ("esp32s3_hsu",   "3.5",  "ESP32-S3-Touch-LCD-3.5",  "The board whose silkscreen has no B"),
 ]
+
+# The flat OTA keys describe this build and no other. Every -3.5B ever shipped
+# reads them; pointing them at anything else would push the wrong board's
+# firmware to the entire installed fleet, which is not recoverable from the
+# device (no screen, no touch, no way to say what happened).
+FLEET_ENV = "esp32s3_hsu_b"
 
 
 def sha256(path):
@@ -87,12 +108,15 @@ def main():
     fs = entry("littlefs.bin")
 
     builds = {}
-    for env, transport, readers, description in TRANSPORTS:
+    boards = {}
+    for env, board_id, board_name, description in BOARDS:
         app = entry("firmware-%s.bin" % env)
         factory = entry("firmware-%s.factory.bin" % env)
         builds[env] = {
-            "transport": transport,
-            "readers": readers,
+            "board": board_id,
+            "board_name": board_name,
+            "transport": "hsu",
+            "readers": 2,
             "description": description,
             # firmware.bin replaces the app partition only — this is what OTA uses.
             "firmware_url": app["url"],
@@ -108,17 +132,40 @@ def main():
             "factory_offset": OFFSETS["bootloader"],
         }
 
+        # Keyed by board id, which is what the firmware looks itself up under.
+        # The -3.5 reads this and only this; the -3.5B reads the flat keys below.
+        boards[board_id] = {
+            "env": env,
+            "name": board_name,
+            "firmware_url": app["url"],
+            "firmware_sha": app["sha256"],
+            "firmware_size": app["size"],
+        }
+
     if args.ota_env not in builds:
-        print("ERROR: --ota-env %r is not a published transport" % args.ota_env, file=sys.stderr)
+        print("ERROR: --ota-env %r is not a published board build" % args.ota_env, file=sys.stderr)
         sys.exit(1)
+
+    # The guard that makes the fleet invariant impossible to break by editing a
+    # workflow. It has to be here rather than in a note: the failure it prevents
+    # is silent, arrives months later, and lands on every scale at once.
+    if args.ota_env != FLEET_ENV:
+        print("ERROR: --ota-env is %r but the flat OTA keys must describe %r.\n"
+              "       Every scale in the field is an ESP32-S3-Touch-LCD-3.5B and reads\n"
+              "       those keys. Pointing them elsewhere ships the wrong board's\n"
+              "       firmware to all of them at once." % (args.ota_env, FLEET_ENV),
+              file=sys.stderr)
+        sys.exit(1)
+
     ota = builds[args.ota_env]
 
     manifest = {
         "_comment": (
             "Generated by scripts/make-manifest.py — never hand-edit. The flat "
-            "version/firmware_url/firmware_sha keys are what the device's "
-            "otaFetchLatest() reads; do not move or rename them. `builds` carries "
-            "every transport for the web installer."
+            "flat version/firmware_url/firmware_sha keys are what an "
+            "ESP32-S3-Touch-LCD-3.5B reads in otaFetchLatest(); do not move, "
+            "rename or repoint them. A -3.5 reads boards['3.5'] instead. "
+            "`builds` carries both published boards for the web installer."
         ),
         # --- read by the device (otaFetchLatest) -------------------------------
         "version": args.version,
@@ -134,6 +181,8 @@ def main():
         "notes_url": "https://github.com/%s/blob/main/docs/release-notes/v%s.md" % (
             args.repo, args.version),
         "offsets": OFFSETS,
+        # --- read by the -3.5, and by the installer to label the choice -------
+        "boards": boards,
         "filesystem": {
             "url": fs["url"],
             "sha256": fs["sha256"],
@@ -153,9 +202,9 @@ def main():
     # bootloader 4 KB too high and produce a board that never boots.
     if args.web_installer:
         os.makedirs(args.web_installer, exist_ok=True)
-        for env, transport, readers, description in TRANSPORTS:
+        for env, board_id, board_name, description in BOARDS:
             wt = {
-                "name": "TigerScale V3 (%s)" % transport.upper(),
+                "name": "TigerScale V3 (%s)" % board_name,
                 "version": args.version,
                 "funding_url": "https://buymeacoffee.com/benoitl",
                 "new_install_prompt_erase": True,
@@ -184,7 +233,7 @@ def main():
     print("wrote %s" % args.out)
     print("  version:    %s" % args.version)
     print("  ota env:    %s" % args.ota_env)
-    print("  transports: %s" % ", ".join(builds))
+    print("  boards:     %s" % ", ".join("%s (%s)" % (b, boards[b]["env"]) for b in boards))
     print("  filesystem: %d bytes" % fs["size"])
     return 0
 

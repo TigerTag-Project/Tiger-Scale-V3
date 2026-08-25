@@ -15,13 +15,27 @@ no equivalent include path. PlatformIO is the only supported toolchain.
 
 ## Which build do I need?
 
-The NFC transport is chosen at **compile time**, and it must match how your PN532
-modules are physically wired. Getting this wrong gives you firmware that detects
-no reader at all, with no error message to explain it.
+Two things are fixed at **compile time**: which display board you have, and how
+your PN532 modules are wired. Both published builds assume the HSU / UART wiring,
+which is what the build guide describes and what every scale in use is built on.
+
+| Your board | Build env | Published |
+|------------|-----------|-----------|
+| ESP32-S3-Touch-LCD-3.5**B** | `esp32s3_hsu_b` | yes — the default in the web installer |
+| ESP32-S3-Touch-LCD-3.5 (no B) | `esp32s3_hsu` | yes |
+
+Read the white silkscreen on your board, just under the ribbon connector: it
+either ends with a B or it does not. The two are the same size and take the same
+wiring, but their screen controllers differ (AXS15231B over QSPI on the B,
+ST7796 over SPI on the other), so the wrong image leaves you with a board that
+flashes fine and never lights its screen.
+
+The other two transports are not published any more — every scale in the field
+is wired HSU, and offering a choice whose failure mode is silent ("no readers",
+no reason given) cost more than it helped. They still build from source:
 
 | Your wiring | Build env | Readers |
 |-------------|-----------|---------|
-| HSU / UART | `esp32s3_hsu` | 2 — **reference build, bench-verified** |
 | SPI | `esp32s3` | 2 — compiles, not bench-verified |
 | I²C on `Wire1` | `esp32s3_i2c` | 1 — the PN532's address is fixed |
 
@@ -136,9 +150,9 @@ Two further limits worth knowing:
   accept a `littlefs_url`, via its local `POST /api/ota/update` endpoint and the
   remote command queue, so an app can push a filesystem update — but the
   self-service Settings → Update path cannot.)
-- **One binary is published, built for HSU.** A unit wired for SPI or I²C that takes
-  the published update loses its reader until reflashed over USB. Tracked as a
-  known issue.
+- **Published builds assume the HSU wiring** — one per board, and nothing for SPI
+  or I²C. A unit wired either way that takes a published update comes back on the
+  HSU build and loses its reader until reflashed over USB.
 
 OTA also needs a published release to exist. Until the first version is tagged,
 Settings → Update will simply report that it cannot reach the manifest.
@@ -182,9 +196,9 @@ loop in `ets_loader.c` on this board — do not "optimise" it.
 ## Driving PlatformIO directly
 
 ```bash
-pio run -e esp32s3_hsu              # build
-pio run -e esp32s3_hsu -t upload    # flash firmware
-pio run -e esp32s3_hsu -t uploadfs  # flash the web UI (LittleFS)
+pio run -e esp32s3_hsu_b              # build
+pio run -e esp32s3_hsu_b -t upload    # flash firmware
+pio run -e esp32s3_hsu_b -t uploadfs  # flash the web UI (LittleFS)
 pio device monitor                  # serial console
 ```
 

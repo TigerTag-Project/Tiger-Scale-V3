@@ -136,7 +136,7 @@ cat <<EOF
 
 Next:
   1. Write $NOTES — the workflow will not publish without it.
-  2. bash scripts/check-codemap.sh && pio run -e esp32s3_hsu
+  2. bash scripts/check-codemap.sh && pio run -e esp32s3_hsu_b
   3. git add -A && git commit -m "Release v$NEW"
   4. git tag v$NEW && git push origin main --tags
 EOF

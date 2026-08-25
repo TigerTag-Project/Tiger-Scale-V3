@@ -39,7 +39,12 @@ import urllib.request
 
 REPO = "TigerTag-Project/Tiger-Scale-V3"
 PAGES = "https://tigertag-project.github.io/Tiger-Scale-V3"
-OTA_ENV = "esp32s3_hsu"
+# The build behind the FLAT keys of version.json — the ones every scale in the
+# field reads. Must match FLEET_ENV in make-manifest.py.
+OTA_ENV = "esp32s3_hsu_b"
+# The -3.5 build, served from boards["3.5"] instead.
+NONB_ENV = "esp32s3_hsu"
+NONB_BOARD = "3.5"
 
 
 def get(url, cache_bust=False):
@@ -73,23 +78,56 @@ def check(repo, pages, quiet):
         return False, ("the site advertises %s but the latest release is %s — "
                        "every scale is being told it is up to date" % (got, want))
 
-    asset = "https://github.com/%s/releases/download/%s/firmware-%s.bin" % (repo, tag, OTA_ENV)
-    rel_sha = hashlib.sha256(get(asset)).hexdigest()
+    def release_asset(env):
+        return "https://github.com/%s/releases/download/%s/firmware-%s.bin" % (repo, tag, env)
+
+    legacy = False
+    try:
+        rel_sha = hashlib.sha256(get(release_asset(OTA_ENV))).hexdigest()
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            return False, "cannot read the release asset for %s (HTTP %s)" % (OTA_ENV, exc.code)
+        # TRANSITION SHIM — delete once the first dual-board release is published.
+        # Releases made before the -3.5 was supported carry the -3.5B image under
+        # the old name `firmware-esp32s3_hsu.bin`. Without this, the checker is
+        # red for reasons that have nothing to do with what the scales can see.
+        legacy = True
+        rel_sha = hashlib.sha256(get(release_asset("esp32s3_hsu"))).hexdigest()
+
     said = live.get("firmware_sha")
     if said != rel_sha:
         return False, ("version.json advertises %s but the release asset hashes to %s — "
                        "scales would download the update and reject it" % (said, rel_sha))
 
-    served = hashlib.sha256(get("%s/firmware/firmware-%s.bin" % (pages, OTA_ENV))).hexdigest()
+    served_env = "esp32s3_hsu" if legacy else OTA_ENV
+    served = hashlib.sha256(get("%s/firmware/firmware-%s.bin" % (pages, served_env))).hexdigest()
     if served != rel_sha:
         return False, ("the browser installer would flash %s while the OTA channel "
                        "serves %s" % (served[:12], rel_sha[:12]))
+
+    # The -3.5's own section. A -3.5 reads this and nothing else, so an entry that
+    # is missing or points at the -3.5B image is the difference between a scale
+    # that updates and one that comes back with a black screen.
+    boards = live.get("boards") or {}
+    if not legacy or boards:
+        nonb = boards.get(NONB_BOARD)
+        if not nonb:
+            return False, ("version.json carries no boards[%r] entry — every -3.5 "
+                           "is being told there is nothing to install" % NONB_BOARD)
+        nonb_rel = hashlib.sha256(get(release_asset(NONB_ENV))).hexdigest()
+        if nonb.get("firmware_sha") != nonb_rel:
+            return False, ("boards[%r] advertises %s but the release asset hashes to %s"
+                           % (NONB_BOARD, nonb.get("firmware_sha"), nonb_rel))
+        if nonb_rel == rel_sha:
+            return False, ("boards[%r] serves the same image as the flat -3.5B keys — "
+                           "one of the two boards would be flashed with the other's "
+                           "firmware" % NONB_BOARD)
 
     if not quiet:
         print("Live site is current:")
         print("  release        %s" % tag)
         print("  version.json   %s" % got)
-        print("  firmware sha   %s" % rel_sha)
+        print("  firmware sha   %s%s" % (rel_sha, "  (legacy asset name)" if legacy else ""))
         print("  installer and OTA serve the same object.")
     return True, "current"
 

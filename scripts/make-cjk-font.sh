@@ -90,4 +90,4 @@ done
 
 echo
 "$PY" scripts/check-cjk-font.py
-echo "Done. Rebuild to pick them up:  pio run -e esp32s3_hsu"
+echo "Done. Rebuild to pick them up:  pio run -e esp32s3_hsu_b"

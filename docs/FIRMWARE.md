@@ -268,9 +268,14 @@ bar and verifies a SHA-256.
   `firmware.factory.bin` corrupts the bootloader and partition table.
 - The manifest is generated from `TIGERSCALE_FW_VERSION` by the release workflow,
   so the firmware and the manifest cannot drift apart.
-- **Known limitation:** one published binary, three transports. A unit wired for
-  SPI or I²C that takes the published (HSU) update loses its reader. Tracked as an
-  issue.
+- **Two boards, one manifest.** The flat `version` / `firmware_sha` /
+  `firmware_url` keys describe the ESP32-S3-Touch-LCD-3.5**B** build and always
+  will: every scale in the field is a -3.5B and reads exactly those keys. A -3.5
+  reads `boards["3.5"]` and has no fallback to them, because the fallback would
+  install the other board's image and leave a black screen.
+  `scripts/make-manifest.py` refuses to generate a manifest that breaks this.
+- **Known limitation:** published builds assume HSU. A unit wired for SPI or I²C
+  that takes a published update loses its reader.
 
 ## Keeping the tooling honest
 
@@ -293,7 +298,7 @@ So run the guards under Git Bash (`bash scripts/verify.sh --quick`) and build in
 PowerShell:
 
 ```powershell
-& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -e esp32s3_hsu
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -e esp32s3_hsu_b
 ``` They were each broken on macOS before this repository's first
 commit — two used bash-4-only builtins and GNU-only grep flags, and
 `check-codemap.sh` printed `PASSED` while verifying nothing at all. If you

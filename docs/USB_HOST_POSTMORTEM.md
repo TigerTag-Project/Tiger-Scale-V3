@@ -67,7 +67,7 @@ the matching build env:
 
 | Wiring | env | Readers |
 |--------|-----|---------|
-| HSU / UART | `esp32s3_hsu` | 2 (reference, bench-verified) |
+| HSU / UART | `esp32s3_hsu_b` | 2 (reference, bench-verified) |
 | SPI | `esp32s3` | 2 |
 | I2C on `Wire1` | `esp32s3_i2c` | 1 (fixed 0x24 address) |
 

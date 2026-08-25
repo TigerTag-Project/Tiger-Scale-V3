@@ -106,9 +106,9 @@ fi
 
 if [ "$QUICK" -eq 0 ]; then
   if [ "$ALL" -eq 1 ]; then
-    ENVS="esp32s3_hsu esp32s3 esp32s3_i2c esp32s3_hsu_debug esp32s3_i2c_debug"
+    ENVS="esp32s3_hsu_b esp32s3_hsu esp32s3 esp32s3_i2c esp32s3_hsu_debug esp32s3_i2c_debug"
   else
-    ENVS="esp32s3_hsu"
+    ENVS="esp32s3_hsu_b esp32s3_hsu"
   fi
   for e in $ENVS; do
     step "Build $e"

@@ -12,7 +12,7 @@ transport detects nothing, reports no error, and looks exactly like a wiring
 fault or a dead module.
 
 ```bash
-pio run -e esp32s3_hsu   # HSU / UART wiring  (2 readers, reference build)
+pio run -e esp32s3_hsu_b # HSU / UART wiring, -3.5B board (2 readers, reference build)
 pio run -e esp32s3       # SPI wiring         (2 readers)
 pio run -e esp32s3_i2c   # I2C on Wire1       (1 reader)
 ```

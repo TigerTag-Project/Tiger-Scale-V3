@@ -37,7 +37,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-ENV_NAME="esp32s3_hsu"
+# The -3.5B build: that is what the bench unit is, and what almost every scale
+# is. For an ESP32-S3-Touch-LCD-3.5 without the B, pass --env esp32s3_hsu.
+ENV_NAME="esp32s3_hsu_b"
 PORT=""
 ERASE=0
 UPLOAD_FS=0

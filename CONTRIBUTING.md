@@ -26,7 +26,7 @@ Two documents will save you the most time:
 ```bash
 git clone https://github.com/TigerTag-Project/Tiger-Scale-V3.git
 cd Tiger-Scale-V3
-pio run -e esp32s3_hsu     # ~3 minutes on a first build
+pio run -e esp32s3_hsu_b   # ~3 minutes on a first build
 ```
 
 You need [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/).
@@ -61,7 +61,7 @@ had become the production UI. Both misled real debugging sessions.
 bash scripts/check-i18n.sh      # after touching i18n.h
 bash scripts/check-codemap.sh   # after touching the .ino
 bash scripts/update_toc.sh      # after adding/moving a "// §N — " banner
-pio run -e esp32s3_hsu          # must compile
+pio run -e esp32s3_hsu_b        # must compile
 ```
 
 CI runs all of these on every push, plus a build of all five envs. Running them
@@ -100,7 +100,7 @@ is in that list because it already caught someone here.
 
 The two things that make a firmware report actionable:
 
-1. **Which build env** you flashed (`esp32s3_hsu`, `esp32s3`, `esp32s3_i2c`).
+1. **Which build env** you flashed (`esp32s3_hsu_b` for a -3.5B board, `esp32s3_hsu` for a -3.5).
 2. **How your readers are wired.**
 
 Most "no readers detected" reports are firmware built for a transport that

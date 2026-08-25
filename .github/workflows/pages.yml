@@ -63,7 +63,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  OTA_ENV: esp32s3_hsu
+  # The build behind the flat OTA keys — the ESP32-S3-Touch-LCD-3.5B, which is
+  # what every scale in the field is. make-manifest.py refuses anything else.
+  OTA_ENV: esp32s3_hsu_b
+  # The ESP32-S3-Touch-LCD-3.5 build, served from boards["3.5"].
+  NONB_ENV: esp32s3_hsu
 
 jobs:
   redeploy:
@@ -135,7 +139,17 @@ jobs:
 
           [ "$SAY_V" = "$VERSION" ] || { echo "::error::version mismatch"; exit 1; }
           [ "$SAID"  = "$GOT"     ] || { echo "::error::the manifest hash is not the hash of the binary being served"; exit 1; }
-          echo "OK — the manifest describes exactly what is being served."
+
+          # Same proof for the -3.5, which reads boards["3.5"] and never the flat
+          # keys. And the two must not be the same object: if they were, one of
+          # the boards would be flashing the other's firmware.
+          NB_SAID=$(python3 -c "import json;print(json.load(open('pages/version.json'))['boards']['3.5']['firmware_sha'])")
+          NB_GOT=$(sha256sum "pages/firmware/firmware-$NONB_ENV.bin" | cut -d' ' -f1)
+          echo "-3.5 manifest sha: $NB_SAID"
+          echo "-3.5 served       : $NB_GOT"
+          [ "$NB_SAID" = "$NB_GOT" ] || { echo "::error::the -3.5 manifest hash is not the hash of the -3.5 binary"; exit 1; }
+          [ "$NB_SAID" != "$SAID"  ] || { echo "::error::both boards are being served the same image"; exit 1; }
+          echo "OK — the manifest describes exactly what is being served, per board."
 
       - uses: actions/upload-pages-artifact@v3
         if: steps.state.outputs.skip != 'true'

@@ -39,7 +39,8 @@ Official vendor documentation (deliberately linked rather than copied into this
 repository — vendor PDFs are theirs to distribute, and a stale local copy quietly
 diverges from the current revision):
 
-- [Waveshare ESP32-S3-Touch-LCD-3.5 wiki](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-3.5) — schematic, dimensions, demos
+- [Waveshare ESP32-S3-Touch-LCD-3.5**B** wiki](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-3.5B) — schematic, dimensions, demos (the reference board)
+- [Waveshare ESP32-S3-Touch-LCD-3.5 wiki](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-3.5) — the same, for the variant without the B
 - [ESP32-S3 datasheet](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf) (Espressif)
 - [ESP32-S3 technical reference manual](https://www.espressif.com/sites/default/files/documentation/esp32-s3_technical_reference_manual_en.pdf) (Espressif)
 - [ES8311 datasheet and user guide](https://www.everest-semi.com/) (Everest Semiconductor)
@@ -54,7 +55,7 @@ nothing extra and helps keep the TigerTag cloud free.
 
 | Qty | Component | Link |
 |-----|-----------|------|
-| 1 | **Waveshare ESP32-S3-Touch-LCD-3.5B** — 480×320 IPS touch, ESP32-S3, 8 MB PSRAM, 16 MB flash | [Amazon](https://link.amazon/B0gaANfF5) |
+| 1 | **Waveshare ESP32-S3-Touch-LCD-3.5B** — 480×320 IPS touch, ESP32-S3, 8 MB PSRAM, 16 MB flash. The **-3.5** without the B is supported too, by its own firmware build — see [Board variants](#board-variants) | [Amazon](https://link.amazon/B0gaANfF5) |
 | 2 | **PN532 V3 NFC module** — must have the pin header **and** the HSU/I²C/SPI mode switch | [Amazon](https://link.amazon/B0iTXrhjd) |
 | 1 | **5 kg load cell + HX711 amplifier** | [Amazon](https://link.amazon/B09LOUuI1) |
 | 1 | **USB-C 4-pin cable** | [Amazon](https://link.amazon/B0aoW8qQx) |
@@ -67,7 +68,7 @@ nothing extra and helps keep the TigerTag cloud free.
   <tr>
     <td align="center">
       <img src="img/esp32-s3-touch-lcd-3.5b.jpg" width="380" alt="Waveshare ESP32-S3-Touch-LCD-3.5B board"><br>
-      <sub><strong>Warning:</strong> only the <strong>Waveshare ESP32-S3-Touch-LCD-3.5B</strong> model works — the no B version is not supported.</sub>
+      <sub><strong>Both variants work, but they need different firmware.</strong> Read the silkscreen: <strong>-3.5B</strong> or <strong>-3.5</strong>. The web installer asks which one you have; the wiring and the case are the same either way.</sub>
     </td>
     <td align="center">
       <img src="img/load-cell-hx711.jpg" width="380" alt="5 kg load cell and HX711 amplifier board"><br>
@@ -75,6 +76,34 @@ nothing extra and helps keep the TigerTag cloud free.
     </td>
   </tr>
 </table>
+
+## Board variants
+
+Waveshare sells this display board in two versions and TigerScale runs on both,
+each from its own firmware build. They are the same size and shape, mount the
+same way, and take exactly the same wiring — comparing the two official
+schematics net by net, **one GPIO differs**.
+
+| | ESP32-S3-Touch-LCD-3.5**B** | ESP32-S3-Touch-LCD-3.5 |
+|---|---|---|
+| Display controller | AXS15231B over QSPI | ST7796 over SPI |
+| Touch controller | AXS5106L @ 0x3B on `Wire1` | FT6336 @ 0x38 on `Wire1` |
+| GPIO12 | `LCD_CS` | `I2S_MCLK` — the panel's chip select is strapped to GND through R16 instead |
+| ES8311 MCLK | GPIO44, through R61 | GPIO12 |
+| PN532 pins, HX711 pins, I²S, I²C, 2.54 mm header numbering | — | identical |
+| Build env | `esp32s3_hsu_b` | `esp32s3_hsu` |
+
+Everything below therefore applies to both boards unchanged, and so does the
+printed enclosure. What does **not** carry over is the firmware image: with a
+different panel controller, a board flashed with the other variant's build comes
+up with a black screen and no way to say why. The web installer asks which board
+you have before it flashes anything, and the over-the-air channel serves each
+board from its own entry in the published manifest.
+
+> [!NOTE]
+> The **-3.5B** build is the one verified on real hardware. The **-3.5** build is
+> derived from the official schematic and compiles, but has not yet been run on a
+> physical board — if you have one, a report either way is welcome.
 
 > [!WARNING]
 > **The sealed USB-C-only PN532 dongles will not work.** They have no pin header, and
@@ -114,7 +143,7 @@ header labelled `SCL` / `SDA` / `VCC` / `GND`, because that is the silkscreen on
 the module. In **HSU mode those same physical pins carry TXD and RXD** — this is a
 UART build, not an I²C one. Someone who reads the labels literally will wire it
 correctly but then build `esp32s3_i2c`, and find no reader at all. Build
-`esp32s3_hsu`.
+`esp32s3_hsu_b` (or `esp32s3_hsu` on a board without the B).
 
 Two things this diagram settles:
 
@@ -206,7 +235,7 @@ The transport is a **compile-time** choice. Building an env that does not match
 your wiring produces firmware that detects no reader and gives no clue why. This
 has cost a full debugging session at least once.
 
-### HSU / UART — `esp32s3_hsu` (reference, bench-verified)
+### HSU / UART — `esp32s3_hsu_b` / `esp32s3_hsu` (reference, bench-verified)
 
 Set **both channels of the module's mode switch to OFF** (HSU, per the Elechouse
 V3 silkscreen table). Each module gets its own UART; there is no shared bus.

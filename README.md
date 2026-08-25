@@ -178,6 +178,19 @@ the IDE has no equivalent for.
 
 Full costed list with every link: **[docs/HARDWARE.md](docs/HARDWARE.md#bill-of-materials)**
 
+<table align="center">
+  <tr>
+    <td align="center">
+      <img src="docs/img/esp32-s3-touch-lcd-3.5b.jpg" width="380" alt="Waveshare ESP32-S3-Touch-LCD-3.5B board"><br>
+      <sub><strong>Warning:</strong> only the <strong>Waveshare ESP32-S3-Touch-LCD-3.5B</strong> model works — the no B version is not supported.</sub>
+    </td>
+    <td align="center">
+      <img src="docs/img/load-cell-hx711.jpg" width="380" alt="5 kg load cell and HX711 amplifier board"><br>
+      <sub><strong>Warning:</strong> the load cell must have 2× M4 and 2× M5 tapped holes, and the HX711 board must be identical to the one shown — otherwise it will not fit in its designated slot.</sub>
+    </td>
+  </tr>
+</table>
+
 ### Ready to slice
 
 The enclosure is on **[MakerWorld](https://makerworld.com/en/models/3161869-tigerscale-v3-best-smart-filament-scale-with-nfc#profileId-3573543)** as one `.3mf`

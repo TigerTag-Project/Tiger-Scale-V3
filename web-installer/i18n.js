@@ -36,7 +36,7 @@ en: {
   opt_35_d: "The printing has no B. Same size, same wiring, same case — only the screen controller differs.",
   badge_reco: "most common",
 
-  wiring_btn: "Not sure? Open the wiring diagram",
+  wiring_btn: "How everything is wired up",
   wiring_hint: "Drag to turn the board, scroll to zoom. Click a wire to follow where it goes.",
   cirkit_credit_html: 'Edit this project interactively in <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a>.',
 
@@ -58,7 +58,7 @@ en: {
   a3_html: "Run <b>Settings &rarr; Calibration</b> with an object whose weight you know.",
   a4: "Put a tagged spool on the platform. It identifies itself.",
   trouble_t: "No reader detected?",
-  trouble_b_html: 'The wiring you picked does not match the one you built. Go back to step 1, choose another and install again. Everything else is in the <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md">troubleshooting guide</a>.',
+  trouble_b_html: "The readers talk to the board over UART, and that is the only wiring the published firmware supports. Check that both switches on each PN532 module are set to OFF, and that each module’s TX goes to the board’s RX rather than to its TX. Everything else is in the <a href=\"https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md\">troubleshooting guide</a>.",
 
   cart_stl: "Download the printable enclosure (3MF)",
   f_source: "Source", f_wiring: "Wiring", f_enclosure: "Enclosure",
@@ -104,7 +104,7 @@ fr: {
   opt_35_d: "L'inscription ne comporte pas de B. Même taille, même câblage, même boîtier — seul le contrôleur d'écran change.",
   badge_reco: "la plus répandue",
 
-  wiring_btn: "Pas sûr ? Ouvrir le schéma de câblage",
+  wiring_btn: "Comment tout se câble",
   wiring_hint: "Faites glisser pour tourner la carte, molette pour zoomer. Cliquez sur un fil pour suivre son trajet.",
   cirkit_credit_html: 'Modifiez ce projet de façon interactive dans <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a>.',
 
@@ -126,7 +126,7 @@ fr: {
   a3_html: "Lancez <b>Réglages &rarr; Calibration</b> avec un objet dont vous connaissez le poids.",
   a4: "Posez une bobine taguée sur le plateau. Elle s'identifie toute seule.",
   trouble_t: "Aucun lecteur détecté ?",
-  trouble_b_html: "Le câblage choisi ne correspond pas à celui que vous avez monté. Revenez à l'étape 1, prenez-en un autre et réinstallez. Tout le reste est dans le <a href=\"https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md\">guide de dépannage</a>.",
+  trouble_b_html: "Les lecteurs parlent à la carte en UART, et c’est le seul câblage que le micrologiciel publié prend en charge. Vérifiez que les deux interrupteurs de chaque module PN532 sont sur OFF, et que le TX de chaque module va bien sur le RX de la carte et non sur son TX. Tout le reste est dans le <a href=\"https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md\">guide de dépannage</a>.",
 
   cart_stl: "Télécharger le boîtier à imprimer (3MF)",
   f_source: "Sources", f_wiring: "Câblage", f_enclosure: "Boîtier",
@@ -172,7 +172,7 @@ de: {
   opt_35_d: "Der Aufdruck hat kein B. Gleiche Größe, gleiche Verdrahtung, gleiches Gehäuse — nur der Display-Controller ist anders.",
   badge_reco: "am häufigsten",
 
-  wiring_btn: "Unsicher? Schaltplan öffnen",
+  wiring_btn: "Wie alles verdrahtet wird",
   wiring_hint: "Ziehen zum Drehen, scrollen zum Zoomen. Auf eine Leitung klicken, um ihrem Verlauf zu folgen.",
   cirkit_credit_html: 'Dieses Projekt interaktiv bearbeiten in <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a>.',
 
@@ -194,7 +194,7 @@ de: {
   a3_html: "Führen Sie <b>Einstellungen &rarr; Kalibrierung</b> mit einem Gegenstand bekannten Gewichts aus.",
   a4: "Legen Sie eine getaggte Spule auf die Plattform. Sie meldet sich selbst.",
   trouble_t: "Kein Leser erkannt?",
-  trouble_b_html: 'Die gewählte Verdrahtung passt nicht zu der aufgebauten. Gehen Sie zurück zu Schritt 1, wählen Sie eine andere und installieren Sie erneut. Alles Weitere steht im <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md">Fehlerbehebungs-Leitfaden</a>.',
+  trouble_b_html: "Die Leser sprechen über UART mit der Platine, und das ist die einzige Verdrahtung, die die veröffentlichte Firmware unterstützt. Prüfen Sie, dass beide Schalter jedes PN532-Moduls auf OFF stehen und dass TX jedes Moduls auf RX der Platine geht und nicht auf deren TX. Alles Weitere steht im <a href=\"https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md\">Fehlerbehebungs-Leitfaden</a>.",
 
   cart_stl: "Druckbares Gehäuse herunterladen (3MF)",
   f_source: "Quellcode", f_wiring: "Verdrahtung", f_enclosure: "Gehäuse",
@@ -240,7 +240,7 @@ es: {
   opt_35_d: "La serigrafía no lleva B. Mismo tamaño, mismo cableado, misma caja: solo cambia el controlador de la pantalla.",
   badge_reco: "la más común",
 
-  wiring_btn: "¿No está seguro? Abra el esquema",
+  wiring_btn: "Cómo se cablea todo",
   wiring_hint: "Arrastre para girar la placa, use la rueda para acercar. Haga clic en un cable para seguir su recorrido.",
   cirkit_credit_html: 'Edite este proyecto de forma interactiva en <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a>.',
 
@@ -262,7 +262,7 @@ es: {
   a3_html: "Ejecute <b>Ajustes &rarr; Calibración</b> con un objeto de peso conocido.",
   a4: "Ponga una bobina etiquetada en la plataforma. Se identifica sola.",
   trouble_t: "¿Ningún lector detectado?",
-  trouble_b_html: 'El cableado elegido no coincide con el que montó. Vuelva al paso 1, elija otro e instale de nuevo. Todo lo demás está en la <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md">guía de resolución de problemas</a>.',
+  trouble_b_html: "Los lectores hablan con la placa por UART, y ese es el único cableado que admite el firmware publicado. Compruebe que los dos interruptores de cada módulo PN532 están en OFF y que el TX de cada módulo va al RX de la placa y no a su TX. Todo lo demás está en la <a href=\"https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md\">guía de resolución de problemas</a>.",
 
   cart_stl: "Descargar la carcasa imprimible (3MF)",
   f_source: "Código", f_wiring: "Cableado", f_enclosure: "Carcasa",
@@ -308,7 +308,7 @@ it: {
   opt_35_d: "La scritta non ha la B. Stesse dimensioni, stesso cablaggio, stessa scatola: cambia solo il controller dello schermo.",
   badge_reco: "la più diffusa",
 
-  wiring_btn: "Non sei sicuro? Apri lo schema",
+  wiring_btn: "Come si collega tutto",
   wiring_hint: "Trascina per ruotare la scheda, scorri per ingrandire. Clicca un filo per seguirne il percorso.",
   cirkit_credit_html: 'Modifica questo progetto in modo interattivo su <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a>.',
 
@@ -330,7 +330,7 @@ it: {
   a3_html: "Esegui <b>Impostazioni &rarr; Calibrazione</b> con un oggetto di peso noto.",
   a4: "Metti una bobina con tag sulla piattaforma. Si identifica da sola.",
   trouble_t: "Nessun lettore rilevato?",
-  trouble_b_html: 'Il cablaggio scelto non corrisponde a quello montato. Torna al passo 1, scegline un altro e reinstalla. Tutto il resto è nella <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md">guida alla risoluzione dei problemi</a>.',
+  trouble_b_html: "I lettori parlano con la scheda via UART, ed è l’unico cablaggio supportato dal firmware pubblicato. Controlla che entrambi gli interruttori di ogni modulo PN532 siano su OFF e che il TX di ogni modulo vada sull’RX della scheda e non sul suo TX. Tutto il resto è nella <a href=\"https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md\">guida alla risoluzione dei problemi</a>.",
 
   cart_stl: "Scarica il contenitore stampabile (3MF)",
   f_source: "Sorgenti", f_wiring: "Cablaggio", f_enclosure: "Contenitore",
@@ -376,7 +376,7 @@ pl: {
   opt_35_d: "Nadruk nie ma litery B. Ten sam rozmiar, to samo okablowanie, ta sama obudowa — różni się tylko sterownik ekranu.",
   badge_reco: "najczęstsza",
 
-  wiring_btn: "Nie masz pewności? Otwórz schemat",
+  wiring_btn: "Jak to wszystko połączyć",
   wiring_hint: "Przeciągnij, aby obrócić płytkę, przewiń, aby przybliżyć. Kliknij przewód, aby prześledzić jego trasę.",
   cirkit_credit_html: 'Edytuj ten projekt interaktywnie w <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a>.',
 
@@ -398,7 +398,7 @@ pl: {
   a3_html: "Uruchom <b>Ustawienia &rarr; Kalibracja</b> z przedmiotem o znanej wadze.",
   a4: "Połóż otagowaną szpulę na platformie. Sama się rozpozna.",
   trouble_t: "Nie wykryto czytnika?",
-  trouble_b_html: 'Wybrane okablowanie nie odpowiada temu, które zbudowałeś. Wróć do kroku 1, wybierz inne i zainstaluj ponownie. Reszta jest w <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md">przewodniku rozwiązywania problemów</a>.',
+  trouble_b_html: "Czytniki rozmawiają z płytką przez UART i jest to jedyne okablowanie obsługiwane przez opublikowany firmware. Sprawdź, czy oba przełączniki każdego modułu PN532 są w pozycji OFF i czy TX każdego modułu trafia do RX płytki, a nie do jej TX. Reszta jest w <a href=\"https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md\">przewodniku rozwiązywania problemów</a>.",
 
   cart_stl: "Pobierz obudowę do druku (3MF)",
   f_source: "Kod", f_wiring: "Okablowanie", f_enclosure: "Obudowa",
@@ -444,7 +444,7 @@ pt: {
   opt_35_d: "A impressão não tem B. Mesmo tamanho, mesma fiação, mesma caixa — muda só o controlador da tela.",
   badge_reco: "a mais comum",
 
-  wiring_btn: "Na dúvida? Abra o diagrama",
+  wiring_btn: "Como tudo é ligado",
   wiring_hint: "Arraste para girar a placa, role para aproximar. Clique em um fio para seguir o caminho dele.",
   cirkit_credit_html: 'Edite este projeto de forma interativa no <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a>.',
 
@@ -466,7 +466,7 @@ pt: {
   a3_html: "Rode <b>Configurações &rarr; Calibração</b> com um objeto de peso conhecido.",
   a4: "Coloque um carretel com tag na plataforma. Ele se identifica sozinho.",
   trouble_t: "Nenhum leitor detectado?",
-  trouble_b_html: 'A ligação escolhida não corresponde à que você montou. Volte ao passo 1, escolha outra e instale de novo. Todo o resto está no <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md">guia de solução de problemas</a>.',
+  trouble_b_html: "Os leitores falam com a placa por UART, e essa é a única ligação suportada pelo firmware publicado. Verifique se as duas chaves de cada módulo PN532 estão em OFF e se o TX de cada módulo vai para o RX da placa, e não para o TX dela. Todo o resto está no <a href=\"https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md\">guia de solução de problemas</a>.",
 
   cart_stl: "Baixar o gabinete imprimível (3MF)",
   f_source: "Código", f_wiring: "Ligações", f_enclosure: "Gabinete",
@@ -512,7 +512,7 @@ pt: {
   opt_35_d: "A impressão não tem B. Mesmo tamanho, mesma cablagem, mesma caixa — muda apenas o controlador do ecrã.",
   badge_reco: "a mais comum",
 
-  wiring_btn: "Sem certezas? Abra o esquema",
+  wiring_btn: "Como tudo é ligado",
   wiring_hint: "Arraste para rodar a placa, use a roda para ampliar. Clique num fio para seguir o percurso.",
   cirkit_credit_html: 'Edite este projeto de forma interactiva no <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a>.',
 
@@ -534,7 +534,7 @@ pt: {
   a3_html: "Execute <b>Definições &rarr; Calibração</b> com um objecto de peso conhecido.",
   a4: "Ponha uma bobina com etiqueta na plataforma. Identifica-se sozinha.",
   trouble_t: "Nenhum leitor detectado?",
-  trouble_b_html: 'A ligação escolhida não corresponde à que montou. Volte ao passo 1, escolha outra e instale de novo. Tudo o resto está no <a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md">guia de resolução de problemas</a>.',
+  trouble_b_html: "Os leitores falam com a placa por UART, e essa é a única ligação suportada pelo firmware publicado. Verifique se os dois interruptores de cada módulo PN532 estão em OFF e se o TX de cada módulo vai para o RX da placa, e não para o TX dela. Tudo o resto está no <a href=\"https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md\">guia de resolução de problemas</a>.",
 
   cart_stl: "Transferir a caixa imprimível (3MF)",
   f_source: "Código", f_wiring: "Ligações", f_enclosure: "Caixa",
@@ -580,7 +580,7 @@ zh: {
   opt_35_d: "丝印末尾没有 B。尺寸、接线、外壳都一样，只有屏幕驱动芯片不同。",
   badge_reco: "最常见",
 
-  wiring_btn: "不确定？打开接线图",
+  wiring_btn: "全部接线方式",
   wiring_hint: "拖动可旋转电路板，滚轮缩放。点一根线可以看它接到哪里。",
   cirkit_credit_html: '在 <a href="https://app.cirkitdesigner.com/project/c6aa6c0a-9462-498f-8923-9ad4454e0e69" target="_blank" rel="noopener">Cirkit Designer</a> 中交互式编辑这个项目。',
 
@@ -602,7 +602,7 @@ zh: {
   a3_html: "用一个已知重量的物品运行<b>设置 &rarr; 校准</b>。",
   a4: "把带标签的线轴放到托盘上，它会自己识别。",
   trouble_t: "没检测到读卡器？",
-  trouble_b_html: '你选的接线方式和实际装的不一致。回到第 1 步，换一个再装一次。其余问题见<a href="https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md">故障排查指南</a>。',
+  trouble_b_html: "读卡器通过 UART 与主板通信，这也是发布固件支持的唯一接法。请确认每个 PN532 模块的两个拨码开关都在 OFF，且模块的 TX 接到主板的 RX 而不是 TX。其余问题见<a href=\"https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/docs/TROUBLESHOOTING.md\">故障排查指南</a>。",
 
   cart_stl: "下载可打印外壳 (3MF)",
   f_source: "源码", f_wiring: "接线", f_enclosure: "外壳",

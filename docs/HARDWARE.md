@@ -55,7 +55,7 @@ nothing extra and helps keep the TigerTag cloud free.
 
 | Qty | Component | Link |
 |-----|-----------|------|
-| 1 | **Waveshare ESP32-S3-Touch-LCD-3.5B** — 480×320 IPS touch, ESP32-S3, 8 MB PSRAM, 16 MB flash. The **-3.5** without the B is supported too, by its own firmware build — see [Board variants](#board-variants) | [Amazon](https://link.amazon/B0gaANfF5) · [Amazon](https://link.amazon/B0dpgOlOQ) |
+| 1 | **Waveshare ESP32-S3-Touch-LCD-3.5B** — 480×320 IPS touch, ESP32-S3, 8 MB PSRAM, 16 MB flash. The **-3.5** without the B is supported too, by its own firmware build — see [Board variants](#board-variants) | [-3.5B](https://link.amazon/B0gaANfF5) · [-3.5](https://link.amazon/B0dpgOlOQ) |
 | 2 | **PN532 V3 NFC module** — must have the pin header **and** the HSU/I²C/SPI mode switch | [Amazon](https://link.amazon/B0iTXrhjd) |
 | 1 | **5 kg load cell + HX711 amplifier** | [Amazon](https://link.amazon/B09LOUuI1) |
 | 1 | **USB-C 4-pin cable** | [Amazon](https://link.amazon/B0aoW8qQx) |

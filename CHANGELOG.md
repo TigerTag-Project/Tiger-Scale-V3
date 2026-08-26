@@ -12,23 +12,11 @@ scaffold's placeholder text.
 
 ## [Unreleased]
 
-### Added
+Nothing yet.
 
-- **The Waveshare ESP32-S3-Touch-LCD-3.5 (without the B) is a supported board**,
-  published alongside the -3.5B. The two share a netlist and differ on exactly one
-  GPIO, so the wiring and the printed enclosure are unchanged; the panel is not
-  (ST7796 over SPI with an FT6336 touch IC, against AXS15231B over QSPI). The web
-  installer asks which board you have before flashing, and the over-the-air
-  channel serves each board its own image. Not yet run on physical -3.5 hardware.
+## [v3.7.3](docs/release-notes/v3.7.3.md)
 
-### Changed
-
-- `esp32s3_hsu` now builds for the -3.5; the -3.5B is `esp32s3_hsu_b`. Scales
-  already in the field are unaffected — they read the same manifest keys, which
-  still describe the -3.5B build and are now guarded against ever describing
-  anything else.
-- SPI and I²C builds are no longer published. They still build from source; every
-  scale in the field is wired HSU.
+See the release notes for the full entry.
 
 ## [v3.7.2](docs/release-notes/v3.7.2.md)
 

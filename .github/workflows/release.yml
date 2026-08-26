@@ -14,6 +14,8 @@ name: release
 # What gets published:
 #
 #   - firmware.bin and firmware.factory.bin for each of the two published boards
+#   - bootloader.bin, partitions.bin and boot_app0.bin, which the browser
+#     installer needs to write a blank board (the OTA never touches them)
 #   - littlefs.bin — the web UI. Built once: it comes from data/ and is identical
 #     for both of them.
 #   - SHA256SUMS.txt
@@ -145,8 +147,18 @@ jobs:
           for e in $PUBLISHED_ENVS; do
             cp ".pio/build/$e/firmware.bin"         "dist/firmware-$e.bin"
             cp ".pio/build/$e/firmware.factory.bin" "dist/firmware-$e.factory.bin"
+            # The bootloader and the partition table are published too. They are
+            # not part of any OTA — only the browser installer writes them — but
+            # they used to live nowhere except the deployed site, which made the
+            # site the only source for them. A site cannot carry a file no release
+            # ever deployed, so the first release after an env rename could not be
+            # assembled at all. Publishing them breaks that circle.
+            cp ".pio/build/$e/bootloader.bin"       "dist/bootloader-$e.bin"
+            cp ".pio/build/$e/partitions.bin"       "dist/partitions-$e.bin"
           done
           cp ".pio/build/$OTA_ENV/littlefs.bin" dist/littlefs.bin
+          cp "$(find ~/.platformio/packages/framework-arduinoespressif32/tools/partitions -name boot_app0.bin | head -1)" \
+             dist/boot_app0.bin
           ( cd dist && sha256sum ./* > SHA256SUMS.txt )
           ls -la dist/
           cat dist/SHA256SUMS.txt

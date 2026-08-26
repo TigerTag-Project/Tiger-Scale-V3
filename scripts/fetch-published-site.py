@@ -21,10 +21,12 @@ So nothing is built. The app images come from **the release assets themselves**,
 which is what makes the hashes correct by construction rather than by hope: the
 bytes hashed into `version.json` are the exact bytes the OTA will download.
 
-Two files per board are not release assets — the bootloader and the partition
-table, which the installer needs but the OTA does not. Those are copied from the
-currently published site, and the script fails loudly rather than guessing if
-they are missing.
+The bootloader and the partition table are needed by the installer but never by
+the OTA. They are release assets too — which they had to become: they used to be
+copied from the currently published site, and that made the site the only source
+for them. A site cannot carry a file no release has ever deployed, so the first
+release after an env was renamed could not be assembled at all. The site is now
+only a fallback, for releases cut before they were published.
 
 An earlier version of this script copied `version.json` from the live site
 instead. That was wrong in a way that took a broken release to expose: when the
@@ -60,12 +62,18 @@ PAGES = "https://tigertag-project.github.io/Tiger-Scale-V3"
 # at the end of this script fails if a manifest names a file that is not covered.
 ENVS = ["esp32s3_hsu_b", "esp32s3_hsu"]
 
-# Needed by the web installer, never published as release assets, and identical
-# for every version unless partitions.csv or the board config changes — in which
-# case the release workflow will have deployed new ones, and we copy those.
-FROM_PAGES = ["firmware/boot_app0.bin"] + \
-             ["firmware/bootloader-%s.bin" % e for e in ENVS] + \
-             ["firmware/partitions-%s.bin" % e for e in ENVS]
+# Needed by the web installer, never by the OTA. Published as release assets from
+# v3.7.4 on; for anything older they exist only on the deployed site.
+BOOT_FILES = ["boot_app0.bin"] + \
+             ["bootloader-%s.bin" % e for e in ENVS] + \
+             ["partitions-%s.bin" % e for e in ENVS]
+
+# TRANSITION SHIM — delete once a release cut with the current env names has been
+# deployed. Before the -3.5 existed, the reference build was called esp32s3_hsu,
+# so the site carries its boot files under that name and none under
+# esp32s3_hsu_b. Falling back is safe because these two files are the same bytes
+# for every env: same board config, same partitions.csv.
+LEGACY_ENV = "esp32s3_hsu"
 
 
 def get(url):
@@ -107,8 +115,8 @@ def main():
         print("\nFrom the release:")
         for a in assets:
             print("  %s" % a)
-        print("\nFrom the published site:")
-        for p in FROM_PAGES:
+        print("\nBoot files (release, else the published site):")
+        for p in BOOT_FILES:
             print("  %s" % p)
         return 0
 
@@ -136,21 +144,36 @@ def main():
         total += len(blob)
         print("  release  %-40s %9d bytes" % (name, len(blob)))
 
-    for path in FROM_PAGES:
-        try:
-            blob = get("%s/%s" % (args.pages.rstrip("/"), path))
-        except urllib.error.HTTPError as exc:
-            print("ERROR: the published site has no %s (HTTP %s)." % (path, exc.code),
-                  file=sys.stderr)
-            print("Bootloaders and partition tables are not release assets, so they "
-                  "can only come from a site a release already deployed.", file=sys.stderr)
+    site = args.pages.rstrip("/")
+    for name in BOOT_FILES:
+        blob = source = None
+        for where, url in (("release", "%s/%s" % (dl, name)),
+                           ("site", "%s/firmware/%s" % (site, name))):
+            try:
+                blob, source = get(url), where
+                break
+            except urllib.error.HTTPError as exc:
+                if exc.code != 404:
+                    print("ERROR: cannot read %s (HTTP %s)." % (url, exc.code),
+                          file=sys.stderr)
+                    return 1
+        if blob is None and LEGACY_ENV and "-" in name:
+            stem, _, _ = name.rpartition("-")
+            legacy = "%s-%s.bin" % (stem, LEGACY_ENV)
+            try:
+                blob, source = get("%s/firmware/%s" % (site, legacy)), "legacy"
+            except urllib.error.HTTPError:
+                pass
+        if blob is None:
+            print("ERROR: %s is neither a release asset of %s nor on the published "
+                  "site (HTTP 404)." % (name, tag), file=sys.stderr)
+            print("The installer cannot flash a blank board without it.", file=sys.stderr)
             return 1
-        dest = os.path.join(args.out, path)
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        dest = os.path.join(fw, name)
         with open(dest, "wb") as fh:
             fh.write(blob)
         total += len(blob)
-        print("  site     %-40s %9d bytes" % (path, len(blob)))
+        print("  %-8s %-40s %9d bytes" % (source, name, len(blob)))
 
     print("\n%.1f MB assembled, nothing rebuilt." % (total / 1e6))
     print("version=%s" % version)

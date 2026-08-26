@@ -373,6 +373,8 @@
     color:var(--link); transition:border-color .15s ease, background-color .15s ease;
   }
   ul.parts a.buy:hover { border-color:var(--brand); background:var(--panel-hi); }
+  ul.parts .buy-group { display:flex; flex-direction:column; gap:.32rem; flex:0 0 auto; }
+  ul.parts .buy-group a.buy { text-align:center; }
   .cart .foot { margin:.9rem 0 0; font-size:.78rem; color:var(--faint); line-height:1.55; }
   .cart .foot p { margin:.35rem 0 0; }
 
@@ -556,8 +558,11 @@
 
     <ul class="parts">
       <li><span class="q">1&times;</span>
-        <span class="nm" data-i18n="p_board"></span>
-        <a class="buy" href="https://link.amazon/B0gaANfF5" target="_blank" rel="noopener sponsored">Amazon</a></li>
+        <span class="nm"><span data-i18n="p_board"></span><em data-i18n="p_board_n"></em></span>
+        <span class="buy-group">
+          <a class="buy" href="https://link.amazon/B0gaANfF5" target="_blank" rel="noopener sponsored">-3.5B</a>
+          <a class="buy" href="https://link.amazon/B0dpgOlOQ" target="_blank" rel="noopener sponsored">-3.5</a>
+        </span></li>
       <li><span class="q">2&times;</span>
         <span class="nm"><span data-i18n="p_pn532"></span><em data-i18n="p_pn532_n"></em></span>
         <a class="buy" href="https://link.amazon/B0iTXrhjd" target="_blank" rel="noopener sponsored">Amazon</a></li>

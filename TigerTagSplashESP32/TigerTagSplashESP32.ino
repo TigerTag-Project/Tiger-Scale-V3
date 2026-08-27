@@ -23,26 +23,26 @@
 //   CONFIGURATION VARIABLES                               1411- 1830
 //   OLED DISPLAY                                          1831- 2608
 //   CLOUD PARSING                                         2609- 2623
-//   WIFI SETUP                                            2624- 7179
-//   LITTLEFS                                              7180- 7479
-//   FIREBASE AUTHENTICATION                               7480- 9139
-//   WEBSOCKET                                             9140- 9166
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9167- 9301
-//   UNIFIED WS FRAME BUILDER                              9302- 9415
-//   WEIGHT FILTER HELPERS                                 9416- 9430
-//   POST-SEND STATE RESET (shared by all send paths)      9431- 9451
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9452- 9548
-//   WEB SERVER                                            9549-10362
-//   CLOUD COMMUNICATION                                  10363-10545
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10546-11052
-//   mDNS                                                 11053-11090
-//   SCALE                                                11091-11261
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11262-11379
-//   RFID                                                 11380-12316
-//   OTA — Over-the-air firmware + filesystem update    12317-12996
-//   LVGL bridge + main weigh screen                      12997-13892
-//   Remote live view: the screen out, taps back in       13893-14737
-//   SETUP & LOOP                                         14738-15895
+//   WIFI SETUP                                            2624- 7203
+//   LITTLEFS                                              7204- 7503
+//   FIREBASE AUTHENTICATION                               7504- 9163
+//   WEBSOCKET                                             9164- 9190
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9191- 9325
+//   UNIFIED WS FRAME BUILDER                              9326- 9439
+//   WEIGHT FILTER HELPERS                                 9440- 9454
+//   POST-SEND STATE RESET (shared by all send paths)      9455- 9475
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9476- 9572
+//   WEB SERVER                                            9573-10386
+//   CLOUD COMMUNICATION                                  10387-10569
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10570-11076
+//   mDNS                                                 11077-11114
+//   SCALE                                                11115-11285
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11286-11403
+//   RFID                                                 11404-12340
+//   OTA — Over-the-air firmware + filesystem update    12341-13020
+//   LVGL bridge + main weigh screen                      13021-13916
+//   Remote live view: the screen out, taps back in       13917-14761
+//   SETUP & LOOP                                         14762-15919
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -7087,8 +7087,32 @@ static void runSettingsMenu() {
                 // throws away the session, and there is no undo for a restart.
                 if (lvglConfirm(t(I18N_REBOOT_Q))) {
                     Serial.println("[RESET] restart from Settings");
-                    displayMessage(t(I18N_REBOOTING), "");
-                    delay(400);             // let the message land before the reset
+                    // An LVGL screen, where this used to call the raw-gfx
+                    // displayMessage(). Two reasons, and the second is the one
+                    // that showed itself: drawing with `gfx` while an LVGL
+                    // screen is loaded is the trap documented in
+                    // docs/FIRMWARE.md, and the built-in gfx font stops at
+                    // ASCII — so "Redémarrage..." came out as mojibake the
+                    // moment the French strings got their accents back. The
+                    // WiFi-connected reboot a few cases up was rebuilt this way
+                    // long ago; this one was simply left behind.
+                    lv_obj_t *rebootCol;
+                    lv_obj_t *rebootScr = lvglCenteredScreen(&rebootCol);
+                    lv_obj_t *spin = lvglAddSpinner(rebootCol);
+                    // Orange rather than the accent blue every other spinner
+                    // uses, so the screen answers the Restart row that was just
+                    // tapped — that row is amber for the same reason.
+                    lv_obj_set_style_arc_color(spin, LVCOL_ORANGE, LV_PART_INDICATOR);
+                    lvglAddCenteredLabel(rebootCol, t(I18N_REBOOTING), LVCOL_TEXT, &gFont20);
+                    lvglAddCenteredLabel(rebootCol, "TigerScale V3 · " TIGERSCALE_FW_VERSION,
+                                         LVCOL_MUTED, &gFont14);
+                    lv_scr_load(rebootScr);
+                    // Long enough for the spinner to visibly turn — its period
+                    // is 1 s, and the old 400 ms would have shown a still arc.
+                    // The old screen is deliberately not deleted: the device
+                    // restarts out of this block, same as the OTA success path.
+                    uint32_t t0 = millis();
+                    while (millis() - t0 < 900) { lv_timer_handler(); delay(20); }
                     ESP.restart();
                 }
                 break;

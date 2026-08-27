@@ -19,30 +19,30 @@
 //   OTA CONFIGURATION                                      424-  456
 //   FORWARD DECLARATIONS                                   457-  728
 //   WEIGHT ROUNDING                                        729-  748
-//   GLOBAL OBJECTS                                         749- 1371
-//   CONFIGURATION VARIABLES                               1372- 1791
-//   OLED DISPLAY                                          1792- 2561
-//   CLOUD PARSING                                         2562- 2576
-//   WIFI SETUP                                            2577- 7128
-//   LITTLEFS                                              7129- 7428
-//   FIREBASE AUTHENTICATION                               7429- 9088
-//   WEBSOCKET                                             9089- 9115
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9116- 9250
-//   UNIFIED WS FRAME BUILDER                              9251- 9364
-//   WEIGHT FILTER HELPERS                                 9365- 9379
-//   POST-SEND STATE RESET (shared by all send paths)      9380- 9400
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9401- 9497
-//   WEB SERVER                                            9498-10311
-//   CLOUD COMMUNICATION                                  10312-10494
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10495-11001
-//   mDNS                                                 11002-11039
-//   SCALE                                                11040-11210
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11211-11328
-//   RFID                                                 11329-12265
-//   OTA — Over-the-air firmware + filesystem update    12266-12945
-//   LVGL bridge + main weigh screen                      12946-13841
-//   Remote live view: the screen out, taps back in       13842-14686
-//   SETUP & LOOP                                         14687-15835
+//   GLOBAL OBJECTS                                         749- 1392
+//   CONFIGURATION VARIABLES                               1393- 1812
+//   OLED DISPLAY                                          1813- 2590
+//   CLOUD PARSING                                         2591- 2605
+//   WIFI SETUP                                            2606- 7157
+//   LITTLEFS                                              7158- 7457
+//   FIREBASE AUTHENTICATION                               7458- 9117
+//   WEBSOCKET                                             9118- 9144
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9145- 9279
+//   UNIFIED WS FRAME BUILDER                              9280- 9393
+//   WEIGHT FILTER HELPERS                                 9394- 9408
+//   POST-SEND STATE RESET (shared by all send paths)      9409- 9429
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9430- 9526
+//   WEB SERVER                                            9527-10340
+//   CLOUD COMMUNICATION                                  10341-10523
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10524-11030
+//   mDNS                                                 11031-11068
+//   SCALE                                                11069-11239
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11240-11357
+//   RFID                                                 11358-12294
+//   OTA — Over-the-air firmware + filesystem update    12295-12974
+//   LVGL bridge + main weigh screen                      12975-13870
+//   Remote live view: the screen out, taps back in       13871-14715
+//   SETUP & LOOP                                         14716-15873
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -758,13 +758,34 @@ Arduino_GFX *gfx = nullptr;
 #if TS_BOARD_NONB
 // -3.5 — ST7796 on a plain SPI bus. `is_shared_interface = false` because
 // nothing else sits on this bus: the SD card and the PN532s have their own.
-// The reset pin is GFX_NOT_DEFINED: LCD_RST is behind the TCA9554 expander on
-// both boards, and the driver's software reset command covers it.
+// The reset pin is GFX_NOT_DEFINED because LCD_RST is not a GPIO on either
+// board — it hangs off the TCA9554 expander, and setup() pulses it there
+// before this panel is begun.
+//
+// SPI MODE 0, and it has to be said out loud. Arduino_ST7796::begin() in
+// GFX 1.6.x forces SPI_MODE3 on ESP32; this panel wants mode 0, which is what
+// Waveshare's own 1.5.5-era example uses. With mode 3 the board looks dead in
+// the most misleading way possible: the backlight comes up, "[LCD] begin OK"
+// prints, and the glass stays black. Reported from the first -3.5 in the field.
+//
+// Overriding is a two-line subclass because `_override_datamode` is protected;
+// bypassing Arduino_ST7796::begin() and calling Arduino_TFT::begin() directly
+// is what keeps the driver from setting it back. Patching the library instead
+// would be a fork to keep in sync forever.
+class TigerScaleST7796 : public Arduino_ST7796 {
+public:
+    using Arduino_ST7796::Arduino_ST7796;
+    bool begin(int32_t speed = GFX_NOT_DEFINED) override {
+        _override_datamode = SPI_MODE0;
+        return Arduino_TFT::begin(speed);
+    }
+};
+
 Arduino_DataBus *bus = new Arduino_ESP32SPI(
     LCD_SPI_DC, LCD_SPI_CS, LCD_SPI_SCLK, LCD_SPI_MOSI, LCD_SPI_MISO,
     FSPI, false
 );
-Arduino_GFX *panel = new Arduino_ST7796(bus, GFX_NOT_DEFINED, 0, true, 320, 480);
+Arduino_GFX *panel = new TigerScaleST7796(bus, GFX_NOT_DEFINED, 0, true, 320, 480);
 #else
 // June 15-16 baseline: library default init, no shared bus — matches firmware_merged.bin
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
@@ -1793,19 +1814,27 @@ static uint32_t gLastActivityMs          = 0; // reset on touch/RFID; drives 5-m
 // ============================================================================
 
 // Write to TCA9554 register (reg=0:input, 1:output, 2:polarity, 3:config)
-static void tcaWriteReg(uint8_t reg, uint8_t v) {
-    Wire.beginTransmission(TCA_ADDR);
-    Wire.write(reg);
-    Wire.write(v);
-    Wire.endTransmission();
+static void tcaWriteReg(TwoWire &bus, uint8_t reg, uint8_t v) {
+    bus.beginTransmission(TCA_ADDR);
+    bus.write(reg);
+    bus.write(v);
+    bus.endTransmission();
 }
 
-static void lcdResetByTCA9554() {
-    // Configure TCA9554 pin 1 as output (register 3: 0=output, default all input)
-    tcaWriteReg(0x03, 0xFD);        // pin 1 = output, others = input
-    tcaWriteReg(0x01, 0xFF); delay(10);   // pin 1 HIGH
-    tcaWriteReg(0x01, 0xFD); delay(10);   // pin 1 LOW (LCD reset assert)
-    tcaWriteReg(0x01, 0xFF); delay(200);  // pin 1 HIGH (LCD reset release)
+// Pulse the panel's reset line, which hangs off the TCA9554 expander rather than
+// a GPIO on either board (EXIO1 = P1 = LCD_RST in both schematics).
+//
+// Takes the bus because the expander is NOT where this file long assumed. The
+// vendor demo puts it on GPIO21/22, and that `Wire` cannot work here — GPIO22
+// does not exist on the ESP32-S3 — so this was a no-op for as long as it has
+// existed. The schematics put the expander on the shared I2C bus with the touch
+// controller, the PMIC and the codec, which is `Wire1` (GPIO8/7) at 0x20.
+static void lcdResetByTCA9554(TwoWire &bus) {
+    // Register 3 configures direction, 0 = output; register 1 drives the pins.
+    tcaWriteReg(bus, 0x03, 0xFD);        // pin 1 = output, others = input
+    tcaWriteReg(bus, 0x01, 0xFF); delay(10);   // pin 1 HIGH
+    tcaWriteReg(bus, 0x01, 0xFD); delay(10);   // pin 1 LOW (LCD reset assert)
+    tcaWriteReg(bus, 0x01, 0xFF); delay(200);  // pin 1 HIGH (LCD reset release)
 }
 
 static void drawSplash() {
@@ -14764,18 +14793,27 @@ void setup() {
     }
 
     #if !RFID_DIAG_DISABLE_DISPLAY_STACK
-    // NOTE: this Wire bus (GPIO21/22) cannot work on this board — GPIO22 does not
-    // exist on the ESP32-S3 and GPIO21 goes to the camera connector. The begin()
-    // below therefore logs "perimanSetPinBus(): Invalid pin: 22", and the
-    // lcdResetByTCA9554() that follows logs a handful of "NULL TX buffer pointer"
-    // errors because the bus never came up. Both are expected on this hardware and
-    // harmless: the display initialises fine without the TCA9554 reset, as the
-    // "[LCD] begin OK" line right below proves on every boot. Left in place rather
-    // than removed because it is the vendor's documented reset sequence and a
-    // future board revision may wire it correctly. Do not chase those errors, and
-    // do not attach new peripherals here — use Wire1 (GPIO8/7).
-    Wire.begin(I2C_SDA, I2C_SCL);
-    lcdResetByTCA9554();
+    // The panel's reset line is on the TCA9554 expander, which lives on `Wire1`
+    // at 0x20 — the shared bus, alongside the touch controller, the PMIC and the
+    // codec. Not on `Wire`/GPIO21-22: GPIO22 does not exist on the ESP32-S3, so
+    // that bus has never carried anything. This file used to reset the panel
+    // through it, which meant it never reset the panel at all — harmless on the
+    // -3.5B, whose AXS15231B comes up regardless, and not harmless on the -3.5,
+    // whose ST7796 needs the pulse.
+    //
+    // Wire1 is begun here rather than in setupTouchI2C() below, because the reset
+    // has to happen before gfx->begin(). setupTouchI2C() begins it again, which
+    // is a no-op on an already-initialised bus.
+    //
+    // Done for the -3.5 only, deliberately. Every scale in the field is a -3.5B
+    // that has been booting for months with no reset pulse at all; giving it one
+    // now would be changing the one path that is known to work, to fix a board it
+    // is not running on.
+#if TS_BOARD_NONB
+    Wire1.begin(TS_SDA, TS_SCL);
+    Wire1.setClock(100000);
+    lcdResetByTCA9554(Wire1);
+#endif
 
     if (!gfx->begin()) {
         Serial.println("Display init failed — continuing without display");

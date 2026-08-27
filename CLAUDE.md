@@ -188,8 +188,9 @@ an option.
 - **`Wire` (GPIO21/22) does not work on this board.** GPIO22 does not exist on
   the ESP32-S3 (the chip skips 22–25) and GPIO21 goes to the camera connector.
   Every boot's scan of that bus finds 0 devices. Put nothing new on it — the
-  working bus is `Wire1` (SDA=GPIO8, SCL=GPIO7), carrying touch @0x3B,
-  AXP2101 @0x34 and ES8311 @0x18. The PN532's fixed 0x24 doesn't collide.
+  working bus is `Wire1` (SDA=GPIO8, SCL=GPIO7), carrying the touch controller
+  (0x3B on the -3.5B, 0x38 on the -3.5), AXP2101 @0x34, ES8311 @0x18 and the
+  TCA9554 expander @0x20 — which is where the panel's reset line is. The PN532's fixed 0x24 doesn't collide.
 - **USB-host NFC is impossible on this board**, confirmed both on the bench and
   in the schematic. Do not re-attempt it:
   [`docs/USB_HOST_POSTMORTEM.md`](docs/USB_HOST_POSTMORTEM.md).

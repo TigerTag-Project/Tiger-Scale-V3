@@ -100,10 +100,21 @@ up with a black screen and no way to say why. The web installer asks which board
 you have before it flashes anything, and the over-the-air channel serves each
 board from its own entry in the published manifest.
 
+Two traps live in that difference, both of which present as a board that flashes
+perfectly and shows nothing:
+
+- **The ST7796 wants SPI mode 0.** `Arduino_ST7796::begin()` in GFX 1.6.x forces
+  `SPI_MODE3` on ESP32, while Waveshare's own example uses mode 0. With mode 3
+  the backlight comes up, `[LCD] begin OK` prints, and the glass stays black.
+  The firmware overrides it back in a two-line subclass in Section 5.
+- **The ST7796 needs its reset pulse**, and `LCD_RST` is not a GPIO on either
+  board — it is on the TCA9554 expander, on `Wire1`. See the I²C section below.
+
 > [!NOTE]
 > The **-3.5B** build is the one verified on real hardware. The **-3.5** build is
-> derived from the official schematic and compiles, but has not yet been run on a
-> physical board — if you have one, a report either way is welcome.
+> derived from the official schematic plus the two fixes above, both reported from
+> the first -3.5 in the field, and has not yet been confirmed end to end. A report
+> either way is welcome.
 
 > [!WARNING]
 > **The sealed USB-C-only PN532 dongles will not work.** They have no pin header, and
@@ -192,21 +203,22 @@ a real unit, not a transcription of the vendor demo:
 | 0x18 | ES8311 audio codec | Beep on tag detect |
 | 0x20 | TCA9554 I/O expander | **On `Wire1`, not `Wire`.** See below. |
 | 0x34 | AXP2101 PMIC | Battery level, charge state |
-| 0x3B | AXS5106L touch controller | |
+| 0x38 | FT6336 touch controller | -3.5 only |
+| 0x3B | AXS5106L touch controller | -3.5B only |
 | 0x51 | **unidentified** — almost certainly an RTC | 0x51 is the standard address for a PCF8563 / BM8563. Nothing in the firmware talks to it. |
 | 0x6B | **unidentified** | Nothing in the firmware talks to it. |
 | 0x24 | PN532 | I²C build only — fixed address, cannot be changed |
 
 Three things worth knowing about that list:
 
-- **The TCA9554 is reachable, on the wrong bus from the firmware's point of view.**
-  `lcdResetByTCA9554()` drives it over `Wire` — the bus that cannot work — so the
-  LCD reset sequence has never actually executed. The display initialises fine
-  without it (`[LCD] begin OK` on every boot), so this is latent rather than
-  broken, but pointing that function at `Wire1` would make the vendor's documented
-  reset sequence real for the first time. That is a change to display bring-up on
-  hardware that currently works, so it wants a deliberate test rather than a
-  drive-by fix.
+- **The TCA9554 answers on `Wire1`, and the panel's reset line hangs off it**
+  (EXIO1 = P1 = `LCD_RST`, on both boards). `lcdResetByTCA9554()` drove it over
+  `Wire` for a long time — the bus that cannot work — so the reset sequence never
+  actually executed. That is harmless on the -3.5B, whose AXS15231B comes up
+  regardless, and not harmless on the -3.5, whose ST7796 needs the pulse. The
+  reset now runs on `Wire1` **for the -3.5 only**: the -3.5B has been booting
+  without it for months, and giving the whole fleet a new bring-up step to fix a
+  board it is not running on would be the wrong trade.
 - **0x51 and 0x6B are unexplained.** If 0x51 is an RTC, the firmware is doing
   without a real-time clock it may already have — it currently relies on Firestore
   server timestamps and notes "No NTP — approximate based on…" in the code.

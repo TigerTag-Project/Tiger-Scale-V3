@@ -29,30 +29,30 @@ the source, so this table cannot silently disagree with the file.
 | 2 | OTA configuration | 424–456 |
 | 3 | Forward declarations | 457–728 |
 | 4 | Weight rounding | 729–748 |
-| 5 | Global objects (incl. `PN532Reader`, RF tuning) | 749–1371 |
-| 6 | Configuration variables | 1372–1791 |
-| 7 | Display / weigh rendering | 1792–2561 |
-| 8 | Cloud parsing | 2562–2576 |
-| 9 | WiFi setup + every touch/LVGL settings screen | 2577–7128 |
-| 10 | LittleFS | 7129–7428 |
-| 11 | Firebase authentication + Firestore | 7429–9088 |
-| 13 | WebSocket | 9089–9115 |
-| 14 | Cloud worker task (core 0) | 9116–9250 |
-| 15 | Unified WS frame builder | 9251–9364 |
-| 16 | Weight filter helpers | 9365–9379 |
-| 17 | Post-send state reset | 9380–9400 |
-| 18 | Shared weight push handler | 9401–9497 |
-| 19 | Web server (all HTTP routes) | 9498–10311 |
-| 20 | Cloud communication | 10312–10494 |
-| 21 | Weigh workflow state machine | 10495–11001 |
-| 22 | mDNS | 11002–11039 |
-| 23 | Scale (HX711 init, filtering, calibration) | 11040–11210 |
-| AUDIO | ES8311 codec beep (I2S slave, I2C 0x18) | 11211–11328 |
-| 24 | RFID (PN532 via `PN532Reader`, tag reading) | 11329–12265 |
-| 25 | OTA (firmware + filesystem update) | 12266–12945 |
-| LVGL | LVGL bridge + main weigh screen | 12946–13841 |
-| LIVE | Remote live view: the screen out, taps back in | 13842–14686 |
-| 26 | `setup()` + `loop()` | 14687–15835 |
+| 5 | Global objects (incl. `PN532Reader`, RF tuning) | 749–1392 |
+| 6 | Configuration variables | 1393–1812 |
+| 7 | Display / weigh rendering | 1813–2590 |
+| 8 | Cloud parsing | 2591–2605 |
+| 9 | WiFi setup + every touch/LVGL settings screen | 2606–7157 |
+| 10 | LittleFS | 7158–7457 |
+| 11 | Firebase authentication + Firestore | 7458–9117 |
+| 13 | WebSocket | 9118–9144 |
+| 14 | Cloud worker task (core 0) | 9145–9279 |
+| 15 | Unified WS frame builder | 9280–9393 |
+| 16 | Weight filter helpers | 9394–9408 |
+| 17 | Post-send state reset | 9409–9429 |
+| 18 | Shared weight push handler | 9430–9526 |
+| 19 | Web server (all HTTP routes) | 9527–10340 |
+| 20 | Cloud communication | 10341–10523 |
+| 21 | Weigh workflow state machine | 10524–11030 |
+| 22 | mDNS | 11031–11068 |
+| 23 | Scale (HX711 init, filtering, calibration) | 11069–11239 |
+| AUDIO | ES8311 codec beep (I2S slave, I2C 0x18) | 11240–11357 |
+| 24 | RFID (PN532 via `PN532Reader`, tag reading) | 11358–12294 |
+| 25 | OTA (firmware + filesystem update) | 12295–12974 |
+| LVGL | LVGL bridge + main weigh screen | 12975–13870 |
+| LIVE | Remote live view: the screen out, taps back in | 13871–14715 |
+| 26 | `setup()` + `loop()` | 14716–15873 |
 
 Two gaps and two oddities in that numbering, all deliberate:
 
@@ -78,60 +78,60 @@ Two gaps and two oddities in that numbering, all deliberate:
 | `axpBatteryLevel` | 654 | §3 |
 | `pollBatteryState` | 581 | §3 |
 | `roundWeight` | 732 | §4 |
-| `applyPN532RfTuning` | 1034 | §5 |
-| `runScreensaver` | 1837 | §7 |
-| `displayWeightWithState` | 2270 | §7 |
-| `tsPollLoop` | 2739 | §9 |
-| `tsBtn` | 2776 | §9 |
-| `tsKeyboard` | 3129 | §9 |
-| `wifiTouchConfigure` | 3483 | §9 |
-| `tsNumericInput` | 3638 | §9 |
-| `runCalibrationWizard` | 3810 | §9 |
-| `runLanguageSettings` | 4312 | §9 |
-| `runHardwareTest` | 4736 | §9 |
-| `lvglAskYesNo` | 5026 | §9 |
-| `runOtaMenu` | 6255 | §9 |
-| `runSettingsMenu` | 6621 | §9 |
-| `setupWiFi` | 7066 | §9 |
-| `setupFileSystem` | 7243 | §10 |
-| `firebaseSignIn` | 7440 | §11 |
-| `fetchApiKeyFromFirestore` | 7526 | §11 |
-| `syncClockFromFirestore` | 7684 | §11 |
-| `readInventoryContainerWeight` | 8097 | §11 |
-| `pushLatestEventToFirestore` | 8775 | §11 |
-| `buildWsFrame` | 9258 | §15 |
-| `resetWeightFilters` | 9368 | §16 |
-| `resetAfterSuccessfulSend` | 9383 | §17 |
-| `handleWeightPushBody` | 9404 | §18 |
-| `setupWebServer` | 9501 | §19 |
-| `sendSingleUidToCloud` | 10315 | §20 |
-| `parseCloudSpoolMeta` | 10371 | §20 |
-| `pushWeightToCloud` | 10421 | §20 |
-| `fetchMetaFromApiByUid` | 10459 | §20 |
-| `handleWeighWorkflow` | 10548 | §21 |
-| `startMDNS` | 11005 | §22 |
-| `setupScale` | 11043 | §23 |
-| `isRapidChange` | 11074 | §23 |
-| `readWeight` | 11110 | §23 |
-| `playSoundTheme` | 11290 | §AUDIO |
-| `rfidSelectReader` | 11384 | §24 |
-| `normalizeRfidHwConfig` | 11438 | §24 |
-| `setupRFID` | 11448 | §24 |
-| `setupServo` | 11654 | §24 |
-| `processAutoTare` | 11668 | §24 |
-| `fetchMetaFromFirestore` | 11976 | §24 |
-| `readTigerTagMetadata` | 12070 | §24 |
-| `pollRFIDReader` | 12141 | §24 |
-| `recoverRFIDReaderIfNeeded` | 12224 | §24 |
-| `isDuplicateRecentUid` | 12244 | §24 |
-| `isUidLatched` | 12248 | §24 |
-| `finishRfidSession` | 12260 | §24 |
-| `otaApply` | 12453 | §25 |
-| `otaFetchLatest` | 12595 | §25 |
-| `lvglBuildMainScreen` | 13180 | §LVGL |
-| `lvglUpdateMainScreen` | 13589 | §LVGL |
-| `setup` | 14706 | §26 |
-| `loop` | 14868 | §26 |
+| `applyPN532RfTuning` | 1055 | §5 |
+| `runScreensaver` | 1866 | §7 |
+| `displayWeightWithState` | 2299 | §7 |
+| `tsPollLoop` | 2768 | §9 |
+| `tsBtn` | 2805 | §9 |
+| `tsKeyboard` | 3158 | §9 |
+| `wifiTouchConfigure` | 3512 | §9 |
+| `tsNumericInput` | 3667 | §9 |
+| `runCalibrationWizard` | 3839 | §9 |
+| `runLanguageSettings` | 4341 | §9 |
+| `runHardwareTest` | 4765 | §9 |
+| `lvglAskYesNo` | 5055 | §9 |
+| `runOtaMenu` | 6284 | §9 |
+| `runSettingsMenu` | 6650 | §9 |
+| `setupWiFi` | 7095 | §9 |
+| `setupFileSystem` | 7272 | §10 |
+| `firebaseSignIn` | 7469 | §11 |
+| `fetchApiKeyFromFirestore` | 7555 | §11 |
+| `syncClockFromFirestore` | 7713 | §11 |
+| `readInventoryContainerWeight` | 8126 | §11 |
+| `pushLatestEventToFirestore` | 8804 | §11 |
+| `buildWsFrame` | 9287 | §15 |
+| `resetWeightFilters` | 9397 | §16 |
+| `resetAfterSuccessfulSend` | 9412 | §17 |
+| `handleWeightPushBody` | 9433 | §18 |
+| `setupWebServer` | 9530 | §19 |
+| `sendSingleUidToCloud` | 10344 | §20 |
+| `parseCloudSpoolMeta` | 10400 | §20 |
+| `pushWeightToCloud` | 10450 | §20 |
+| `fetchMetaFromApiByUid` | 10488 | §20 |
+| `handleWeighWorkflow` | 10577 | §21 |
+| `startMDNS` | 11034 | §22 |
+| `setupScale` | 11072 | §23 |
+| `isRapidChange` | 11103 | §23 |
+| `readWeight` | 11139 | §23 |
+| `playSoundTheme` | 11319 | §AUDIO |
+| `rfidSelectReader` | 11413 | §24 |
+| `normalizeRfidHwConfig` | 11467 | §24 |
+| `setupRFID` | 11477 | §24 |
+| `setupServo` | 11683 | §24 |
+| `processAutoTare` | 11697 | §24 |
+| `fetchMetaFromFirestore` | 12005 | §24 |
+| `readTigerTagMetadata` | 12099 | §24 |
+| `pollRFIDReader` | 12170 | §24 |
+| `recoverRFIDReaderIfNeeded` | 12253 | §24 |
+| `isDuplicateRecentUid` | 12273 | §24 |
+| `isUidLatched` | 12277 | §24 |
+| `finishRfidSession` | 12289 | §24 |
+| `otaApply` | 12482 | §25 |
+| `otaFetchLatest` | 12624 | §25 |
+| `lvglBuildMainScreen` | 13209 | §LVGL |
+| `lvglUpdateMainScreen` | 13618 | §LVGL |
+| `setup` | 14735 | §26 |
+| `loop` | 14906 | §26 |
 
 ## Landmines — read the note before editing these
 
@@ -149,6 +149,8 @@ a debugging session at least once.
 | `lvglAskYesNo` | Blocks on `lv_timer_handler()` until a button is pressed, so calling it from inside an LVGL event callback re-enters the handler and deadlocks — the first trap in `docs/FIRMWARE.md`. Both call sites are `loop()` and `runOtaMenu`, neither of which is a callback. It also sizes its card by measuring the wrapped body label, not by assuming a line count: the same sentence is one line in English and two in German. |
 | `readInventoryContainerWeight` | Silently returns 0 on any HTTP or parse failure, with no retry. Known gap, not a bug to be surprised by. |
 | `otaFetchLatest` | Two boards read this manifest differently, and the asymmetry is deliberate. A **-3.5B** reads the flat `version`/`firmware_sha`/`firmware_url` keys — every scale ever shipped is a -3.5B and does this, including ones that have been offline for months, so that path must never change shape. A **-3.5** reads `boards["3.5"]` and has **no fallback** to the flat keys: falling back would install the -3.5B image and leave a board with a black screen and no way to report it. Adding keys to the manifest is safe — the ArduinoJson filter exists precisely so it can grow — but moving or repointing the flat ones reaches the whole fleet at once. `scripts/make-manifest.py` enforces this at generation time. |
+| display bring-up (Section 5) | The -3.5's ST7796 is constructed through a `TigerScaleST7796` subclass for one reason: `Arduino_ST7796::begin()` in GFX 1.6.x forces `SPI_MODE3` on ESP32 and this panel wants mode 0. Getting it wrong does not fail — the backlight lights, `[LCD] begin OK` prints, and the glass stays black. If you ever bump the GFX library, re-check that override before believing a dark -3.5 is a hardware fault. |
+| `lcdResetByTCA9554` | Takes the bus because the expander is on `Wire1` at 0x20, not on `Wire`/GPIO21-22 where the vendor demo puts it — so for a long time this function reset nothing at all. It now runs for the -3.5 only: its ST7796 needs the pulse, and the -3.5B has been booting without one for months. Do not "fix" that asymmetry without a -3.5B on the bench. |
 | `tsRead` (board branch) | The touch IC differs by board: AXS5106L @0x3B on the -3.5B, FT6336 @0x38 on the -3.5, both on `Wire1`. Only the register access differs; the portrait→landscape mapping below it is shared and must stay shared, or the two boards drift apart in a way only a physical unit can catch. |
 | `otaApply` | `firmware_url` must point at the plain `firmware.bin`. `Update.begin()`/`write()` only replace the app partition, so handing it a `firmware.factory.bin` corrupts the bootloader and partition table. |
 | `applyPN532RfTuning` | Sets TX drive and RX sensitivity together via `RFConfiguration` CfgItem 0x0A, through the library's public `sendCommandCheckAck()` — no library patch needed. The 5-level table exists because the two antennas sit ~75 mm apart facing each other and cross-talk; the levels span only the low-power end, which is the range that matters for that. Default level 3. |

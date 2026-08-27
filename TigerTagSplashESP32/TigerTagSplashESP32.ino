@@ -23,26 +23,26 @@
 //   CONFIGURATION VARIABLES                               1411- 1830
 //   OLED DISPLAY                                          1831- 2608
 //   CLOUD PARSING                                         2609- 2623
-//   WIFI SETUP                                            2624- 7175
-//   LITTLEFS                                              7176- 7475
-//   FIREBASE AUTHENTICATION                               7476- 9135
-//   WEBSOCKET                                             9136- 9162
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9163- 9297
-//   UNIFIED WS FRAME BUILDER                              9298- 9411
-//   WEIGHT FILTER HELPERS                                 9412- 9426
-//   POST-SEND STATE RESET (shared by all send paths)      9427- 9447
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9448- 9544
-//   WEB SERVER                                            9545-10358
-//   CLOUD COMMUNICATION                                  10359-10541
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10542-11048
-//   mDNS                                                 11049-11086
-//   SCALE                                                11087-11257
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11258-11375
-//   RFID                                                 11376-12312
-//   OTA — Over-the-air firmware + filesystem update    12313-12992
-//   LVGL bridge + main weigh screen                      12993-13888
-//   Remote live view: the screen out, taps back in       13889-14733
-//   SETUP & LOOP                                         14734-15891
+//   WIFI SETUP                                            2624- 7179
+//   LITTLEFS                                              7180- 7479
+//   FIREBASE AUTHENTICATION                               7480- 9139
+//   WEBSOCKET                                             9140- 9166
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9167- 9301
+//   UNIFIED WS FRAME BUILDER                              9302- 9415
+//   WEIGHT FILTER HELPERS                                 9416- 9430
+//   POST-SEND STATE RESET (shared by all send paths)      9431- 9451
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9452- 9548
+//   WEB SERVER                                            9549-10362
+//   CLOUD COMMUNICATION                                  10363-10545
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10546-11052
+//   mDNS                                                 11053-11090
+//   SCALE                                                11091-11261
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11262-11379
+//   RFID                                                 11380-12316
+//   OTA — Over-the-air firmware + filesystem update    12317-12996
+//   LVGL bridge + main weigh screen                      12997-13892
+//   Remote live view: the screen out, taps back in       13893-14737
+//   SETUP & LOOP                                         14738-15895
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -4360,14 +4360,18 @@ static void runLanguageSettings(bool firstBoot) {
     // Exactly Studio Manager's list — same languages, same order — so the
     // scale and Studio never disagree on what can be picked.
     struct { Language lang; const char *name; } opts[NUM_LANGS] = {
+        // Each language names itself the way it writes itself. The accents are
+        // renderable since font_latin_* joined the fallback chain; before that
+        // they drew as blank boxes, which is why these read "Francais" for so
+        // long. Chinese always got this right because its subset font existed.
         { LANG_EN,    "English"               },
-        { LANG_FR,    "Francais"              },
+        { LANG_FR,    "Français"              },
         { LANG_DE,    "Deutsch"               },
-        { LANG_ES,    "Espanol"               },
+        { LANG_ES,    "Español"               },
         { LANG_IT,    "Italiano"              },
-        { LANG_ZH,    "中文" },   // a language names itself in its own script
-        { LANG_PT,    "Portugues (Brasil)"    },
-        { LANG_PT_PT, "Portugues (Portugal)"  },
+        { LANG_ZH,    "中文" },
+        { LANG_PT,    "Português (Brasil)"    },
+        { LANG_PT_PT, "Português (Portugal)"  },
         { LANG_PL,    "Polski"                },
     };
     enum LangAction { LA_NONE, LA_PICK, LA_BACK };
@@ -6926,9 +6930,9 @@ static void runSettingsMenu() {
         makeRow(CI_TARGET, nullptr, LVCOL_TEXT, t(I18N_CAL_WIZARD), String(calBuf), SA_CALIBRATE);
 
         // Indexed by the Language enum — one entry per language, same order.
-        const char *langNames[NUM_LANGS] = { "English", "Portugues (Brasil)", "Francais",
-                                             "Espanol", "Deutsch", "中文", "Italiano",
-                                             "Polski", "Portugues (Portugal)" };
+        const char *langNames[NUM_LANGS] = { "English", "Português (Brasil)", "Français",
+                                             "Español", "Deutsch", "中文", "Italiano",
+                                             "Polski", "Português (Portugal)" };
         String langVal = langNames[(int)gLanguage < NUM_LANGS ? (int)gLanguage : 0];
         makeRow(CI_GLOBE, nullptr, LVCOL_TEXT, t(I18N_LANGUAGE), langVal, SA_LANGUAGE);
 

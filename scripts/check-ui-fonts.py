@@ -19,11 +19,17 @@ carry the set they were built from — `--symbols` for the computed subset, `-r`
 for the fixed ranges. The check recomputes what the strings need and asserts it
 is covered.
 
-Only i18n.h and the .ino are scanned, and for the Latin side only i18n.h: the
-.ino's *comments* are full of accented words in prose, and demanding a glyph
-for a comment would be nonsense. Every string the .ino actually displays comes
-from i18n.h or from data the device is handed at runtime — and the latter is
-exactly why the Latin blocks are shipped whole rather than subset.
+Only i18n.h is scanned for the Latin side, and that is a deliberate narrowing.
+Scanning the .ino's string literals as well was tried and rejected: most of them
+are serial logs and API payloads, full of em dashes and ellipses that no label
+ever draws, so the check failed on characters nothing needs a glyph for. UI text
+lives in the translation table. The handful of drawn strings that do not — the
+language picker names each language as it writes itself, "Français" included —
+are covered by construction, because the Latin blocks ship whole.
+
+Which is also the answer for text the device is handed at runtime. An account
+name, an SSID, a brand coming back from the cloud cannot be scanned by anything;
+shipping the blocks entire is what makes them renderable anyway.
 
 A font carrying characters that are no longer used is only reported, not
 failed: a stale superset still renders everything correctly.
@@ -80,7 +86,7 @@ def is_han(c):
 
 
 def latin_required():
-    """Every non-ASCII, non-Han character the translation table can display."""
+    """Every non-ASCII, non-Han character the firmware can put on screen."""
     s = open(I18N_H, encoding="utf-8").read()
     chars = set()
     for lit in re.findall(r'/\* \w+\s*\*/ "((?:[^"\\]|\\.)*)"', s):

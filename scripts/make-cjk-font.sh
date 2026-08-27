@@ -12,7 +12,7 @@
 # glyphs and several megabytes; the strings on this device need under 200, which
 # costs about 80 KB of flash across the three sizes. Re-run this after adding or
 # changing any Chinese string — a character that is not in the subset renders as
-# a blank box, and `scripts/check-cjk-font.py` (run by verify.sh) is what turns
+# a blank box, and `scripts/check-ui-fonts.py` (run by verify.sh) is what turns
 # that into a build failure instead of a surprise on the panel.
 #
 # Sizes 14, 16 and 20 only: 28 and 40 are used for the weight and the tare
@@ -89,5 +89,5 @@ for SZ in 14 16 20; do
 done
 
 echo
-"$PY" scripts/check-cjk-font.py
+"$PY" scripts/check-ui-fonts.py
 echo "Done. Rebuild to pick them up:  pio run -e esp32s3_hsu_b"

@@ -2,7 +2,7 @@
 """cjk-chars.py — the characters the firmware needs from the CJK subset font.
 
 The single source of truth for that set. `make-cjk-font.sh` uses it to decide
-what to generate, and `check-cjk-font.py` uses it to verify the committed
+what to generate, and `check-ui-fonts.py` uses it to verify the committed
 font_cjk_*.c files still cover it. If the two ever disagreed on how the set is
 collected, the guard would pass on fonts that draw blank boxes — which is why
 this is one file and not two copies of the same scan.

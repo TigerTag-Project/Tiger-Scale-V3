@@ -73,12 +73,11 @@ step "i18n — firmware table and web locales"
   "$PY" scripts/check-i18n.py 2>&1 | grep -E "missing|order|empty|invalid" | head -5 | sed 's/^/    /'
 }
 
-step "CJK subset fonts cover every string"
-"$PY" scripts/check-cjk-font.py 2>&1 | tail -1 | sed 's/^/    /'
-"$PY" scripts/check-cjk-font.py >/dev/null 2>&1 || {
-  fail "check-cjk-font"
-  "$PY" scripts/check-cjk-font.py 2>&1 | grep -E "missing|MISSING|regenerate" | head -4 | sed 's/^/    /'
-  echo "    fix with: bash scripts/make-cjk-font.sh"
+step "UI fonts cover every string"
+"$PY" scripts/check-ui-fonts.py 2>&1 | tail -1 | sed 's/^/    /'
+"$PY" scripts/check-ui-fonts.py >/dev/null 2>&1 || {
+  fail "check-ui-fonts"
+  "$PY" scripts/check-ui-fonts.py 2>&1 | grep -E "missing|MISSING|regenerate" | head -4 | sed 's/^/    /'
 }
 
 step "No emoji in documentation"

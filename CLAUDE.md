@@ -82,7 +82,7 @@ bash scripts/bump-version.sh X.Y.Z   # version + scaffold release notes + change
 | `check-codemap` reports drift | `python3 scripts/sync-codemap.py` |
 | CI says the TOC is out of date | `bash scripts/update_toc.sh`, commit the .ino |
 | i18n check fails | it names the language and the missing key, or the position where the order diverges |
-| CJK font check fails | a Chinese string uses a character the subset fonts don't carry — `bash scripts/make-cjk-font.sh` |
+| UI font check fails | a string uses a character no shipped face carries. It names which: an accented letter means `bash scripts/make-latin-font.sh`, a Han one `bash scripts/make-cjk-font.sh` |
 | release workflow refuses to publish | `docs/release-notes/v<version>.md` is missing or still holds the scaffold text |
 
 **Pushing needs the right GitHub account.** The repository belongs to the
@@ -254,6 +254,15 @@ refuses to do to the heap.
 1. Add the key to the enum, before `I18N_COUNT`.
 2. Add one entry to **every** language block, in the same order as the enum.
 3. `bash scripts/check-i18n.sh` must exit 0 before you compile.
+
+**Accented letters are renderable now, and the existing strings do not use them.**
+Every French, Spanish, German, Italian, Polish and Portuguese entry is spelled
+without its accents — "Pret", "MATERIAU" — because until `font_latin_*` existed
+those letters drew as blank boxes. That constraint is gone: the Latin-1 and
+Latin Extended-A blocks ship in full, and `scripts/check-ui-fonts.py` fails the
+build if a string ever uses a glyph no face carries. Restoring the accents is
+worth doing, per language, deliberately; `data/www/locales/*.json` already
+spells the same vocabulary correctly and is the reference.
 
 The web UI's translations are a separate set: `data/www/locales/*.json` (9 files, same
 language set as the firmware since PT-PT joined it).

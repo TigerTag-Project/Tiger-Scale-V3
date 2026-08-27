@@ -19,30 +19,30 @@
 //   OTA CONFIGURATION                                      424-  456
 //   FORWARD DECLARATIONS                                   457-  728
 //   WEIGHT ROUNDING                                        729-  748
-//   GLOBAL OBJECTS                                         749- 1392
-//   CONFIGURATION VARIABLES                               1393- 1812
-//   OLED DISPLAY                                          1813- 2590
-//   CLOUD PARSING                                         2591- 2605
-//   WIFI SETUP                                            2606- 7157
-//   LITTLEFS                                              7158- 7457
-//   FIREBASE AUTHENTICATION                               7458- 9117
-//   WEBSOCKET                                             9118- 9144
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9145- 9279
-//   UNIFIED WS FRAME BUILDER                              9280- 9393
-//   WEIGHT FILTER HELPERS                                 9394- 9408
-//   POST-SEND STATE RESET (shared by all send paths)      9409- 9429
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9430- 9526
-//   WEB SERVER                                            9527-10340
-//   CLOUD COMMUNICATION                                  10341-10523
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10524-11030
-//   mDNS                                                 11031-11068
-//   SCALE                                                11069-11239
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11240-11357
-//   RFID                                                 11358-12294
-//   OTA — Over-the-air firmware + filesystem update    12295-12974
-//   LVGL bridge + main weigh screen                      12975-13870
-//   Remote live view: the screen out, taps back in       13871-14715
-//   SETUP & LOOP                                         14716-15873
+//   GLOBAL OBJECTS                                         749- 1410
+//   CONFIGURATION VARIABLES                               1411- 1830
+//   OLED DISPLAY                                          1831- 2608
+//   CLOUD PARSING                                         2609- 2623
+//   WIFI SETUP                                            2624- 7175
+//   LITTLEFS                                              7176- 7475
+//   FIREBASE AUTHENTICATION                               7476- 9135
+//   WEBSOCKET                                             9136- 9162
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9163- 9297
+//   UNIFIED WS FRAME BUILDER                              9298- 9411
+//   WEIGHT FILTER HELPERS                                 9412- 9426
+//   POST-SEND STATE RESET (shared by all send paths)      9427- 9447
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9448- 9544
+//   WEB SERVER                                            9545-10358
+//   CLOUD COMMUNICATION                                  10359-10541
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10542-11048
+//   mDNS                                                 11049-11086
+//   SCALE                                                11087-11257
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11258-11375
+//   RFID                                                 11376-12312
+//   OTA — Over-the-air firmware + filesystem update    12313-12992
+//   LVGL bridge + main weigh screen                      12993-13888
+//   Remote live view: the screen out, taps back in       13889-14733
+//   SETUP & LOOP                                         14734-15891
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -945,11 +945,23 @@ static bool lvglReady = false;
 // const and live in flash, so their .fallback field cannot be written — hence
 // the RAM copies below, which every label in the UI uses instead.
 extern "C" {
+    extern const lv_font_t font_latin_14;
+    extern const lv_font_t font_latin_16;
+    extern const lv_font_t font_latin_20;
     extern const lv_font_t font_cjk_14;
     extern const lv_font_t font_cjk_16;
     extern const lv_font_t font_cjk_20;
 }
+// Two RAM copies per size, not one, and the reason is the same both times: a
+// generated font is const in flash, so its .fallback cannot be written. The
+// Latin face needs to point at the CJK one, so it needs a copy of its own.
+//
+//   gFontN  (Montserrat, ASCII)  ->  gLatinN  (accents)  ->  font_cjk_N  (Han)
+//
+// LVGL walks that chain in a loop (lv_font.c, `f = f->fallback`), so a glyph
+// missing from all three is the only thing that reaches the placeholder box.
 static lv_font_t gFont14, gFont16, gFont20;
+static lv_font_t gLatin14, gLatin16, gLatin20;
 
 // Icon glyphs the CJK subset fonts carry beyond LVGL's built-in symbol set —
 // FontAwesome codepoints riding in font_cjk_* (see scripts/make-cjk-font.sh),
@@ -966,9 +978,12 @@ static lv_font_t gFont14, gFont16, gFont20;
 extern "C" const lv_font_t *lv_font_ui_default = &lv_font_montserrat_14;
 
 static void lvglInitFonts() {
-    gFont14 = lv_font_montserrat_14; gFont14.fallback = &font_cjk_14;
-    gFont16 = lv_font_montserrat_16; gFont16.fallback = &font_cjk_16;
-    gFont20 = lv_font_montserrat_20; gFont20.fallback = &font_cjk_20;
+    gLatin14 = font_latin_14; gLatin14.fallback = &font_cjk_14;
+    gLatin16 = font_latin_16; gLatin16.fallback = &font_cjk_16;
+    gLatin20 = font_latin_20; gLatin20.fallback = &font_cjk_20;
+    gFont14 = lv_font_montserrat_14; gFont14.fallback = &gLatin14;
+    gFont16 = lv_font_montserrat_16; gFont16.fallback = &gLatin16;
+    gFont20 = lv_font_montserrat_20; gFont20.fallback = &gLatin20;
     lv_font_ui_default = &gFont14;
 }
 
@@ -981,6 +996,9 @@ static void lvglReportFontProbe() {
     struct { const char *name; const lv_font_t *f; } probes[] = {
         { "font14", &gFont14 }, { "font16", &gFont16 }, { "font20", &gFont20 },
         { "cjk14", &font_cjk_14 },
+        // The middle link. A Han glyph found through font14 but not through
+        // latin14 would mean the chain skipped a step.
+        { "latin14", &gLatin14 },
         // The one that actually mattered: what a label inherits when it names no
         // font. Probing only the three named faces is what made this look fixed
         // for a whole session while the screen still showed boxes.

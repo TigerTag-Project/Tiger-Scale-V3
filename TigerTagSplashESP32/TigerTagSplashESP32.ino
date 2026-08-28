@@ -8685,11 +8685,11 @@ void sendScaleHeartbeat() {
     else               fields["wifi_signal_dbm"]["nullValue"]    = "NULL_VALUE";
     addMask("wifi_signal_dbm");
 
-    // -- 1b. battery — toujours envoyé ---------------------------------------
-    // Ces quatre champs vivaient dans le bloc `isFull`, donc n'étaient écrits
-    // qu'au boot : `power_source` valait "usb" en dur et les deux autres null,
-    // quoi que fasse la balance. L'état d'une batterie change en permanence, il
-    // appartient au battement, pas à l'instantané de démarrage.
+    // -- 1b. battery — always sent --------------------------------------------
+    // These four fields used to live in the `isFull` block, so they were only
+    // written at boot: `power_source` was hard-coded "usb" and the other two
+    // were null, whatever the scale did. Battery state changes constantly, it
+    // belongs to the heartbeat, not to the boot-time snapshot.
     fields["battery_present"]["booleanValue"] = gBattery.present;
     addMask("battery_present");
 
@@ -8697,8 +8697,8 @@ void sendScaleHeartbeat() {
         fields["battery_percent"]["integerValue"] = String((int)gBattery.percent);
         fields["is_charging"]["booleanValue"]     = gBattery.charging;
     } else {
-        // null, pas zéro : « pas de batterie » et « batterie à plat » sont deux
-        // états différents et un tableau de bord doit pouvoir les distinguer.
+        // null, not zero: "no battery" and "flat battery" are two different
+        // states and a dashboard must be able to tell them apart.
         fields["battery_percent"]["nullValue"] = "NULL_VALUE";
         fields["is_charging"]["nullValue"]     = "NULL_VALUE";
     }
@@ -8814,8 +8814,8 @@ void sendScaleHeartbeat() {
         gFirstHeartbeatDone = true;  // legacy compat
     }
 
-    // -- Server timestamp — Firestore écrit l'heure exacte à la réception -----
-    // Aucun NTP requis côté ESP32 : on délègue l'horodatage au serveur.
+    // -- Server timestamp — Firestore writes the exact time on receipt -------
+    // No NTP required on the ESP32 side: we delegate timestamping to the server.
     JsonArray  transforms   = writeObj.createNestedArray("updateTransforms");
     JsonObject tsTransform  = transforms.createNestedObject();
     tsTransform["fieldPath"]        = "last_heartbeat_at";

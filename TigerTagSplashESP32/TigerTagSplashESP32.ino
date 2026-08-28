@@ -23,26 +23,26 @@
 //   CONFIGURATION VARIABLES                               1411- 1830
 //   OLED DISPLAY                                          1831- 2608
 //   CLOUD PARSING                                         2609- 2623
-//   WIFI SETUP                                            2624- 7217
-//   LITTLEFS                                              7218- 7517
-//   FIREBASE AUTHENTICATION                               7518- 9177
-//   WEBSOCKET                                             9178- 9204
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9205- 9339
-//   UNIFIED WS FRAME BUILDER                              9340- 9464
-//   WEIGHT FILTER HELPERS                                 9465- 9479
-//   POST-SEND STATE RESET (shared by all send paths)      9480- 9500
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9501- 9597
-//   WEB SERVER                                            9598-10411
-//   CLOUD COMMUNICATION                                  10412-10594
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10595-11101
-//   mDNS                                                 11102-11139
-//   SCALE                                                11140-11310
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11311-11428
-//   RFID                                                 11429-12365
-//   OTA — Over-the-air firmware + filesystem update    12366-13045
-//   LVGL bridge + main weigh screen                      13046-14013
-//   Remote live view: the screen out, taps back in       14014-14858
-//   SETUP & LOOP                                         14859-16024
+//   WIFI SETUP                                            2624- 7227
+//   LITTLEFS                                              7228- 7527
+//   FIREBASE AUTHENTICATION                               7528- 9187
+//   WEBSOCKET                                             9188- 9214
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9215- 9349
+//   UNIFIED WS FRAME BUILDER                              9350- 9474
+//   WEIGHT FILTER HELPERS                                 9475- 9489
+//   POST-SEND STATE RESET (shared by all send paths)      9490- 9510
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9511- 9607
+//   WEB SERVER                                            9608-10421
+//   CLOUD COMMUNICATION                                  10422-10604
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10605-11111
+//   mDNS                                                 11112-11149
+//   SCALE                                                11150-11320
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11321-11438
+//   RFID                                                 11439-12375
+//   OTA — Over-the-air firmware + filesystem update    12376-13055
+//   LVGL bridge + main weigh screen                      13056-14023
+//   Remote live view: the screen out, taps back in       14024-14868
+//   SETUP & LOOP                                         14869-16034
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -3403,7 +3403,13 @@ static lv_obj_t* lvglAddHeader(lv_obj_t *scr, const char *titleText,
     lv_obj_set_style_radius(header, 0, 0);
     lv_obj_set_style_pad_all(header, 0, 0);
     lv_obj_set_user_data(header, (void *)backAction);
-    lv_obj_add_event_cb(header, backCb, LV_EVENT_CLICKED, cbUserData);
+    // PRESSED, like every other control on these screens: CLICKED only fires
+    // when the finger lifts, and on a panel this size that reads as the back
+    // button hesitating. LVGL resets its input state when the pressed object is
+    // deleted, which is what keeps the release from reaching the header of the
+    // screen underneath -- they sit at identical coordinates, so without that
+    // one tap would climb two levels.
+    lv_obj_add_event_cb(header, backCb, LV_EVENT_PRESSED, cbUserData);
 
     lv_obj_t *backIcon = lv_label_create(header);
     lv_label_set_text(backIcon, LV_SYMBOL_LEFT);
@@ -3466,7 +3472,11 @@ static void lvglAddScrollRail(lv_obj_t *scr, lv_obj_t *list, int y0, int y1, int
         lv_obj_set_style_radius(b, 10, 0);
         lv_obj_set_style_shadow_width(b, 0, 0);
         lv_obj_set_user_data(b, (void *)(intptr_t)(i == 0 ? -step : step));
-        lv_obj_add_event_cb(b, lvglScrollRailCb, LV_EVENT_CLICKED, list);
+        // PRESSED, not CLICKED. Scrolling is the one action here with no
+        // screen change behind it, so it is also the one where waiting for the
+        // lift is pure delay. Not PRESSING: repeating on hold would turn a
+        // steady finger into a runaway scroll.
+        lv_obj_add_event_cb(b, lvglScrollRailCb, LV_EVENT_PRESSED, list);
         lv_obj_t *ic = lv_label_create(b);
         lv_label_set_text(ic, i == 0 ? LV_SYMBOL_UP : LV_SYMBOL_DOWN);
         lv_obj_set_style_text_color(ic, LVCOL_TEXT, 0);

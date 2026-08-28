@@ -40,9 +40,9 @@
 //   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11311-11428
 //   RFID                                                 11429-12365
 //   OTA — Over-the-air firmware + filesystem update    12366-13045
-//   LVGL bridge + main weigh screen                      13046-13994
-//   Remote live view: the screen out, taps back in       13995-14839
-//   SETUP & LOOP                                         14840-15997
+//   LVGL bridge + main weigh screen                      13046-14013
+//   Remote live view: the screen out, taps back in       14014-14858
+//   SETUP & LOOP                                         14859-16024
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -13272,7 +13272,13 @@ static void lvglSetTareFlash(bool on) {
     gTareFlashOn = on;
     // The fill and nothing else. The border, the radius, the two labels and
     // their colours stay exactly as they are at rest.
+    //
+    // Both states get the same colour on purpose. The default theme darkens a
+    // button while it is held, so setting only the default state gave two
+    // different greens across one press -- one under the finger, a brighter one
+    // after the lift. One colour, on and off, nothing in between.
     lv_obj_set_style_bg_color(lvTareBtn, on ? LVCOL_GREEN : LVCOL_CARD, 0);
+    lv_obj_set_style_bg_color(lvTareBtn, on ? LVCOL_GREEN : LVCOL_CARD, LV_STATE_PRESSED);
 }
 
 // The green goes on at touch-down, not at release. LV_EVENT_CLICKED -- which
@@ -13673,6 +13679,19 @@ static void lvglBuildMainScreen() {
     lv_obj_set_style_border_width(tareBtn, 1, 0);
     lv_obj_set_style_radius(tareBtn, 14, 0);
     lv_obj_set_style_shadow_width(tareBtn, 0, 0);
+    // The default theme darkens a held button with a COLOUR FILTER, not with a
+    // different bg_color -- so setting the pressed state's colour does not
+    // reach it, and the confirmation showed two greens across one press. This
+    // turns the filter off for this button, leaving one flat green.
+    lv_obj_set_style_color_filter_opa(tareBtn, LV_OPA_TRANSP, LV_STATE_PRESSED);
+    // NEVER pass nullptr to lv_obj_set_style_transition(). LVGL stores the
+    // pointer and dereferences it on the button's next state change, which
+    // panics the chip and leaves the scale in a reboot loop -- it did exactly
+    // that once, on the bench, from these two lines. There is nothing to
+    // disable anyway: the theme's transition animates STATE changes, while the
+    // confirmation sets bg_color outright, which never animates. The two greens
+    // that looked like a fade were the theme darkening the fill under the
+    // finger, and setting LV_STATE_PRESSED to the same colour is what fixed it.
     lv_obj_add_event_cb(tareBtn, lvglTareBtnEvent, LV_EVENT_CLICKED, nullptr);
     lv_obj_add_event_cb(tareBtn, lvglTareBtnPressEvent, LV_EVENT_PRESSED, nullptr);
     lv_obj_add_event_cb(tareBtn, lvglTareBtnPressEvent, LV_EVENT_PRESSING, nullptr);
@@ -15618,6 +15637,14 @@ void loop() {
         #endif
         }
     }
+
+        // LVGL, again, right after the readers. The poll above blocks for up
+        // to 30 ms inside readPassiveTargetID() and can run every 45 ms, so a
+        // single pump per loop() left the UI redrawing and reading touch in
+        // bursts — a press landing in that window looked like the panel had
+        // hesitated. lv_conf.h asks for 16 ms refresh and 10 ms input; this is
+        // what lets it get close on the tick that costs the most.
+        if (lvglReady) lv_timer_handler();
 
     // -- RFID hardware test mode ----------------------------------------------
     // When active, poll both readers simultaneously and store raw UIDs for the

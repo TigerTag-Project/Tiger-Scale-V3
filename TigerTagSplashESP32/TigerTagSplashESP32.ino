@@ -23,26 +23,26 @@
 //   CONFIGURATION VARIABLES                               1411- 1830
 //   OLED DISPLAY                                          1831- 2608
 //   CLOUD PARSING                                         2609- 2623
-//   WIFI SETUP                                            2624- 7203
-//   LITTLEFS                                              7204- 7503
-//   FIREBASE AUTHENTICATION                               7504- 9163
-//   WEBSOCKET                                             9164- 9190
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9191- 9325
-//   UNIFIED WS FRAME BUILDER                              9326- 9439
-//   WEIGHT FILTER HELPERS                                 9440- 9454
-//   POST-SEND STATE RESET (shared by all send paths)      9455- 9475
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9476- 9572
-//   WEB SERVER                                            9573-10386
-//   CLOUD COMMUNICATION                                  10387-10569
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10570-11076
-//   mDNS                                                 11077-11114
-//   SCALE                                                11115-11285
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11286-11403
-//   RFID                                                 11404-12340
-//   OTA — Over-the-air firmware + filesystem update    12341-13020
-//   LVGL bridge + main weigh screen                      13021-13916
-//   Remote live view: the screen out, taps back in       13917-14761
-//   SETUP & LOOP                                         14762-15919
+//   WIFI SETUP                                            2624- 7217
+//   LITTLEFS                                              7218- 7517
+//   FIREBASE AUTHENTICATION                               7518- 9177
+//   WEBSOCKET                                             9178- 9204
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9205- 9339
+//   UNIFIED WS FRAME BUILDER                              9340- 9464
+//   WEIGHT FILTER HELPERS                                 9465- 9479
+//   POST-SEND STATE RESET (shared by all send paths)      9480- 9500
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9501- 9597
+//   WEB SERVER                                            9598-10411
+//   CLOUD COMMUNICATION                                  10412-10594
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10595-11101
+//   mDNS                                                 11102-11139
+//   SCALE                                                11140-11310
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11311-11428
+//   RFID                                                 11429-12365
+//   OTA — Over-the-air firmware + filesystem update    12366-13045
+//   LVGL bridge + main weigh screen                      13046-13994
+//   Remote live view: the screen out, taps back in       13995-14839
+//   SETUP & LOOP                                         14840-15997
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -6674,6 +6674,7 @@ static void runSettingsMenu() {
     static SettingsAction sAction;
     lv_obj_t *prevScr = nullptr;
     lv_coord_t savedScrollY = 0;   // survives sub-screen round-trips, not menu exits
+    bool firstBuild = true;        // the entry press may still be on the glass
 
     auto cardClickCb = [](lv_event_t *e) {
         lv_obj_t *card = (lv_obj_t *)lv_event_get_target(e);
@@ -6976,6 +6977,19 @@ static void runSettingsMenu() {
 
         lv_scr_load(scr);
         if (prevScr) { lv_obj_del(prevScr); prevScr = nullptr; }
+
+        // The Settings button opens this on PRESS, so on the way in the finger
+        // is usually still down -- resting exactly where a row of this list has
+        // just appeared. Swallow that press here, or lifting the finger
+        // activates whatever landed under it. lv_timer_handler() is
+        // deliberately not pumped inside the drain: that is what keeps LVGL
+        // from ever seeing the release. Only on the way in; the rebuilds that
+        // follow a sub-screen come back with no finger on the glass.
+        if (firstBuild) {
+            firstBuild = false;
+            int16_t dx, dy; uint32_t tDrain = millis();
+            while (tsRead(dx, dy) && millis() - tDrain < 1000) delay(20);
+        }
 
         {
             // Freshly paired, this list is rebuilt ~2 s BEFORE the profile
@@ -9369,7 +9383,18 @@ static String buildWsFrame(float weight, bool full) {
     else stcWs = sendPhase;  // "send","success","error","done","ready",""
 
     int  cwt      = (gLastContainer > 0.0f) ? (int)roundf(gLastContainer) : 0;
-    int  displayW = (weight < MIN_WEIGHT_TO_SEND_G) ? 0 : roundWeight(weight);
+    // Exactly what the big label on the panel shows -- `roundWeight(weight)`,
+    // signed, no floor. Tiger Studio renders a virtual copy of that screen from
+    // these frames, so a number the glass shows and the frame does not is a
+    // divergence someone eventually has to explain. The scale really does read
+    // negative for a moment when a spool is lifted off before the auto-tare
+    // catches up, and that is worth seeing remotely rather than hiding.
+    //
+    // This used to floor at MIN_WEIGHT_TO_SEND_G, which conflated two different
+    // questions: "is there enough on the plate to be worth sending a
+    // measurement" -- still that constant's job, in the weigh workflow -- and
+    // "what does the screen say right now", which is this one.
+    int  displayW = roundWeight(weight);
     int  nwt      = (cwt > 0 && displayW > cwt) ? displayW - cwt : 0;
     bool   curCloud   = WiFi.isConnected();
     bool   curFbAuth  = firebaseAuth;
@@ -13227,8 +13252,46 @@ static lv_obj_t *lvCloudBase       = nullptr;
 
 // Same tare action as the legacy touch-zone handler in loop() -- see the
 // gUseLvglMainScreen guard there.
+// Tare confirmation. Pressing the button used to change nothing at all on
+// screen: the scale re-zeroed in silence, and the only way to know the tap had
+// landed was to watch the weight move. The button now fills green for a moment.
+//
+// The revert is driven from lvglUpdateMainScreen(), which already runs every
+// tick, and NOT from a delay() inside the click callback -- blocking in an LVGL
+// event handler re-enters lv_timer_handler() from under itself, the first trap
+// in docs/FIRMWARE.md. It is also state-based rather than edge-based, so
+// leaving for Settings mid-flash and coming back finds the button at rest
+// rather than stuck green.
+static lv_obj_t *lvTareBtn          = nullptr;
+static uint32_t  gTareFlashUntilMs  = 0;
+static bool      gTareFlashOn       = false;
+const  uint32_t  TARE_FLASH_MS      = 1200;
+
+static void lvglSetTareFlash(bool on) {
+    if (!lvTareBtn || on == gTareFlashOn) return;   // only on a transition
+    gTareFlashOn = on;
+    // The fill and nothing else. The border, the radius, the two labels and
+    // their colours stay exactly as they are at rest.
+    lv_obj_set_style_bg_color(lvTareBtn, on ? LVCOL_GREEN : LVCOL_CARD, 0);
+}
+
+// The green goes on at touch-down, not at release. LV_EVENT_CLICKED -- which
+// the tare itself still uses -- only fires when the finger lifts, so feedback
+// hung on it arrives after the gesture is over and reads as lag.
+//
+// PRESSING repeats while the finger stays down, which is what keeps the fill on
+// through a long hold instead of timing out under the finger. A press that
+// slides off the button without releasing never runs the tare, and its green
+// simply expires: the fill says "I felt that", the weight going to zero says
+// the tare happened.
+static void lvglTareBtnPressEvent(lv_event_t *e) {
+    gTareFlashUntilMs = millis() + TARE_FLASH_MS;
+    lvglSetTareFlash(true);
+}
+
 static void lvglTareBtnEvent(lv_event_t *e) {
     Serial.println("[BTN] Tare button tapped (LVGL)");
+    gTareFlashUntilMs = millis() + TARE_FLASH_MS;   // hold it past the release
     scale.tare();
     autoTarePending = false;
     autoTareStableSinceMs = 0;
@@ -13247,8 +13310,12 @@ static void lvglTareBtnEvent(lv_event_t *e) {
 // top level, the same non-reentrant context bootProgress() already uses.
 static volatile bool gSettingsRequested = false;
 
+// Raised on PRESS, not on release: waiting for the finger to lift before
+// anything happens reads as lag on a panel this size. runSettingsMenu() drains
+// the still-down press before it lets LVGL near the new screen -- see the note
+// where it loads.
 static void lvglSettingsBtnEvent(lv_event_t *e) {
-    Serial.println("[BTN] Settings button tapped (LVGL)");
+    Serial.println("[BTN] Settings button pressed (LVGL)");
     gSettingsRequested = true;
 }
 
@@ -13595,6 +13662,10 @@ static void lvglBuildMainScreen() {
     const int TARE_W = 285, SETTINGS_W = 143; // 440-wide row (matches main card), ~2/3 + ~1/3
 
     lv_obj_t *tareBtn = lv_btn_create(lvScreen);
+    // Held for the confirmation flash. Reset the flag with it: a rebuilt button
+    // is at rest whatever the old one was doing.
+    lvTareBtn = tareBtn;
+    gTareFlashOn = false;
     lv_obj_set_size(tareBtn, TARE_W, BTN_H);
     lv_obj_set_pos(tareBtn, BTN_X0, BTN_Y);
     lv_obj_set_style_bg_color(tareBtn, LVCOL_CARD, 0);
@@ -13603,6 +13674,8 @@ static void lvglBuildMainScreen() {
     lv_obj_set_style_radius(tareBtn, 14, 0);
     lv_obj_set_style_shadow_width(tareBtn, 0, 0);
     lv_obj_add_event_cb(tareBtn, lvglTareBtnEvent, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(tareBtn, lvglTareBtnPressEvent, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(tareBtn, lvglTareBtnPressEvent, LV_EVENT_PRESSING, nullptr);
     // Value + caption in a centered flex column instead of fixed TOP_MID
     // offsets, so the pair sits centered in the button instead of high with
     // empty space below (per photo feedback).
@@ -13637,7 +13710,7 @@ static void lvglBuildMainScreen() {
     lv_obj_set_style_border_width(settingsBtn, 1, 0);
     lv_obj_set_style_radius(settingsBtn, 14, 0);
     lv_obj_set_style_shadow_width(settingsBtn, 0, 0);
-    lv_obj_add_event_cb(settingsBtn, lvglSettingsBtnEvent, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(settingsBtn, lvglSettingsBtnEvent, LV_EVENT_PRESSED, nullptr);
     lv_obj_t *settingsCol = lv_obj_create(settingsBtn);
     lv_obj_remove_style_all(settingsCol);
     lv_obj_set_size(settingsCol, SETTINGS_W, LV_SIZE_CONTENT);
@@ -13799,6 +13872,11 @@ static void lvglUpdateMainScreen(float weight, const String& uid, OledState stat
     } else {
         lv_obj_add_flag(lvBrandCard, LV_OBJ_FLAG_HIDDEN);
     }
+
+    // Drop the tare confirmation once its moment has passed. Here rather than in
+    // the click callback, and checked rather than scheduled, so it cannot be
+    // left on by a screen change.
+    if (gTareFlashOn && (int32_t)(millis() - gTareFlashUntilMs) >= 0) lvglSetTareFlash(false);
 
     // ---- Weight ----
     int totalInt = roundWeight(weight);

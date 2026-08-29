@@ -25,24 +25,24 @@
 //   CLOUD PARSING                                         2609- 2623
 //   WIFI SETUP                                            2624- 7227
 //   LITTLEFS                                              7228- 7527
-//   FIREBASE AUTHENTICATION                               7528- 9187
-//   WEBSOCKET                                             9188- 9214
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9215- 9349
-//   UNIFIED WS FRAME BUILDER                              9350- 9474
-//   WEIGHT FILTER HELPERS                                 9475- 9489
-//   POST-SEND STATE RESET (shared by all send paths)      9490- 9510
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9511- 9607
-//   WEB SERVER                                            9608-10421
-//   CLOUD COMMUNICATION                                  10422-10604
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10605-11111
-//   mDNS                                                 11112-11149
-//   SCALE                                                11150-11320
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11321-11438
-//   RFID                                                 11439-12375
-//   OTA — Over-the-air firmware + filesystem update    12376-13055
-//   LVGL bridge + main weigh screen                      13056-14023
-//   Remote live view: the screen out, taps back in       14024-14868
-//   SETUP & LOOP                                         14869-16034
+//   FIREBASE AUTHENTICATION                               7528- 9189
+//   WEBSOCKET                                             9190- 9216
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9217- 9351
+//   UNIFIED WS FRAME BUILDER                              9352- 9476
+//   WEIGHT FILTER HELPERS                                 9477- 9491
+//   POST-SEND STATE RESET (shared by all send paths)      9492- 9512
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9513- 9609
+//   WEB SERVER                                            9610-10423
+//   CLOUD COMMUNICATION                                  10424-10606
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10607-11114
+//   mDNS                                                 11115-11152
+//   SCALE                                                11153-11323
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11324-11441
+//   RFID                                                 11442-12378
+//   OTA — Over-the-air firmware + filesystem update    12379-13058
+//   LVGL bridge + main weigh screen                      13059-14026
+//   Remote live view: the screen out, taps back in       14027-14871
+//   SETUP & LOOP                                         14872-16037
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -1684,8 +1684,8 @@ static const bool ENABLE_FIREBASE_BACKGROUND = true;
 static const bool ENABLE_DB_BACKGROUND = false;
 
 // Heartbeat delta tracking
-// gNeedFullHeartbeat = true  → envoie tous les champs (boot ou nouveau compte)
-// gNeedFullHeartbeat = false → envoie seulement last_heartbeat_at + champs changés
+// gNeedFullHeartbeat = true  → send every field (boot, or a new account)
+// gNeedFullHeartbeat = false → send last_heartbeat_at plus whatever changed
 static bool   gNeedFullHeartbeat = true;
 static String gLastSentUID1      = "";
 static String gLastSentUID2      = "";
@@ -8656,7 +8656,7 @@ void sendScaleHeartbeat() {
     HTTPClient http;
     String docPath = "users/" + firebaseUid + "/scales/" + gScaleMacAddress;
 
-    // -- Lecture Firestore (seulement sur heartbeat FULL, pour le display_name) -
+    // -- Firestore read (FULL heartbeat only, for the display_name) -----------
     String currentDisplayName = "";
     bool   scaleDocExists     = false;
     if (isFull) {
@@ -8685,11 +8685,12 @@ void sendScaleHeartbeat() {
     else               fields["wifi_signal_dbm"]["nullValue"]    = "NULL_VALUE";
     addMask("wifi_signal_dbm");
 
-    // -- 1b. battery — toujours envoyé ---------------------------------------
-    // Ces quatre champs vivaient dans le bloc `isFull`, donc n'étaient écrits
-    // qu'au boot : `power_source` valait "usb" en dur et les deux autres null,
-    // quoi que fasse la balance. L'état d'une batterie change en permanence, il
-    // appartient au battement, pas à l'instantané de démarrage.
+    // -- 1b. battery — always sent -------------------------------------------
+    // These four fields used to sit inside the `isFull` block, so they were
+    // only ever written at boot: `power_source` read a hardcoded "usb" and the
+    // other two stayed null, whatever the scale was actually doing since. A
+    // battery's state changes constantly — it belongs to the heartbeat, not to
+    // a snapshot of the moment the device started.
     fields["battery_present"]["booleanValue"] = gBattery.present;
     addMask("battery_present");
 
@@ -8697,8 +8698,8 @@ void sendScaleHeartbeat() {
         fields["battery_percent"]["integerValue"] = String((int)gBattery.percent);
         fields["is_charging"]["booleanValue"]     = gBattery.charging;
     } else {
-        // null, pas zéro : « pas de batterie » et « batterie à plat » sont deux
-        // états différents et un tableau de bord doit pouvoir les distinguer.
+        // null, not zero: "no battery" and "battery flat" are two different
+        // states, and a dashboard has to be able to tell them apart.
         fields["battery_percent"]["nullValue"] = "NULL_VALUE";
         fields["is_charging"]["nullValue"]     = "NULL_VALUE";
     }
@@ -8801,7 +8802,7 @@ void sendScaleHeartbeat() {
         fields["hardware_revision"]["nullValue"] = "NULL_VALUE";
         addMask("hardware_revision");
 
-        // display_name — préserve la personnalisation si elle existe
+        // display_name — keep whatever the owner renamed it to, if anything
         String lastFour = gScaleMacAddress.substring(8);
         lastFour.toUpperCase();
         String defaultName = "TigerScale-" + lastFour;
@@ -8814,14 +8815,15 @@ void sendScaleHeartbeat() {
         gFirstHeartbeatDone = true;  // legacy compat
     }
 
-    // -- Server timestamp — Firestore écrit l'heure exacte à la réception -----
-    // Aucun NTP requis côté ESP32 : on délègue l'horodatage au serveur.
+    // -- Server timestamp — Firestore stamps the exact moment it arrives ------
+    // No NTP on the ESP32: the timestamp is the server's job. (The board does
+    // carry an unused battery-backed RTC — see the open issue about it.)
     JsonArray  transforms   = writeObj.createNestedArray("updateTransforms");
     JsonObject tsTransform  = transforms.createNestedObject();
     tsTransform["fieldPath"]        = "last_heartbeat_at";
     tsTransform["setToServerValue"] = "REQUEST_TIME";
 
-    // -- Envoi POST /documents:commit -----------------------------------------
+    // -- POST /documents:commit -----------------------------------------------
     String url = "https://firestore.googleapis.com/v1/projects/tigertag-connect/databases/(default)/documents:commit";
 
     if (!http.begin(url)) return;
@@ -8859,7 +8861,7 @@ void sendScaleHeartbeat() {
         Serial.printf("[HEARTBEAT] OK (%d) uid_1=%s uid_2=%s\n", code,
                       lastUID.length() > 0 ? lastUID.c_str() : "null",
                       lastUID2.length() > 0 ? lastUID2.c_str() : "null");
-        // Met à jour le tracking delta seulement sur succès
+        // Only advance the delta tracking on success
         gLastSentUID1      = lastUID;
         gLastSentUID2      = lastUID2;
         gLastSentCalFactor = calibrationFactor;
@@ -8867,7 +8869,7 @@ void sendScaleHeartbeat() {
         gNeedFullHeartbeat = false;
     } else {
         Serial.printf("[HEARTBEAT] FAIL (%d) resp: %.150s\n", code, resp.c_str());
-        // gNeedFullHeartbeat reste true si c'était un full → retry au prochain cycle
+        // gNeedFullHeartbeat stays true if this was a full one → retried next cycle
     }
 }
 
@@ -10658,7 +10660,7 @@ static bool updateStableWindow(float w, uint32_t now) {
 void handleWeighWorkflow(float w) {
     const uint32_t now = millis();
 
-    // Mise à jour pente (tous les ticks)
+    // Slope update, every tick
     updateWeightSlope(w);
     bool removingNow = (wfCurrentSlope < SLOPE_REMOVAL_G_PER_S);
 
@@ -10883,10 +10885,11 @@ void handleWeighWorkflow(float w) {
         if (secsLeft < 0) secsLeft = 0;
         if (secsLeft != sendCountdown) sendCountdown = secsLeft;
 
-        // Sortie anticipée :
-        //  A) 2 UIDs physiques capturés
-        //  B) Twin fetch… depuis Firestore ET container prêt → inutile d'attendre le 2ème lecteur
-        //  C) Timeout du scan
+        // Early exit:
+        //  A) both physical UIDs captured
+        //  B) twin fetched from Firestore AND the container ready → no reason
+        //     to keep waiting on the second reader
+        //  C) the scan timed out
         bool bothUidsReady   = (lastUID.length() > 0 && lastUID2.length() > 0);
         bool twinReadyNoScan = (gTwinFetchDone && gTwinFetchResult.length() > 0
                                 && wfContainerFetched && lastUID2.length() == 0);
@@ -10927,8 +10930,8 @@ void handleWeighWorkflow(float w) {
 
     // -- STABLE_WAIT -----------------------------------------------------------
     if (wfPhase == WF_STABLE_WAIT) {
-        // Poids instable ou en montée : le chrono de stabilité se réinitialise.
-        // Même calcul qu'en SCANNING, simplement poursuivi.
+        // Unstable or still rising: the stability clock resets. The same
+        // computation as in SCANNING, simply carried on.
         bool weightStable = updateStableWindow(w, now);
 
         int secsLeft = (int)((int32_t)(STABLE_WINDOW_MS - (now - stableSinceMs) + 999) / 1000);
@@ -10936,9 +10939,9 @@ void handleWeighWorkflow(float w) {
         if (secsLeft != sendCountdown) sendCountdown = secsLeft;
 
         // -- Timeout fallback (Option A) ---------------------------------------
-        // Surface instable ou vibrations : le poids ne se stabilise jamais.
-        // Après STABLE_WAIT_TIMEOUT_MS (15s), on prend la meilleure valeur
-        // disponible et on passe quand même en SENDING plutôt que de bloquer.
+        // An unsteady surface, or vibration: the weight never settles. After
+        // STABLE_WAIT_TIMEOUT_MS (15 s), take the best value available and move
+        // to SENDING anyway rather than stall here forever.
         if (now - wfStableWaitStartMs >= STABLE_WAIT_TIMEOUT_MS) {
             float fallback = (!isnan(stableCandidate) && stableCandidate >= MIN_WEIGHT_TO_SEND_G)
                              ? stableCandidate : w;
@@ -11077,8 +11080,8 @@ void handleWeighWorkflow(float w) {
     }
 
     // -- DONE -----------------------------------------------------------------
-    // Session terminée. On attend que la balance soit vraiment vide (< SPOOL_REMOVED_WEIGHT_G)
-    // avant d'accepter une nouvelle mesure.
+    // Session over. Wait for the scale to be genuinely empty
+    // (< SPOOL_REMOVED_WEIGHT_G) before accepting a new measurement.
     // Rationale: the old 70 % ratio triggered mid-removal (e.g. at 600 g), causing WF_IDLE
     // to immediately re-start scanning on the spool being lifted.  Waiting for the scale to
     // reach near-zero ensures WF_IDLE sees w < MIN_WEIGHT_TO_SEND_G and does NOT start

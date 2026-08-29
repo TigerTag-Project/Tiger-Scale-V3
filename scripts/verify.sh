@@ -84,6 +84,13 @@ step "No emoji in documentation"
 "$PY" scripts/check-emoji.py 2>&1 | tail -1 | sed 's/^/    /'
 "$PY" scripts/check-emoji.py >/dev/null 2>&1 || fail "check-emoji"
 
+step "File format — line endings, BOM, invisible characters"
+"$PY" scripts/check-file-format.py 2>&1 | tail -1 | sed 's/^/    /'
+"$PY" scripts/check-file-format.py >/dev/null 2>&1 || {
+  fail "check-file-format"
+  "$PY" scripts/check-file-format.py 2>&1 | grep -E "CRLF|BOM|Invisible|  " | head -6 | sed 's/^/    /'
+}
+
 step "No mojibake in code or data"
 bash scripts/check-mojibake.sh 2>&1 | tail -1 | sed 's/^/    /'
 bash scripts/check-mojibake.sh >/dev/null 2>&1 || fail "check-mojibake"

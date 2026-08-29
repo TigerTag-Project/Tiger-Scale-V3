@@ -83,6 +83,7 @@ bash scripts/bump-version.sh X.Y.Z   # version + scaffold release notes + change
 | CI says the TOC is out of date | `bash scripts/update_toc.sh`, commit the .ino |
 | i18n check fails | it names the language and the missing key, or the position where the order diverges |
 | UI font check fails | a string uses a character no shipped face carries. It names which: an accented letter means `bash scripts/make-latin-font.sh`, a Han one `bash scripts/make-cjk-font.sh` |
+| file format check fails | a tracked text file is CRLF, carries a BOM, or contains an invisible/bidi control. It names the file and the line. `.gitattributes` already asks for LF, but that only binds a client's `git add` — a commit made through GitHub's web editor or API bypasses it, which is how a nine-line change once arrived as a 16,000-line diff |
 | release workflow refuses to publish | `docs/release-notes/v<version>.md` is missing or still holds the scaffold text |
 
 **Pushing needs the right GitHub account.** The repository belongs to the

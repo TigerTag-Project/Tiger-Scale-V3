@@ -54,6 +54,9 @@ place a spool carrying a TigerTag tag on the platform and it identifies the spoo
 weighs it, subtracts the empty spool's weight and reports how much filament is
 left. MIT licensed, built with PlatformIO.
 
+> [!WARNING]
+> **TigerScale V3 is different from [TigerPOD](https://github.com/TigerTag-Project/TigerPOD).** They don't offer the same features.
+
 ---
 
 ## What it does

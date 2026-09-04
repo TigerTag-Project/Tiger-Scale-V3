@@ -40,9 +40,9 @@
 //   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11324-11441
 //   RFID                                                 11442-12378
 //   OTA — Over-the-air firmware + filesystem update    12379-13058
-//   LVGL bridge + main weigh screen                      13059-14026
-//   Remote live view: the screen out, taps back in       14027-14871
-//   SETUP & LOOP                                         14872-16037
+//   LVGL bridge + main weigh screen                      13059-13998
+//   Remote live view: the screen out, taps back in       13999-14843
+//   SETUP & LOOP                                         14844-16009
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -4870,7 +4870,7 @@ static void runHardwareTest() {
     lv_obj_center(plusLbl);
 
     lv_obj_t *readersLbl = lv_label_create(scr);
-    lv_label_set_text(readersLbl, "LECTEURS");
+    lv_label_set_text(readersLbl, t(I18N_RFID_READERS));
     lv_obj_set_style_text_color(readersLbl, LVCOL_MUTED, 0);
     lv_obj_set_style_text_font(readersLbl, &gFont14, 0);
     lv_obj_align(readersLbl, LV_ALIGN_TOP_RIGHT, -6, 52);
@@ -13169,34 +13169,6 @@ static void lvglInit() {
 
     lvglReady = true;
     Serial.println("[LVGL] init OK");
-}
-
-// Minimal test screen: a label + a tappable button with a counter, just to
-// confirm the flush and touch bridges both work on real hardware.
-static void lvglTestScreen() {
-    lv_obj_t *scr = lv_scr_act();
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0x0B0E14), 0);
-
-    lv_obj_t *label = lv_label_create(scr);
-    lv_label_set_text(label, "LVGL OK");
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_40, 0);
-    lv_obj_align(label, LV_ALIGN_CENTER, 0, -40);
-
-    lv_obj_t *btn = lv_btn_create(scr);
-    lv_obj_set_size(btn, 160, 60);
-    lv_obj_align(btn, LV_ALIGN_CENTER, 0, 60);
-    lv_obj_t *btnLabel = lv_label_create(btn);
-    lv_label_set_text(btnLabel, "Tap me");
-    lv_obj_center(btnLabel);
-
-    lv_obj_add_event_cb(btn, [](lv_event_t *e) {
-        static uint32_t tapCount = 0;
-        tapCount++;
-        lv_obj_t *target = (lv_obj_t *)lv_event_get_target(e);
-        lv_obj_t *lbl    = lv_obj_get_child(target, 0);
-        lv_label_set_text_fmt(lbl, "Tap %lu", (unsigned long)tapCount);
-    }, LV_EVENT_CLICKED, nullptr);
 }
 
 // ============================================================================

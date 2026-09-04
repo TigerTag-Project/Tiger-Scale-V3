@@ -65,7 +65,7 @@ Unauthenticated — the device has no identity yet. That is what the rate limit 
 the short expiry are for.
 
 ```json
-{ "device": "tigerscale-a1b2", "model": "TigerScale V3", "fw": "3.1.3" }
+{ "device": "tigerscale-A1B2", "model": "TigerScale V3", "fw": "3.1.3" }
 ```
 
 ```json

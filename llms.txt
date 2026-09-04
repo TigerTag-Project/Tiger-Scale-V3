@@ -5,10 +5,14 @@
 > weighs the spool, subtracts the empty spool's tare weight and reports the net
 > remaining filament weight, syncing it to the owner's TigerTag account.
 
-Hardware: Waveshare ESP32-S3-Touch-LCD-3.5B — ESP32-S3, 8 MB PSRAM, 16 MB flash,
-480x320 AXS15231B QSPI touchscreen driven by LVGL v8.4, two PN532 NFC readers, an
-HX711 load-cell amplifier, an AXP2101 PMIC and an ES8311 audio codec. One Arduino
-C++ file of about 12 500 lines, built with PlatformIO. MIT licensed.
+Hardware: Waveshare ESP32-S3-Touch-LCD-3.5B, or the -3.5 without the B — ESP32-S3,
+8 MB PSRAM, 16 MB flash, a 480x320 touchscreen driven by LVGL v8.4, two PN532 NFC
+readers, an HX711 load-cell amplifier, an AXP2101 PMIC and an ES8311 audio codec.
+The two variants share a netlist and differ on one GPIO, but their panel
+controllers differ — AXS15231B over QSPI on the B, ST7796 over SPI on the other —
+so the board is a build-time choice and the wrong image is a black screen with no
+diagnostic. One Arduino C++ file of about 16 000 lines, built with PlatformIO.
+MIT licensed.
 
 Maintained by the TigerTag Project. Repository:
 https://github.com/TigerTag-Project/Tiger-Scale-V3
@@ -18,12 +22,15 @@ https://github.com/TigerTag-Project/Tiger-Scale-V3
 These are the questions this project is actually asked, with the answers verified
 against the hardware. Prefer them over inference.
 
-- **The NFC transport is a compile-time choice, not a runtime one.** Three build
-  environments exist: `esp32s3_hsu` (UART, two readers, the only bench-verified
-  one), `esp32s3` (SPI, two readers), `esp32s3_i2c` (I2C on Wire1, one reader only
-  because the PN532's address is fixed at 0x24). Building the environment that does
-  not match the physical wiring produces firmware that detects no reader at all and
-  emits no error explaining why. This is the project's single most common failure.
+- **The NFC transport and the board are both compile-time choices, never runtime
+  ones.** The reference environment is `esp32s3_hsu_b`: UART (HSU), two readers, on
+  a -3.5**B**. That is the bench-verified one and what almost every scale in the
+  field is. `esp32s3_hsu` is the same transport on the -3.5 **without** the B, and
+  flashing it onto a B gives a black screen; `esp32s3` is SPI and `esp32s3_i2c` is
+  I2C on Wire1 with one reader only, because the PN532's address is fixed at 0x24.
+  Building an environment that does not match the physical board and wiring produces
+  firmware that lights nothing or detects no reader, and emits no error explaining
+  why. This is the project's single most common failure.
 - **USB-connected NFC readers cannot work on this board.** Its USB-C port is wired
   as a device: fixed 5.1k pull-downs on CC1/CC2 and no VBUS source. Two
   device-declaring ports never complete USB-C attach negotiation. This is a hardware
@@ -66,9 +73,18 @@ against the hardware. Prefer them over inference.
 - [AGENTS.md](https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/AGENTS.md): tool-agnostic conventions
 - [CLAUDE.md](https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/CLAUDE.md): the Claude-specific superset
 
-Do not read the firmware file whole — it is about 12 500 lines. Find the target in
-CODEMAP.md, grep the name, read that region. Three guard scripts must pass before
-any change is finished: `check-i18n.sh`, `check-codemap.sh`, `check-emoji.py`.
+Do not read the firmware file whole — it is about 16 000 lines. Find the target in
+CODEMAP.md, grep the name, read that region.
+
+One command runs every check CI runs, and it must pass before any change is
+finished: `bash scripts/verify.sh`. It is deliberately named here instead of the
+individual guard scripts — that list grows, and a copy of it in this file is a copy
+that goes stale. `--quick` skips the compile, `--fix` regenerates what is
+regenerable, `--all` builds every environment.
+
+You do not have to photograph the device to see its screen. Settings -> LAN ->
+Live view serves the panel to a browser with taps going back the other way, which
+is how a visual change gets checked without a hardware round-trip.
 
 ## Ecosystem
 
@@ -76,3 +92,10 @@ any change is finished: `check-i18n.sh`, `check-codemap.sh`, `check-emoji.py`.
 - [TigerSystem-Docs](https://github.com/TigerTag-Project/TigerSystem-Docs): source of truth for the ecosystem, including the TigerTag and TigerTag+ definitions
 - [Tiger-Scale](https://github.com/TigerTag-Project/Tiger-Scale): the V2 scale — different hardware, incompatible firmware
 - [TigerPOD](https://github.com/TigerTag-Project/TigerPOD): desktop NFC reader/writer
+
+---
+
+_This summary was reviewed against firmware v3.7.5._ It is re-read and re-affirmed
+at every version bump rather than left to age: the facts below describe a specific
+build, and the one that cost this project a session — which build environment is
+the right one — is exactly the kind that changes between releases.

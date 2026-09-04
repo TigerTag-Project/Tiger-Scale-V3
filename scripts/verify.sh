@@ -73,11 +73,39 @@ step "i18n — firmware table and web locales"
   "$PY" scripts/check-i18n.py 2>&1 | grep -E "missing|order|empty|invalid" | head -5 | sed 's/^/    /'
 }
 
+step "Every word on the panel comes from the translation table"
+"$PY" scripts/check-ui-translated.py 2>&1 | tail -1 | sed 's/^/    /'
+"$PY" scripts/check-ui-translated.py >/dev/null 2>&1 || {
+  fail "check-ui-translated"
+  "$PY" scripts/check-ui-translated.py 2>&1 | grep -E "reaches the panel|fix:" | head -4 | sed 's/^/    /'
+}
+
 step "UI fonts cover every string"
 "$PY" scripts/check-ui-fonts.py 2>&1 | tail -1 | sed 's/^/    /'
 "$PY" scripts/check-ui-fonts.py >/dev/null 2>&1 || {
   fail "check-ui-fonts"
   "$PY" scripts/check-ui-fonts.py 2>&1 | grep -E "missing|MISSING|regenerate" | head -4 | sed 's/^/    /'
+}
+
+step "Generated files agree with their own declarations"
+"$PY" scripts/check-generated.py 2>&1 | grep -v '^note:' | tail -1 | sed 's/^/    /'
+"$PY" scripts/check-generated.py >/dev/null 2>&1 || {
+  fail "check-generated"
+  "$PY" scripts/check-generated.py 2>&1 | grep -vE "^note:|^checked" | head -4 | sed 's/^/    /'
+}
+
+step "Documented device names match the firmware's"
+"$PY" scripts/check-device-names.py 2>&1 | tail -1 | sed 's/^/    /'
+"$PY" scripts/check-device-names.py >/dev/null 2>&1 || {
+  fail "check-device-names"
+  "$PY" scripts/check-device-names.py 2>&1 | grep -E "tigerscale" | head -4 | sed 's/^/    /'
+}
+
+step "llms.txt still describes this repository"
+"$PY" scripts/check-llms-txt.py 2>&1 | tail -1 | sed 's/^/    /'
+"$PY" scripts/check-llms-txt.py >/dev/null 2>&1 || {
+  fail "check-llms-txt"
+  "$PY" scripts/check-llms-txt.py 2>&1 | grep -v "^checked" | head -4 | sed 's/^/    /'
 }
 
 step "No emoji in documentation"

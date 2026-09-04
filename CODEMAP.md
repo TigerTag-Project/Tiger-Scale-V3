@@ -50,9 +50,9 @@ the source, so this table cannot silently disagree with the file.
 | AUDIO | ES8311 codec beep (I2S slave, I2C 0x18) | 11324–11441 |
 | 24 | RFID (PN532 via `PN532Reader`, tag reading) | 11442–12378 |
 | 25 | OTA (firmware + filesystem update) | 12379–13058 |
-| LVGL | LVGL bridge + main weigh screen | 13059–14026 |
-| LIVE | Remote live view: the screen out, taps back in | 14027–14871 |
-| 26 | `setup()` + `loop()` | 14872–16037 |
+| LVGL | LVGL bridge + main weigh screen | 13059–13998 |
+| LIVE | Remote live view: the screen out, taps back in | 13999–14843 |
+| 26 | `setup()` + `loop()` | 14844–16009 |
 
 Two gaps and two oddities in that numbering, all deliberate:
 
@@ -128,10 +128,10 @@ Two gaps and two oddities in that numbering, all deliberate:
 | `finishRfidSession` | 12373 | §24 |
 | `otaApply` | 12566 | §25 |
 | `otaFetchLatest` | 12708 | §25 |
-| `lvglBuildMainScreen` | 13341 | §LVGL |
-| `lvglUpdateMainScreen` | 13769 | §LVGL |
-| `setup` | 14891 | §26 |
-| `loop` | 15062 | §26 |
+| `lvglBuildMainScreen` | 13313 | §LVGL |
+| `lvglUpdateMainScreen` | 13741 | §LVGL |
+| `setup` | 14863 | §26 |
+| `loop` | 15034 | §26 |
 
 ## Landmines — read the note before editing these
 

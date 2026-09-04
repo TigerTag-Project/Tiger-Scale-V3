@@ -136,7 +136,11 @@ cat <<EOF
 
 Next:
   1. Write $NOTES — the workflow will not publish without it.
-  2. bash scripts/check-codemap.sh && pio run -e esp32s3_hsu_b
+  1b. Re-read llms.txt against this build and update the line that records the
+      version it was reviewed against. check-llms-txt.py fails until you do, and
+      it is the file coding agents read first — bumping the number without
+      re-reading it defeats the point.
+  2. bash scripts/verify.sh
   3. git add -A && git commit -m "Release v$NEW"
   4. git tag v$NEW && git push origin main --tags
 EOF

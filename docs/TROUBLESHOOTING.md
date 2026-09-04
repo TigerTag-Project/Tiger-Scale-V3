@@ -139,7 +139,7 @@ which is the only way to read them once the cable is unplugged:
 
 ```bash
 python3 scripts/watch_logs.py 192.168.1.42
-python3 scripts/watch_logs.py tigerscale.local --all
+python3 scripts/watch_logs.py tigerscale-XXXX.local --all
 ```
 
 ## The touchscreen does not respond

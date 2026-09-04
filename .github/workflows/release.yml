@@ -104,10 +104,12 @@ jobs:
           echo "version=$FW" >> "$GITHUB_OUTPUT"
 
       - name: Guards must pass before anything is published
-        run: |
-          python3 scripts/check-i18n.py
-          bash scripts/check-codemap.sh
-          python3 scripts/check-emoji.py
+        # Every guard, through the one command, deliberately: this step used to
+        # name three scripts and went on naming three while the suite grew to
+        # eleven, so a release could be published having checked a third of what
+        # a bench check covers. A list of guards in a workflow is a list that
+        # goes stale, exactly like the one that was in llms.txt.
+        run: bash scripts/verify.sh --quick
 
       - name: Release notes must exist
         if: steps.version.outputs.publish == 'true'

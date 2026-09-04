@@ -212,7 +212,7 @@ pio device monitor                  # serial console
 5. Place a spool carrying a TigerTag tag. The scale reads it, weighs it, and syncs.
 
 The device's own web UI is reachable at `http://<device-ip>/` — the address is
-shown under **Settings → WiFi** — and at `http://tigerscale.local/` where mDNS
+shown under **Settings → WiFi** — and at `http://tigerscale-XXXX.local/` (the four hex digits are shown on that same screen) where mDNS
 resolves.
 
 ## Troubleshooting

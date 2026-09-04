@@ -83,6 +83,10 @@ bash scripts/bump-version.sh X.Y.Z   # version + scaffold release notes + change
 | CI says the TOC is out of date | `bash scripts/update_toc.sh`, commit the .ino |
 | i18n check fails | it names the language and the missing key, or the position where the order diverges |
 | UI font check fails | a string uses a character no shipped face carries. It names which: an accented letter means `bash scripts/make-latin-font.sh`, a Han one `bash scripts/make-cjk-font.sh` |
+| UI translation check fails | a string literal carrying a word is handed to an LVGL text setter, so it reaches the panel in one language only. It names the line and the literal. Add a key to `i18n.h` in all nine blocks and use `t(I18N_KEY)` — or, if it really is language-neutral, add it to `ALLOWED` in `scripts/check-ui-translated.py` with the reason |
+| generated-file check fails | a bitmap header's array no longer matches its own `_W`x`_H`, or a font face's glyph table no longer matches the range its header declares. Both are regenerated, never hand-edited: `scripts/make-rgb565-header.py`, `scripts/make-latin-font.sh`, `scripts/make-cjk-font.sh` |
+| device-name check fails | a document shows an mDNS name that is not `tigerscale-%02X%02X` — usually a name with no MAC suffix at all, which resolves to nothing, or one with a lowercase suffix. The guard names the offender when it fires. The firmware builds the name in `macSuffix4()`; the document is what is wrong |
+| llms.txt check fails | the summary written for language models has drifted from the repository: an environment name that no longer exists, a stale line count, a dead documentation link, or a list of guard scripts where `bash scripts/verify.sh` belongs. It is the one file no human reads, so it is checked mechanically |
 | file format check fails | a tracked text file is CRLF, carries a BOM, or contains an invisible/bidi control. It names the file and the line. `.gitattributes` already asks for LF, but that only binds a client's `git add` — a commit made through GitHub's web editor or API bypasses it, which is how a nine-line change once arrived as a 16,000-line diff |
 | release workflow refuses to publish | `docs/release-notes/v<version>.md` is missing or still holds the scaffold text |
 
@@ -256,14 +260,21 @@ refuses to do to the heap.
 2. Add one entry to **every** language block, in the same order as the enum.
 3. `bash scripts/check-i18n.sh` must exit 0 before you compile.
 
-**Accented letters are renderable now, and the existing strings do not use them.**
-Every French, Spanish, German, Italian, Polish and Portuguese entry is spelled
-without its accents — "Pret", "MATERIAU" — because until `font_latin_*` existed
-those letters drew as blank boxes. That constraint is gone: the Latin-1 and
-Latin Extended-A blocks ship in full, and `scripts/check-ui-fonts.py` fails the
-build if a string ever uses a glyph no face carries. Restoring the accents is
-worth doing, per language, deliberately; `data/www/locales/*.json` already
-spells the same vocabulary correctly and is the reference.
+A literal carrying a word must never be handed to an LVGL text setter — it
+reaches the panel untranslated, and it was doing so on the RFID screen for
+months. `scripts/check-ui-translated.py` fails the build on that now. If a
+literal genuinely is language-neutral, add it to that file's `ALLOWED` **with
+the reason**.
+
+**The accents are restored, and they render.** Every French, Spanish, German,
+Italian, Polish and Portuguese entry is now spelled properly — including the
+Latin Extended-A letters Polish needs (`ą ć ę ł ń ś ź ż`). They used to be
+stripped, because until `font_latin_*` existed those letters drew as blank
+boxes; that constraint is gone. `scripts/check-ui-fonts.py` fails the build if a
+string ever uses a glyph no compiled face carries, and
+`scripts/check-generated.py` fails if a face stops matching the range its own
+header declares — which is what that first check trusts. Write a new string
+spelled correctly and let the guards decide.
 
 The web UI's translations are a separate set: `data/www/locales/*.json` (9 files, same
 language set as the firmware since PT-PT joined it).

@@ -14,6 +14,10 @@ scaffold's placeholder text.
 
 Nothing yet.
 
+## [v3.7.6](docs/release-notes/v3.7.6.md)
+
+See the release notes for the full entry.
+
 ## [v3.7.5](docs/release-notes/v3.7.5.md)
 
 See the release notes for the full entry.

@@ -182,6 +182,10 @@ enum LangKey : uint8_t {
     I18N_OTA_UPTODATE_LONG,
     I18N_OTA_CHECK_FAILED,
     I18N_OTA_KEEPS,
+    I18N_POWER_OFF,
+    I18N_POWER_OFF_Q,
+    I18N_POWER_OFF_USB,
+    I18N_POWER_OFF_NEEDS_BATT,
     I18N_COUNT,
 };
 
@@ -344,6 +348,10 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* OTA_UPTODATE_LONG */ "Your TigerScale is up to date",
           /* OTA_CHECK_FAILED  */ "Could not check for updates",
           /* OTA_KEEPS         */ "WiFi, account and calibration are kept",
+          /* POWER_OFF        */ "Power off",
+          /* POWER_OFF_Q      */ "Turn the scale off? To switch it back on, plug in the USB cable.",
+          /* POWER_OFF_USB    */ "Unplug USB",
+          /* POWER_OFF_NEEDS_BATT */ "Unplug the USB cable to switch your TigerScale off.",
     },
     // PT (Brazilian Portuguese — Studio's "pt")
     {
@@ -500,6 +508,10 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* OTA_UPTODATE_LONG */ "Sua TigerScale está atualizada",
           /* OTA_CHECK_FAILED  */ "Não foi possível verificar",
           /* OTA_KEEPS         */ "WiFi, conta e calibração são mantidos",
+          /* POWER_OFF        */ "Desligar",
+          /* POWER_OFF_Q      */ "Desligar a balança? Para ligar de novo, conecte o cabo USB.",
+          /* POWER_OFF_USB    */ "Desconecte o USB",
+          /* POWER_OFF_NEEDS_BATT */ "Desconecte o cabo USB para desligar a sua TigerScale.",
     },
     // FR
     {
@@ -656,6 +668,10 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* OTA_UPTODATE_LONG */ "Votre TigerScale est à jour",
           /* OTA_CHECK_FAILED  */ "Vérification impossible",
           /* OTA_KEEPS         */ "WiFi, compte et calibration sont conserves",
+          /* POWER_OFF        */ "Éteindre",
+          /* POWER_OFF_Q      */ "Éteindre la balance ? Pour la rallumer, rebranchez le câble USB.",
+          /* POWER_OFF_USB    */ "Débranchez l'USB",
+          /* POWER_OFF_NEEDS_BATT */ "Débranchez le câble USB pour éteindre votre TigerScale.",
     },
     // ES
     {
@@ -812,6 +828,10 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* OTA_UPTODATE_LONG */ "Su TigerScale está actualizada",
           /* OTA_CHECK_FAILED  */ "No se pudo comprobar",
           /* OTA_KEEPS         */ "WiFi, cuenta y calibración se conservan",
+          /* POWER_OFF        */ "Apagar",
+          /* POWER_OFF_Q      */ "¿Apagar la báscula? Para encenderla, conecta el cable USB.",
+          /* POWER_OFF_USB    */ "Desconecta el USB",
+          /* POWER_OFF_NEEDS_BATT */ "Desconecta el cable USB para apagar tu TigerScale.",
     },
     // DE
     {
@@ -968,6 +988,10 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* OTA_UPTODATE_LONG */ "Ihre TigerScale ist aktuell",
           /* OTA_CHECK_FAILED  */ "Prüfung nicht möglich",
           /* OTA_KEEPS         */ "WLAN, Konto und Kalibrierung bleiben erhalten",
+          /* POWER_OFF        */ "Ausschalten",
+          /* POWER_OFF_Q      */ "Waage ausschalten? Zum Einschalten das USB-Kabel anschließen.",
+          /* POWER_OFF_USB    */ "USB abziehen",
+          /* POWER_OFF_NEEDS_BATT */ "USB-Kabel abziehen, um die TigerScale auszuschalten.",
     },
     // ZH (Han characters, not pinyin)
     // The glyphs come from a generated subset font — scripts/make-cjk-font.sh —
@@ -1130,6 +1154,10 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* OTA_UPTODATE_LONG */ "您的TigerScale已是最新",
         /* OTA_CHECK_FAILED  */ "无法检查更新",
         /* OTA_KEEPS         */ "WiFi、账户和校准将保留",
+        /* POWER_OFF        */ "关机",
+        /* POWER_OFF_Q      */ "关闭秤? 重新插入 USB 线即可开机。",
+        /* POWER_OFF_USB    */ "请拔下 USB",
+        /* POWER_OFF_NEEDS_BATT */ "拔下 USB 线以关闭 TigerScale。",
     },
     // IT
     {
@@ -1286,6 +1314,10 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* OTA_UPTODATE_LONG */ "La tua TigerScale è aggiornata",
           /* OTA_CHECK_FAILED  */ "Verifica non riuscita",
           /* OTA_KEEPS         */ "WiFi, account e calibrazione sono conservati",
+          /* POWER_OFF        */ "Spegni",
+          /* POWER_OFF_Q      */ "Spegnere la bilancia? Per riaccenderla, collega il cavo USB.",
+          /* POWER_OFF_USB    */ "Scollega l'USB",
+          /* POWER_OFF_NEEDS_BATT */ "Scollega il cavo USB per spegnere la tua TigerScale.",
     },
     // PL
     {
@@ -1442,6 +1474,10 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* OTA_UPTODATE_LONG */ "Twoja TigerScale jest aktualna",
           /* OTA_CHECK_FAILED  */ "Nie można sprawdzić",
           /* OTA_KEEPS         */ "WiFi, konto i kalibracja zostaną zachowane",
+          /* POWER_OFF        */ "Wyłącz",
+          /* POWER_OFF_Q      */ "Wyłączyć wagę? Aby włączyć ponownie, podłącz kabel USB.",
+          /* POWER_OFF_USB    */ "Odłącz USB",
+          /* POWER_OFF_NEEDS_BATT */ "Odłącz kabel USB, aby wyłączyć TigerScale.",
     },
     // PT-PT (European Portuguese — Studio's "pt-pt")
     {
@@ -1598,6 +1634,10 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* OTA_UPTODATE_LONG */ "A sua TigerScale está actualizada",
         /* OTA_CHECK_FAILED  */ "Não foi possível verificar",
         /* OTA_KEEPS         */ "WiFi, conta e calibração são mantidos",
+        /* POWER_OFF        */ "Desligar",
+        /* POWER_OFF_Q      */ "Desligar a balança? Para ligar novamente, ligue o cabo USB.",
+        /* POWER_OFF_USB    */ "Desligue o USB",
+        /* POWER_OFF_NEEDS_BATT */ "Desligue o cabo USB para desligar a sua TigerScale.",
     },
 };
 

@@ -17,32 +17,32 @@
 //   ---------------------------------------------------- -----------
 //   HARDWARE CONFIGURATION                                 230-  423
 //   OTA CONFIGURATION                                      424-  456
-//   FORWARD DECLARATIONS                                   457-  728
-//   WEIGHT ROUNDING                                        729-  748
-//   GLOBAL OBJECTS                                         749- 1410
-//   CONFIGURATION VARIABLES                               1411- 1830
-//   OLED DISPLAY                                          1831- 2608
-//   CLOUD PARSING                                         2609- 2623
-//   WIFI SETUP                                            2624- 7227
-//   LITTLEFS                                              7228- 7527
-//   FIREBASE AUTHENTICATION                               7528- 9189
-//   WEBSOCKET                                             9190- 9216
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9217- 9351
-//   UNIFIED WS FRAME BUILDER                              9352- 9476
-//   WEIGHT FILTER HELPERS                                 9477- 9491
-//   POST-SEND STATE RESET (shared by all send paths)      9492- 9512
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9513- 9609
-//   WEB SERVER                                            9610-10423
-//   CLOUD COMMUNICATION                                  10424-10606
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10607-11114
-//   mDNS                                                 11115-11152
-//   SCALE                                                11153-11323
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11324-11441
-//   RFID                                                 11442-12378
-//   OTA — Over-the-air firmware + filesystem update    12379-13058
-//   LVGL bridge + main weigh screen                      13059-13998
-//   Remote live view: the screen out, taps back in       13999-14843
-//   SETUP & LOOP                                         14844-16009
+//   FORWARD DECLARATIONS                                   457-  759
+//   WEIGHT ROUNDING                                        760-  779
+//   GLOBAL OBJECTS                                         780- 1441
+//   CONFIGURATION VARIABLES                               1442- 1861
+//   OLED DISPLAY                                          1862- 2639
+//   CLOUD PARSING                                         2640- 2654
+//   WIFI SETUP                                            2655- 7421
+//   LITTLEFS                                              7422- 7721
+//   FIREBASE AUTHENTICATION                               7722- 9383
+//   WEBSOCKET                                             9384- 9410
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9411- 9545
+//   UNIFIED WS FRAME BUILDER                              9546- 9670
+//   WEIGHT FILTER HELPERS                                 9671- 9685
+//   POST-SEND STATE RESET (shared by all send paths)      9686- 9706
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9707- 9803
+//   WEB SERVER                                            9804-10617
+//   CLOUD COMMUNICATION                                  10618-10800
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10801-11308
+//   mDNS                                                 11309-11346
+//   SCALE                                                11347-11517
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11518-11635
+//   RFID                                                 11636-12572
+//   OTA — Over-the-air firmware + filesystem update    12573-13252
+//   LVGL bridge + main weigh screen                      13253-14192
+//   Remote live view: the screen out, taps back in       14193-15037
+//   SETUP & LOOP                                         15038-16203
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -553,6 +553,37 @@ static uint8_t axpRead(uint8_t reg) {
     if (Wire1.endTransmission(false) != 0) return 0xFF;
     Wire1.requestFrom((uint8_t)AXP2101_ADDR, (uint8_t)1);
     return Wire1.available() ? Wire1.read() : 0xFF;
+}
+
+// AXP2101: write one register via Wire1. Nothing in this firmware wrote to the
+// PMIC before the power-off row existed -- every other use of this chip is a
+// read -- so this is the only write path and it stays that way deliberately.
+static bool axpWrite(uint8_t reg, uint8_t val) {
+    Wire1.beginTransmission(AXP2101_ADDR);
+    Wire1.write(reg);
+    Wire1.write(val);
+    return Wire1.endTransmission() == 0;
+}
+
+// Soft power-off. Sets bit 0 of REG 0x10 (PMU common config), which is exactly
+// what XPowersLib's AXP2101::shutdown() does --
+// setRegisterBit(XPOWERS_AXP2101_COMMON_CONFIG, 0). The library is already a
+// dependency but is never included: the rest of this firmware talks to the PMIC
+// over Wire1 by hand, and constructing a second owner of that bus for one bit
+// would be a worse trade than restating the register here.
+//
+// Read-modify-write, never a blind store. The other bits of 0x10 configure the
+// power-on and power-off sources; writing them wrong is not something a device
+// in someone's workshop can recover from.
+//
+// There is no power button on this board. Once the rails drop the only way back
+// is VBUS -- plugging the USB cable in. That is why the confirmation says so,
+// and why the row is inert while USB is already connected: with VBUS present
+// the PMIC powers straight back up, so the button would read as a reboot.
+static bool axpPowerOff() {
+    uint8_t cfg = axpRead(0x10);
+    if (cfg == 0xFF) return false;   // read failed -- refuse rather than guess
+    return axpWrite(0x10, (uint8_t)(cfg | 0x01));
 }
 // The battery answer, in one place. It used to live as static locals inside
 // lvglUpdateMainScreen(), which only runs while the main weigh screen is on
@@ -5257,6 +5288,103 @@ static bool lvglConfirm(const char *question) {
     return sC == C_YES;
 }
 
+// A one-button notice: a card over whatever is on screen, with an OK that
+// dismisses it. lvglAskYesNo() asks a question; this one only tells you
+// something. Same scrim, same card, same measure-then-size, so it looks like the
+// update dialog rather than like a screen of its own.
+//
+// It exists because the power-off row had to explain why it cannot act while USB
+// is connected. The reason was already in the row's value column and that was
+// not enough: a tap that produces nothing on screen reads as a fault, whatever
+// is written beside it.
+//
+// The first version replaced the whole screen through lvglCenteredScreen(). Two
+// problems with that, and the second is why this one overlays instead: a notice
+// that blanks the screen loses the context it is commenting on, and swapping
+// screens underneath a screen loop that owns its own is a way to lose the one
+// that was there.
+//
+// Blocking, like every dialog here: it pumps lv_timer_handler() itself, so it
+// must not be called from inside an LVGL event callback.
+static void lvglNotice(const char *msg) {
+    static bool sDone;
+    sDone = false;
+    auto okCb = [](lv_event_t *e) { (void)e; sDone = true; };
+
+    const int CARD_W = 376, PAD = 22, TEXT_W = CARD_W - 2 * PAD, BTN_H = 46;
+
+    // Clickable so a tap outside the card lands here and not on the live screen
+    // underneath.
+    lv_obj_t *scrim = lv_obj_create(lv_scr_act());
+    lv_obj_remove_style_all(scrim);
+    lv_obj_set_size(scrim, 480, 320);
+    lv_obj_set_pos(scrim, 0, 0);
+    lv_obj_set_style_bg_color(scrim, lv_color_hex(0x04070B), 0);
+    lv_obj_set_style_bg_opa(scrim, 190, 0);
+    lv_obj_clear_flag(scrim, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(scrim, LV_OBJ_FLAG_CLICKABLE);
+    // Tapping outside the card dismisses it too. A notice has nothing to
+    // decide, so making the whole overlay the target is one fewer thing to aim
+    // at on a panel this size -- and one fewer way to be stuck on a dialog.
+    lv_obj_add_event_cb(scrim, okCb, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t *card = lv_obj_create(scrim);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_width(card, CARD_W);
+    lv_obj_set_style_bg_color(card, LVCOL_CARD, 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card, LVCOL_BORDER, 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, 12, 0);
+    lv_obj_set_style_clip_corner(card, true, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *bodyLbl = lv_label_create(card);
+    lv_label_set_long_mode(bodyLbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(bodyLbl, TEXT_W);
+    lv_obj_set_style_text_align(bodyLbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(bodyLbl, LVCOL_TEXT, 0);
+    lv_label_set_text(bodyLbl, msg);
+    lv_obj_set_pos(bodyLbl, PAD, PAD);
+
+    // Measured, not assumed: the same sentence is three lines in German and two
+    // in English, and the card has to grow with it.
+    lv_obj_update_layout(card);
+    int y = PAD + lv_obj_get_height(bodyLbl) + PAD - 4;
+
+    lv_obj_t *hr = lv_obj_create(card);
+    lv_obj_remove_style_all(hr);
+    lv_obj_set_size(hr, CARD_W, 1);
+    lv_obj_set_pos(hr, 0, y);
+    lv_obj_set_style_bg_color(hr, LVCOL_BORDER, 0);
+    lv_obj_set_style_bg_opa(hr, LV_OPA_COVER, 0);
+
+    // One button, full width -- no vertical rule, because there is nothing to
+    // separate it from.
+    lv_obj_t *b = lv_btn_create(card);
+    lv_obj_remove_style_all(b);
+    lv_obj_set_size(b, CARD_W, BTN_H);
+    lv_obj_set_pos(b, 0, y + 1);
+    lv_obj_set_style_bg_color(b, LVCOL_BORDER, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_add_event_cb(b, okCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *l = lv_label_create(b);
+    // "OK" stays out of the translation table on purpose: the same two letters
+    // in all nine languages this firmware carries.
+    lv_label_set_text(l, "OK");
+    lv_obj_set_style_text_color(l, LVCOL_ACCENT, 0);
+    lv_obj_center(l);
+
+    lv_obj_set_height(card, y + 1 + BTN_H);
+    lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+
+    while (!sDone) { lv_timer_handler(); delay(5); }
+
+    lv_obj_del(scrim);
+    lv_timer_handler();
+    { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis() - t0 < 800) delay(20); }
+}
+
 static void lanEnsureCode() {
     prefs.begin("config", false);
     gLanAccessCode = prefs.getString("lanCode", "");
@@ -6680,7 +6808,7 @@ static void runOtaMenu() {
 // LVGL screen. Sub-screens (calibration wizard, hardware test, wifi setup,
 // etc.) are untouched raw-gfx and still called exactly as before.
 static void runSettingsMenu() {
-    enum SettingsAction { SA_NONE, SA_WIFI, SA_FIREBASE, SA_VOLUME, SA_SCREEN, SA_CALIBRATE, SA_LANGUAGE, SA_HARDWARE, SA_LAN, SA_UPDATE, SA_REBOOT, SA_FACTORY, SA_BACK };
+    enum SettingsAction { SA_NONE, SA_WIFI, SA_FIREBASE, SA_VOLUME, SA_SCREEN, SA_CALIBRATE, SA_LANGUAGE, SA_HARDWARE, SA_LAN, SA_UPDATE, SA_REBOOT, SA_POWEROFF, SA_FACTORY, SA_BACK };
     static SettingsAction sAction;
     lv_obj_t *prevScr = nullptr;
     lv_coord_t savedScrollY = 0;   // survives sub-screen round-trips, not menu exits
@@ -6886,12 +7014,17 @@ static void runSettingsMenu() {
             lv_obj_align(name, LV_ALIGN_LEFT_MID, 52, 0);
 
             // Big chevron on purpose: it is the "this opens" affordance and
-            // has to read at arm's length on a 3.5" panel.
-            lv_obj_t *chev = lv_label_create(card);
-            lv_label_set_text(chev, LV_SYMBOL_RIGHT);
-            lv_obj_set_style_text_color(chev, LVCOL_MUTED, 0);
-            lv_obj_set_style_text_font(chev, &lv_font_montserrat_28, 0);
-            lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -12, 0);
+            // has to read at arm's length on a 3.5" panel. Which is exactly why
+            // a row that opens nothing must not carry one: SA_NONE is how a row
+            // says it is inert -- the power-off row while USB is connected --
+            // and a chevron there advertises a destination that does not exist.
+            if (act != SA_NONE) {
+                lv_obj_t *chev = lv_label_create(card);
+                lv_label_set_text(chev, LV_SYMBOL_RIGHT);
+                lv_obj_set_style_text_color(chev, LVCOL_MUTED, 0);
+                lv_obj_set_style_text_font(chev, &lv_font_montserrat_28, 0);
+                lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -12, 0);
+            }
 
             if (valStr.length()) {
                 lv_obj_t *val = lv_label_create(card);
@@ -6971,6 +7104,29 @@ static void runSettingsMenu() {
         makeRow(CI_GLYPH, LV_SYMBOL_REFRESH, LVCOL_ORANGE,
                 t(I18N_REBOOT), String(""), SA_REBOOT);
 
+        // Power off, under Restart because it is the same family -- it
+        // interrupts and destroys nothing -- and above the destructive row.
+        //
+        // There is no power button on this board, so a scale running on its
+        // battery had no way to be switched off at all: unplugging USB moves it
+        // onto the cell rather than stopping it. That is the gap this row fills.
+        //
+        // With USB connected the row is inert and says why in its own value
+        // column. Writing the power-off bit with VBUS present would drop the
+        // rails and the PMIC would power straight back up, so the row would read
+        // as an unexplained reboot. FAINT is this file's colour for "exists but
+        // is not available", and putting the reason in the value column means
+        // there is no dead tap and no dialog to dismiss.
+        // Tappable in both states, deliberately. It was inert on USB at first,
+        // with the reason in its value column, and that read as a broken button:
+        // a tap has to produce something on screen or the user concludes the
+        // feature does not work. FAINT still says "not available"; the tap now
+        // says why.
+        makeRow(CI_GLYPH, LV_SYMBOL_POWER,
+                gBattery.vbus ? LVCOL_FAINT : LVCOL_ORANGE,
+                t(I18N_POWER_OFF),
+                String(gBattery.vbus ? t(I18N_POWER_OFF_USB) : ""), SA_POWEROFF);
+
         // Last row, deliberately: the one destructive action of this list
         // sits at the end of the scroll, red, behind an lvglConfirm.
         makeRow(CI_GLYPH, LV_SYMBOL_TRASH, LVCOL_RED,
@@ -7007,6 +7163,7 @@ static void runSettingsMenu() {
             // Re-read the globals twice a second, same as the Account page;
             // identical text is skipped, so idle cost is a strcmp.
             Language builtLang = gLanguage;
+            bool builtVbus = gBattery.vbus;
             uint32_t lastFbRowMs = millis();
             while (sAction == SA_NONE) {
                 lv_timer_handler(); delay(5);
@@ -7015,6 +7172,20 @@ static void runSettingsMenu() {
                 // SA_NONE re-enters the outer loop, which rebuilds the list in
                 // the new language at the same scroll offset.
                 if (gLanguage != builtLang) break;
+                // Same mechanism for the cable, and it is not cosmetic: the
+                // power-off row is offered on battery and inert on USB, so
+                // someone who unplugs while looking at this list has to see the
+                // row change under their eyes. Without this it stays grey until
+                // they leave the screen and come back, which reads as a button
+                // that does nothing -- exactly how this was first reported.
+                //
+                // The poll has to happen here: loop() does not run while this
+                // screen is up. pollBatteryState() rate-limits itself to 4 Hz
+                // and the screensaver's loop calls it the same way. vbusChanged
+                // is deliberately not touched -- it belongs to whoever pushes
+                // the heartbeat.
+                pollBatteryState();
+                if (gBattery.vbus != builtVbus) break;
                 if (fbValLbl && millis() - lastFbRowMs > 500) {
                     lastFbRowMs = millis();
                     bool pend = (!firebaseAuth && firebaseRefreshToken.length() > 0);
@@ -7140,6 +7311,29 @@ static void runSettingsMenu() {
                     ESP.restart();
                 }
                 break;
+            case SA_POWEROFF:
+                // Confirmed, and the question carries the way back: with no
+                // power button, someone who switches the scale off on battery
+                // and is not told to reach for the USB cable concludes it died.
+                if (gBattery.vbus) {
+                    // Not an error and not a refusal to explain: powering off
+                    // with VBUS present drops the rails and the PMIC brings them
+                    // straight back, so the button would read as a reboot.
+                    lvglNotice(t(I18N_POWER_OFF_NEEDS_BATT));
+                    break;
+                }
+                if (lvglConfirm(t(I18N_POWER_OFF_Q))) {
+                    Serial.println("[PMIC] soft power-off from Settings");
+                    bool ok = axpPowerOff();
+                    // On success the rails are gone before this returns from the
+                    // delay. Still running means the write did not take -- the
+                    // PMIC is unreachable on Wire1 -- and saying so is better
+                    // than a button that silently does nothing.
+                    delay(600);
+                    if (!ok) lvglConfirm(t(I18N_ERROR));
+                }
+                break;
+
             case SA_FACTORY:
                 // Full NVS erase — every namespace: config, WiFi creds, LAN
                 // code, meta cache, calibration. The next boot finds no

@@ -308,6 +308,16 @@ language set as the firmware since PT-PT joined it).
   one already knew.
 - **Binaries** go to GitHub Releases, never into git. A committed binary stays in
   the history forever, even after it is deleted.
+- **[`docs/ROADMAP.md`](docs/ROADMAP.md) holds the work that was found and
+  deferred.** A line goes in the moment the finding is made, not when someone
+  decides to schedule it — a finding that waits to be planned before it is
+  written down is a finding that is forgotten. But check that it earns its place
+  first: the file's own admission test is five questions, and the two that get
+  skipped are "is this verified rather than suspected" and "could I just do it
+  now instead". A roadmap everything enters is a roadmap nobody reads, and the
+  real defect drowns among the preferences. Every entry states what is wrong,
+  what it costs not to fix, **and why it was deferred** — that last one is what
+  stops the next session re-opening the argument from scratch.
 - **Reviews** live in [`docs/reviews/`](docs/reviews/), one file each, kept
   permanently, worked from the standing brief in
   [`docs/REVIEW-BRIEF.md`](docs/REVIEW-BRIEF.md). After acting on one, annotate

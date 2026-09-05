@@ -23,26 +23,26 @@
 //   CONFIGURATION VARIABLES                               1442- 1861
 //   OLED DISPLAY                                          1862- 2639
 //   CLOUD PARSING                                         2640- 2654
-//   WIFI SETUP                                            2655- 7421
-//   LITTLEFS                                              7422- 7721
-//   FIREBASE AUTHENTICATION                               7722- 9383
-//   WEBSOCKET                                             9384- 9410
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9411- 9545
-//   UNIFIED WS FRAME BUILDER                              9546- 9670
-//   WEIGHT FILTER HELPERS                                 9671- 9685
-//   POST-SEND STATE RESET (shared by all send paths)      9686- 9706
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9707- 9803
-//   WEB SERVER                                            9804-10617
-//   CLOUD COMMUNICATION                                  10618-10800
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10801-11308
-//   mDNS                                                 11309-11346
-//   SCALE                                                11347-11517
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11518-11635
-//   RFID                                                 11636-12572
-//   OTA — Over-the-air firmware + filesystem update    12573-13252
-//   LVGL bridge + main weigh screen                      13253-14192
-//   Remote live view: the screen out, taps back in       14193-15037
-//   SETUP & LOOP                                         15038-16203
+//   WIFI SETUP                                            2655- 7439
+//   LITTLEFS                                              7440- 7739
+//   FIREBASE AUTHENTICATION                               7740- 9401
+//   WEBSOCKET                                             9402- 9428
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9429- 9563
+//   UNIFIED WS FRAME BUILDER                              9564- 9688
+//   WEIGHT FILTER HELPERS                                 9689- 9703
+//   POST-SEND STATE RESET (shared by all send paths)      9704- 9724
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9725- 9821
+//   WEB SERVER                                            9822-10635
+//   CLOUD COMMUNICATION                                  10636-10818
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10819-11326
+//   mDNS                                                 11327-11364
+//   SCALE                                                11365-11535
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11536-11653
+//   RFID                                                 11654-12590
+//   OTA — Over-the-air firmware + filesystem update    12591-13270
+//   LVGL bridge + main weigh screen                      13271-14210
+//   Remote live view: the screen out, taps back in       14211-15055
+//   SETUP & LOOP                                         15056-16221
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -7117,15 +7117,27 @@ static void runSettingsMenu() {
         // as an unexplained reboot. FAINT is this file's colour for "exists but
         // is not available", and putting the reason in the value column means
         // there is no dead tap and no dialog to dismiss.
-        // Tappable in both states, deliberately. It was inert on USB at first,
-        // with the reason in its value column, and that read as a broken button:
-        // a tap has to produce something on screen or the user concludes the
-        // feature does not work. FAINT still says "not available"; the tap now
-        // says why.
-        makeRow(CI_GLYPH, LV_SYMBOL_POWER,
-                gBattery.vbus ? LVCOL_FAINT : LVCOL_ORANGE,
-                t(I18N_POWER_OFF),
-                String(gBattery.vbus ? t(I18N_POWER_OFF_USB) : ""), SA_POWEROFF);
+        // Only on a scale that has a cell. Without one, USB is the only supply
+        // and unplugging the cable IS switching off -- a row that could never
+        // act is noise, and worse, it would promise something the hardware
+        // cannot do. The battery is optional on this board (see the bill of
+        // materials in docs/HARDWARE.md), so plenty of scales have none.
+        //
+        // Unknown counts as absent, deliberately: `known` is false only while
+        // the PMIC has not answered yet or cannot be read, and axpPowerOff()
+        // would fail on that same bus. Offering a switch-off we could not
+        // perform is worse than not offering one.
+        if (gBattery.known && gBattery.present) {
+            // Tappable in both states. It was inert on USB at first, with the
+            // reason in its value column, and that read as a broken button: a
+            // tap has to produce something on screen or the user concludes the
+            // feature does not work. FAINT still says "not available"; the tap
+            // now says why.
+            makeRow(CI_GLYPH, LV_SYMBOL_POWER,
+                    gBattery.vbus ? LVCOL_FAINT : LVCOL_ORANGE,
+                    t(I18N_POWER_OFF),
+                    String(gBattery.vbus ? t(I18N_POWER_OFF_USB) : ""), SA_POWEROFF);
+        }
 
         // Last row, deliberately: the one destructive action of this list
         // sits at the end of the scroll, red, behind an lvglConfirm.
@@ -7164,6 +7176,7 @@ static void runSettingsMenu() {
             // identical text is skipped, so idle cost is a strcmp.
             Language builtLang = gLanguage;
             bool builtVbus = gBattery.vbus;
+            bool builtBatt = gBattery.known && gBattery.present;
             uint32_t lastFbRowMs = millis();
             while (sAction == SA_NONE) {
                 lv_timer_handler(); delay(5);
@@ -7186,6 +7199,11 @@ static void runSettingsMenu() {
                 // the heartbeat.
                 pollBatteryState();
                 if (gBattery.vbus != builtVbus) break;
+                // And on the cell appearing: `known` flips false to true on the
+                // first successful PMIC read, which can land after this list is
+                // already up. Without this the power-off row would be missing
+                // until the screen is left and re-entered.
+                if ((gBattery.known && gBattery.present) != builtBatt) break;
                 if (fbValLbl && millis() - lastFbRowMs > 500) {
                     lastFbRowMs = millis();
                     bool pend = (!firebaseAuth && firebaseRefreshToken.length() > 0);

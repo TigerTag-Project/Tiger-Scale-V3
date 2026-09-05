@@ -213,6 +213,36 @@ là où deux `curl` suffiraient.
 **Reporté :** ajout à côté de la vue live, pas à sa place. Attention au budget
 mémoire — voir la ligne `liveEnsureBuffers` de la table Landmines.
 
+### 10. Le déploiement Pages ne réessaie pas après un 403 transitoire
+
+Vu le 2026-09-05 sur la release v3.8.0 (run `33941158915`). Le job `build` a
+publié la release et ses onze artefacts ; le job `deploy-page` appelé derrière a
+échoué à l'étape « Assemble around the latest release » :
+
+    ERROR: cannot read the latest release (HTTP 403). Cut a release first.
+
+La release existait pourtant. C'est une lecture d'API refusée sur le moment — pas
+un manque de release. Un `workflow_dispatch` manuel de `pages.yml`, sans rien
+changer, a réussi immédiatement.
+
+**Conséquence :** entre la release et la réparation, le site publiait encore la
+version précédente. Toute balance interrogeant le manifeste se serait déclarée à
+jour contre une version déjà publiée — le scénario exact que
+`docs/CLOUD.md` et `verify-published-site.py` existent pour empêcher.
+
+**Ce qui limite déjà la casse, et pourquoi ça ne suffit pas :** le run est passé
+au rouge, donc ce n'était pas silencieux, et le run horaire de `pages.yml`
+répare tout seul. Mais la fenêtre est d'une heure, et elle s'ouvre exactement au
+moment où quelqu'un vient de publier et regarde ailleurs. Une seule relecture de
+l'API, avec deux ou trois tentatives espacées, la refermerait.
+
+**Reporté :** la cause du 403 n'est pas établie — limite secondaire de l'API après
+la rafale d'appels du job de release est l'hypothèse la plus probable, mais elle
+n'est pas vérifiée, et le critère d'admission de ce fichier demande de ne pas
+écrire ce qu'on suppose. Le correctif (réessai) est indépendant de la cause et
+tient en quelques lignes ; il vaut d'être fait avec la prochaine touche à
+`pages.yml`, pas seul.
+
 ### 9. `idf_component.yml` et son `.orig` ne sont ni suivis ni ignorés
 
 Produits par le build dans `TigerTagSplashESP32/`, absents de l'historique et du

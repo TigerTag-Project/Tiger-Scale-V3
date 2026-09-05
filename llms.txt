@@ -95,7 +95,7 @@ is how a visual change gets checked without a hardware round-trip.
 
 ---
 
-_This summary was reviewed against firmware v3.7.6._ It is re-read and re-affirmed
+_This summary was reviewed against firmware v3.8.0._ It is re-read and re-affirmed
 at every version bump rather than left to age: the facts below describe a specific
 build, and the one that cost this project a session — which build environment is
 the right one — is exactly the kind that changes between releases.

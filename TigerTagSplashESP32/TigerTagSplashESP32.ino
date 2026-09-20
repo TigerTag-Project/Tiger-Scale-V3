@@ -23,26 +23,26 @@
 //   CONFIGURATION VARIABLES                               1442- 1861
 //   OLED DISPLAY                                          1862- 2639
 //   CLOUD PARSING                                         2640- 2654
-//   WIFI SETUP                                            2655- 7439
-//   LITTLEFS                                              7440- 7739
-//   FIREBASE AUTHENTICATION                               7740- 9401
-//   WEBSOCKET                                             9402- 9428
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9429- 9563
-//   UNIFIED WS FRAME BUILDER                              9564- 9688
-//   WEIGHT FILTER HELPERS                                 9689- 9703
-//   POST-SEND STATE RESET (shared by all send paths)      9704- 9724
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9725- 9821
-//   WEB SERVER                                            9822-10635
-//   CLOUD COMMUNICATION                                  10636-10818
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10819-11326
-//   mDNS                                                 11327-11364
-//   SCALE                                                11365-11535
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11536-11653
-//   RFID                                                 11654-12590
-//   OTA — Over-the-air firmware + filesystem update    12591-13270
-//   LVGL bridge + main weigh screen                      13271-14210
-//   Remote live view: the screen out, taps back in       14211-15055
-//   SETUP & LOOP                                         15056-16221
+//   WIFI SETUP                                            2655- 7440
+//   LITTLEFS                                              7441- 7740
+//   FIREBASE AUTHENTICATION                               7741- 9402
+//   WEBSOCKET                                             9403- 9429
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9430- 9564
+//   UNIFIED WS FRAME BUILDER                              9565- 9689
+//   WEIGHT FILTER HELPERS                                 9690- 9704
+//   POST-SEND STATE RESET (shared by all send paths)      9705- 9725
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9726- 9822
+//   WEB SERVER                                            9823-10636
+//   CLOUD COMMUNICATION                                  10637-10819
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10820-11327
+//   mDNS                                                 11328-11365
+//   SCALE                                                11366-11536
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11537-11654
+//   RFID                                                 11655-12591
+//   OTA — Over-the-air firmware + filesystem update    12592-13271
+//   LVGL bridge + main weigh screen                      13272-14245
+//   Remote live view: the screen out, taps back in       14246-15090
+//   SETUP & LOOP                                         15091-16273
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -1169,7 +1169,7 @@ public:
         if (_pn532.getFirmwareVersion() == 0) return false;
         _pn532.SAMConfig();
         applyPN532RfTuning(_pn532, gRfidPowerLevel);
-        _pn532.setPassiveActivationRetries(1);
+        _pn532.setPassiveActivationRetries(2);
         return true;
     }
 
@@ -1177,7 +1177,7 @@ public:
 
     bool isNewCardPresent() {
         uint8_t len = 0;
-        bool ok = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.uidByte, &len, 30);
+        bool ok = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.uidByte, &len, 100);
         // An ISO14443A UID is 4, 7 or 10 bytes, and uidByte is sized for 10.
         // The library reports whatever length the frame claimed, and a corrupted
         // read has been seen claiming about 250: the hex loops in §24 then ran
@@ -1274,7 +1274,7 @@ public:
         if (_pn532.getFirmwareVersion() == 0) return false;
         _pn532.SAMConfig();
         applyPN532RfTuning(_pn532, gRfidPowerLevel);
-        _pn532.setPassiveActivationRetries(1);
+        _pn532.setPassiveActivationRetries(2);
         return true;
     }
 
@@ -1283,7 +1283,7 @@ public:
     bool isNewCardPresent() {
         if (!_isPrimary) return false;
         uint8_t len = 0;
-        bool ok = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.uidByte, &len, 30);
+        bool ok = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.uidByte, &len, 100);
         // Same length guard as the other two transports — see the note there.
         if (ok && len != 4 && len != 7 && len != 10) {
             Serial.printf("[RFID] rejected UID length %u\n", (unsigned)len);
@@ -1358,7 +1358,7 @@ public:
         if (_pn532.getFirmwareVersion() == 0) return false;
         _pn532.SAMConfig();
         applyPN532RfTuning(_pn532, gRfidPowerLevel);
-        _pn532.setPassiveActivationRetries(1);
+        _pn532.setPassiveActivationRetries(2);
         return true;
     }
 
@@ -1366,7 +1366,7 @@ public:
 
     bool isNewCardPresent() {
         uint8_t len = 0;
-        bool ok = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.uidByte, &len, 30);
+        bool ok = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.uidByte, &len, 100);
         // An ISO14443A UID is 4, 7 or 10 bytes, and uidByte is sized for 10.
         // The library reports whatever length the frame claimed, and a corrupted
         // read has been seen claiming about 250: the hex loops in §24 then ran
@@ -13398,6 +13398,12 @@ static lv_obj_t *lvBadgeBox        = nullptr;  // the pill: bg, radius, padding
 static lv_obj_t *lvTopLeftLabel    = nullptr;  // its text
 static lv_obj_t *lvBadgeSpinner    = nullptr;  // its optional in-progress spinner
 static lv_obj_t *lvNameLabel       = nullptr;
+// Removal-echo indicator: thin bar between the top row and the main card,
+// visible only while a just-removed tag's UID is still being ignored (see
+// RFID_REMOVAL_BEEP_SUPPRESS_MS and uid1IsRemovalEcho/uid2IsRemovalEcho in
+// the RFID poll loop). A bar rather than text so it never reflows the rest
+// of the layout, hidden or shown.
+static lv_obj_t *lvEchoBar         = nullptr;
 // Pairing badge: a filled blue disc with a chain-link glyph, top-left of the
 // main card. It answers "how many UIDs does this session hold, and how was the
 // second one found" at a glance. LVGL v8 ships no link symbol, so the glyph is
@@ -13704,6 +13710,18 @@ static void lvglBuildMainScreen() {
     lv_obj_clear_flag(lvBatteryBolt, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(lvBatteryBolt, LV_OBJ_FLAG_HIDDEN);
 
+    // ---- Removal-echo indicator bar (see lvEchoBar declaration) ----
+    lvEchoBar = lv_obj_create(lvScreen);
+    lv_obj_remove_style_all(lvEchoBar);
+    lv_obj_set_size(lvEchoBar, 440, 3);
+    lv_obj_set_pos(lvEchoBar, 20, 42);
+    lv_obj_set_style_radius(lvEchoBar, 2, 0);
+    lv_obj_set_style_bg_color(lvEchoBar, lv_palette_main(LV_PALETTE_ORANGE), 0);
+    lv_obj_set_style_bg_opa(lvEchoBar, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(lvEchoBar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(lvEchoBar, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(lvEchoBar, LV_OBJ_FLAG_HIDDEN);
+
     // ---- Main card: weight (left) + container/filament/rack/position rows (right) ----
     const int CARD_Y = 50, CARD_H = 150;
     lv_obj_t *mainCard = lv_obj_create(lvScreen);
@@ -13950,6 +13968,22 @@ static void lvglBuildMainScreen() {
 // Called on every displayWeightWithState() invocation (same call sites, same
 // cadence as before). Builds the screen once, then only updates the fields
 // that can change: text, colors, and the top-left/brand-card visibility.
+// Called once per loop() from the lv_timer_handler() site, independent of
+// lvglUpdateMainScreen()'s event-triggered calls -- this needs a live tick
+// every frame to shrink smoothly, not just on the next weight/UID change.
+static void lvglUpdateEchoBar() {
+    if (lvEchoBar == nullptr) return;
+    if (gRemovalDetectedMs == 0) { lv_obj_add_flag(lvEchoBar, LV_OBJ_FLAG_HIDDEN); return; }
+    uint32_t elapsed = millis() - gRemovalDetectedMs;
+    if (elapsed >= RFID_REMOVAL_BEEP_SUPPRESS_MS) {
+        lv_obj_add_flag(lvEchoBar, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_clear_flag(lvEchoBar, LV_OBJ_FLAG_HIDDEN);
+    int32_t w = 440 - (int32_t)(440UL * elapsed / RFID_REMOVAL_BEEP_SUPPRESS_MS);
+    lv_obj_set_width(lvEchoBar, w < 2 ? 2 : w);
+}
+
 static void lvglUpdateMainScreen(float weight, const String& uid, OledState state) {
     if (lvScreen == nullptr) lvglBuildMainScreen();
     if (lvScreen == nullptr) return; // build failed (e.g. buffer alloc failure)
@@ -15718,6 +15752,20 @@ void loop() {
         bool newUid1 = uid1Hex.length() > 0 && !dupUid1 && !latchedUid1 && uid1Hex != lastUID && uid1Hex != lastUID2;
         bool newUid2 = uid2Hex.length() > 0 && !dupUid2 && !latchedUid2 && uid2Hex != lastUID && uid2Hex != lastUID2;
 
+        // A tag can flicker back into the reader's field for a moment right
+        // after it was physically removed (see gRecentlyRemovedUid1/2 above).
+        // This used to only suppress the confirmation beep for that echo --
+        // the rest of the block still ran, so the echo overwrote lastUID with
+        // the spool that had just been taken away and the real new spool was
+        // ignored until a second remove/replace cycle. Computed here, ahead of
+        // the newUid1/newUid2 gates below, so it can gate the whole read.
+        bool uid1IsRemovalEcho = newUid1
+                                 && (uid1Hex == gRecentlyRemovedUid1 || uid1Hex == gRecentlyRemovedUid2)
+                                 && (millis() - gRemovalDetectedMs < RFID_REMOVAL_BEEP_SUPPRESS_MS);
+        bool uid2IsRemovalEcho = newUid2
+                                 && (uid2Hex == gRecentlyRemovedUid1 || uid2Hex == gRecentlyRemovedUid2)
+                                 && (millis() - gRemovalDetectedMs < RFID_REMOVAL_BEEP_SUPPRESS_MS);
+
         if (uid1Hex.length() > 0 && !newUid1) {
             RFID_DEBUG_PRINTF("[RFID DBG] RIGHT suppressed dup=%d latched=%d same1=%d same2=%d lastUID=%s lastUID2=%s\n",
                               dupUid1 ? 1 : 0,
@@ -15738,19 +15786,17 @@ void loop() {
                               lastUID2.c_str());
             finishRfidSession(rfid2);
         }
+        if (uid1IsRemovalEcho) {
+            RFID_DEBUG_PRINTF("[RFID DBG] RIGHT ignored: echo of just-removed uid=%s\n", uid1Hex.c_str());
+            finishRfidSession(rfid1);
+        }
 
-        if (newUid1) {
-            bool uid1IsRemovalEcho = (uid1Hex == gRecentlyRemovedUid1 || uid1Hex == gRecentlyRemovedUid2)
-                                     && (millis() - gRemovalDetectedMs < RFID_REMOVAL_BEEP_SUPPRESS_MS);
+        if (newUid1 && !uid1IsRemovalEcho) {
             // Suppress the detection beep when the scale reads near-zero weight:
             // during physical tag removal the same chip can still flicker back
             // into range for a moment and looks like a fresh detection, but
             // there's nothing genuinely being placed on the scale at that point.
-            // Also suppress if this exact UID was just cleared by a removal
-            // reset: blocking Firebase/cloud HTTPS calls can stall loop() long
-            // enough that weight hasn't fully decayed yet when the same tag's
-            // echo read arrives (see gRecentlyRemovedUid1/2 declaration).
-            if (currentWeight >= MIN_WEIGHT_TO_SEND_G && !uid1IsRemovalEcho) playSoundTheme();
+            if (currentWeight >= MIN_WEIGHT_TO_SEND_G) playSoundTheme();
             gRfidReadOkCount++;
             readTigerTagMetadata(rfid1, uid1Hex);
             // If right reader failed metadata, try fresh poll on left reader for twin chip
@@ -15783,12 +15829,14 @@ void loop() {
             pushSessionEvent("rfid_right", "uid=" + uid1Hex, currentWeight);
         }
 
-        if (newUid2) {
-            bool uid2IsRemovalEcho = (uid2Hex == gRecentlyRemovedUid1 || uid2Hex == gRecentlyRemovedUid2)
-                                     && (millis() - gRemovalDetectedMs < RFID_REMOVAL_BEEP_SUPPRESS_MS);
-            // See newUid1 above: suppress the beep for a near-zero-weight flicker
-            // read, or for a delayed echo of a UID just cleared by removal.
-            if (currentWeight >= MIN_WEIGHT_TO_SEND_G && !uid2IsRemovalEcho) playSoundTheme();
+        if (uid2IsRemovalEcho) {
+            RFID_DEBUG_PRINTF("[RFID DBG] LEFT ignored: echo of just-removed uid=%s\n", uid2Hex.c_str());
+            finishRfidSession(rfid2);
+        }
+
+        if (newUid2 && !uid2IsRemovalEcho) {
+            // See newUid1 above: suppress the beep for a near-zero-weight flicker read.
+            if (currentWeight >= MIN_WEIGHT_TO_SEND_G) playSoundTheme();
             gRfidReadOkCount++;
             readTigerTagMetadata(rfid2, uid2Hex);
             // If left reader failed metadata, try right reader as fallback.
@@ -15829,19 +15877,22 @@ void loop() {
 
         #if ENABLE_LEGACY_API_BRIDGE
         // --- Step 3: HTTP metadata fetch from legacy cloud function ---
-        if (newUid1) fetchMetaFromApiByUid(uid1Hex);
-        if (newUid2 && uid2Hex != uid1Hex) fetchMetaFromApiByUid(uid2Hex);
+        if (newUid1 && !uid1IsRemovalEcho) fetchMetaFromApiByUid(uid1Hex);
+        if (newUid2 && !uid2IsRemovalEcho && uid2Hex != uid1Hex) fetchMetaFromApiByUid(uid2Hex);
         #endif
         }
     }
 
         // LVGL, again, right after the readers. The poll above blocks for up
-        // to 30 ms inside readPassiveTargetID() and can run every 45 ms, so a
-        // single pump per loop() left the UI redrawing and reading touch in
-        // bursts — a press landing in that window looked like the panel had
-        // hesitated. lv_conf.h asks for 16 ms refresh and 10 ms input; this is
+        // to 100 ms inside readPassiveTargetID() (raised from 30 ms, with
+        // setPassiveActivationRetries raised from 1 to 2, to stop intermittent
+        // scan_timeout misses on a valid tag — see WORKLOG) and can run every
+        // 45 ms, so a single pump per loop() left the UI redrawing and reading
+        // touch in bursts — a press landing in that window looked like the
+        // panel had hesitated. lv_conf.h asks for 16 ms refresh and 10 ms input; this is
         // what lets it get close on the tick that costs the most.
         if (lvglReady) lv_timer_handler();
+        if (lvglReady) lvglUpdateEchoBar();
 
     // -- RFID hardware test mode ----------------------------------------------
     // When active, poll both readers simultaneously and store raw UIDs for the

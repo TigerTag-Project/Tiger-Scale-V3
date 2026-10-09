@@ -33,26 +33,26 @@ the source, so this table cannot silently disagree with the file.
 | 6 | Configuration variables | 1442–1861 |
 | 7 | Display / weigh rendering | 1862–2639 |
 | 8 | Cloud parsing | 2640–2654 |
-| 9 | WiFi setup + every touch/LVGL settings screen | 2655–7425 |
-| 10 | LittleFS | 7426–7725 |
-| 11 | Firebase authentication + Firestore | 7726–9387 |
-| 13 | WebSocket | 9388–9414 |
-| 14 | Cloud worker task (core 0) | 9415–9549 |
-| 15 | Unified WS frame builder | 9550–9674 |
-| 16 | Weight filter helpers | 9675–9689 |
-| 17 | Post-send state reset | 9690–9710 |
-| 18 | Shared weight push handler | 9711–9807 |
-| 19 | Web server (all HTTP routes) | 9808–10621 |
-| 20 | Cloud communication | 10622–10804 |
-| 21 | Weigh workflow state machine | 10805–11312 |
-| 22 | mDNS | 11313–11350 |
-| 23 | Scale (HX711 init, filtering, calibration) | 11351–11521 |
-| AUDIO | ES8311 codec beep (I2S slave, I2C 0x18) | 11522–11639 |
-| 24 | RFID (PN532 via `PN532Reader`, tag reading) | 11640–12576 |
-| 25 | OTA (firmware + filesystem update) | 12577–13256 |
-| LVGL | LVGL bridge + main weigh screen | 13257–14196 |
-| LIVE | Remote live view: the screen out, taps back in | 14197–15041 |
-| 26 | `setup()` + `loop()` | 15042–16207 |
+| 9 | WiFi setup + every touch/LVGL settings screen | 2655–7442 |
+| 10 | LittleFS | 7443–7742 |
+| 11 | Firebase authentication + Firestore | 7743–9404 |
+| 13 | WebSocket | 9405–9431 |
+| 14 | Cloud worker task (core 0) | 9432–9566 |
+| 15 | Unified WS frame builder | 9567–9691 |
+| 16 | Weight filter helpers | 9692–9706 |
+| 17 | Post-send state reset | 9707–9727 |
+| 18 | Shared weight push handler | 9728–9824 |
+| 19 | Web server (all HTTP routes) | 9825–10638 |
+| 20 | Cloud communication | 10639–10821 |
+| 21 | Weigh workflow state machine | 10822–11329 |
+| 22 | mDNS | 11330–11367 |
+| 23 | Scale (HX711 init, filtering, calibration) | 11368–11538 |
+| AUDIO | ES8311 codec beep (I2S slave, I2C 0x18) | 11539–11656 |
+| 24 | RFID (PN532 via `PN532Reader`, tag reading) | 11657–12593 |
+| 25 | OTA (firmware + filesystem update) | 12594–13273 |
+| LVGL | LVGL bridge + main weigh screen | 13274–14213 |
+| LIVE | Remote live view: the screen out, taps back in | 14214–15058 |
+| 26 | `setup()` + `loop()` | 15059–16224 |
 
 Two gaps and two oddities in that numbering, all deliberate:
 
@@ -88,50 +88,50 @@ Two gaps and two oddities in that numbering, all deliberate:
 | `tsNumericInput` | 3726 | §9 |
 | `runCalibrationWizard` | 3898 | §9 |
 | `runLanguageSettings` | 4400 | §9 |
-| `runHardwareTest` | 4828 | §9 |
-| `lvglAskYesNo` | 5118 | §9 |
-| `runOtaMenu` | 6448 | §9 |
-| `runSettingsMenu` | 6814 | §9 |
-| `setupWiFi` | 7363 | §9 |
-| `setupFileSystem` | 7540 | §10 |
-| `firebaseSignIn` | 7737 | §11 |
-| `fetchApiKeyFromFirestore` | 7823 | §11 |
-| `syncClockFromFirestore` | 7981 | §11 |
-| `readInventoryContainerWeight` | 8394 | §11 |
-| `pushLatestEventToFirestore` | 9074 | §11 |
-| `buildWsFrame` | 9557 | §15 |
-| `resetWeightFilters` | 9678 | §16 |
-| `resetAfterSuccessfulSend` | 9693 | §17 |
-| `handleWeightPushBody` | 9714 | §18 |
-| `setupWebServer` | 9811 | §19 |
-| `sendSingleUidToCloud` | 10625 | §20 |
-| `parseCloudSpoolMeta` | 10681 | §20 |
-| `pushWeightToCloud` | 10731 | §20 |
-| `fetchMetaFromApiByUid` | 10769 | §20 |
-| `handleWeighWorkflow` | 10858 | §21 |
-| `startMDNS` | 11316 | §22 |
-| `setupScale` | 11354 | §23 |
-| `isRapidChange` | 11385 | §23 |
-| `readWeight` | 11421 | §23 |
-| `playSoundTheme` | 11601 | §AUDIO |
-| `rfidSelectReader` | 11695 | §24 |
-| `normalizeRfidHwConfig` | 11749 | §24 |
-| `setupRFID` | 11759 | §24 |
-| `setupServo` | 11965 | §24 |
-| `processAutoTare` | 11979 | §24 |
-| `fetchMetaFromFirestore` | 12287 | §24 |
-| `readTigerTagMetadata` | 12381 | §24 |
-| `pollRFIDReader` | 12452 | §24 |
-| `recoverRFIDReaderIfNeeded` | 12535 | §24 |
-| `isDuplicateRecentUid` | 12555 | §24 |
-| `isUidLatched` | 12559 | §24 |
-| `finishRfidSession` | 12571 | §24 |
-| `otaApply` | 12764 | §25 |
-| `otaFetchLatest` | 12906 | §25 |
-| `lvglBuildMainScreen` | 13511 | §LVGL |
-| `lvglUpdateMainScreen` | 13939 | §LVGL |
-| `setup` | 15061 | §26 |
-| `loop` | 15232 | §26 |
+| `runHardwareTest` | 4830 | §9 |
+| `lvglAskYesNo` | 5120 | §9 |
+| `runOtaMenu` | 6446 | §9 |
+| `runSettingsMenu` | 6812 | §9 |
+| `setupWiFi` | 7380 | §9 |
+| `setupFileSystem` | 7557 | §10 |
+| `firebaseSignIn` | 7754 | §11 |
+| `fetchApiKeyFromFirestore` | 7840 | §11 |
+| `syncClockFromFirestore` | 7998 | §11 |
+| `readInventoryContainerWeight` | 8411 | §11 |
+| `pushLatestEventToFirestore` | 9091 | §11 |
+| `buildWsFrame` | 9574 | §15 |
+| `resetWeightFilters` | 9695 | §16 |
+| `resetAfterSuccessfulSend` | 9710 | §17 |
+| `handleWeightPushBody` | 9731 | §18 |
+| `setupWebServer` | 9828 | §19 |
+| `sendSingleUidToCloud` | 10642 | §20 |
+| `parseCloudSpoolMeta` | 10698 | §20 |
+| `pushWeightToCloud` | 10748 | §20 |
+| `fetchMetaFromApiByUid` | 10786 | §20 |
+| `handleWeighWorkflow` | 10875 | §21 |
+| `startMDNS` | 11333 | §22 |
+| `setupScale` | 11371 | §23 |
+| `isRapidChange` | 11402 | §23 |
+| `readWeight` | 11438 | §23 |
+| `playSoundTheme` | 11618 | §AUDIO |
+| `rfidSelectReader` | 11712 | §24 |
+| `normalizeRfidHwConfig` | 11766 | §24 |
+| `setupRFID` | 11776 | §24 |
+| `setupServo` | 11982 | §24 |
+| `processAutoTare` | 11996 | §24 |
+| `fetchMetaFromFirestore` | 12304 | §24 |
+| `readTigerTagMetadata` | 12398 | §24 |
+| `pollRFIDReader` | 12469 | §24 |
+| `recoverRFIDReaderIfNeeded` | 12552 | §24 |
+| `isDuplicateRecentUid` | 12572 | §24 |
+| `isUidLatched` | 12576 | §24 |
+| `finishRfidSession` | 12588 | §24 |
+| `otaApply` | 12781 | §25 |
+| `otaFetchLatest` | 12923 | §25 |
+| `lvglBuildMainScreen` | 13528 | §LVGL |
+| `lvglUpdateMainScreen` | 13956 | §LVGL |
+| `setup` | 15078 | §26 |
+| `loop` | 15249 | §26 |
 
 ## Landmines — read the note before editing these
 
@@ -164,11 +164,11 @@ a debugging session at least once.
 
 ## Parallel-file pattern — i18n
 
-`TigerTagSplashESP32/i18n.h` holds **143 keys × 9 language blocks**
-(EN/PT/FR/ES/DE/ZH/IT/PL/PT-PT — Studio Manager's exact list). Adding one key
-means editing **all 9 blocks**, in the
+`TigerTagSplashESP32/i18n.h` holds **157 keys × 11 language blocks**
+(EN/PT/FR/ES/DE/ZH/IT/PL/PT-PT/RU/NL — Studio Manager's exact list). Adding one key
+means editing **all 11 blocks**, in the
 same order as the enum. `bash scripts/check-i18n.sh` must exit 0 before you
-compile — it discovers the language list from the file itself, so a 9th language
+compile — it discovers the language list from the file itself, so a 12th language
 cannot leave the check behind.
 
 The web UI's translations are a separate set: `data/www/locales/*.json`

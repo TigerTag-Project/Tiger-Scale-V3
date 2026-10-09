@@ -6,7 +6,7 @@ Contributions are genuinely welcome, and a few areas would help a lot right now:
 - **Bench-verifying the SPI and I²C wiring.** Both compile; only HSU has been
   confirmed end-to-end on hardware. If you wire one up and it works — or doesn't —
   that report is valuable either way.
-- **Translations.** 8 firmware languages, 9 in the web UI.
+- **Translations.** 11 firmware languages, 9 in the web UI.
 - **Per-transport OTA channels.** Today OTA publishes one binary and a
   differently-wired unit that takes it loses its reader.
 

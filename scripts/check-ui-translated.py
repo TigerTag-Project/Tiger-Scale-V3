@@ -46,7 +46,7 @@ ALLOWED = {
         "the product name. It is the same word in every language.",
     "%u min":
         "'min' is the SI-style abbreviation for minute and is not translated in "
-        "any of the nine languages the table carries.",
+        "any of the languages the table carries.",
     "Language":
         "first-boot step 1, before any language has been chosen. Deliberate and "
         "commented at the call site: there is no language to render it in yet.",
@@ -116,7 +116,7 @@ def main():
               f'"{lit}" reaches the panel without t(I18N_...)')
         print(f"    {ctx[:100]}")
     if bad:
-        print("    fix: add a key to i18n.h in all nine language blocks and use "
+        print("    fix: add a key to i18n.h in every language block and use "
               "t(I18N_KEY), or, if it genuinely is language-neutral, add it to "
               "ALLOWED in this file WITH the reason.")
     print(f"checked {sites} LVGL text setter call site(s), {len(bad)} violation(s)")

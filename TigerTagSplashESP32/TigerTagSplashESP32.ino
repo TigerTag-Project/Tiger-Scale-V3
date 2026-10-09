@@ -23,26 +23,26 @@
 //   CONFIGURATION VARIABLES                               1442- 1861
 //   OLED DISPLAY                                          1862- 2639
 //   CLOUD PARSING                                         2640- 2654
-//   WIFI SETUP                                            2655- 7439
-//   LITTLEFS                                              7440- 7739
-//   FIREBASE AUTHENTICATION                               7740- 9401
-//   WEBSOCKET                                             9402- 9428
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9429- 9563
-//   UNIFIED WS FRAME BUILDER                              9564- 9688
-//   WEIGHT FILTER HELPERS                                 9689- 9703
-//   POST-SEND STATE RESET (shared by all send paths)      9704- 9724
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9725- 9821
-//   WEB SERVER                                            9822-10635
-//   CLOUD COMMUNICATION                                  10636-10818
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10819-11326
-//   mDNS                                                 11327-11364
-//   SCALE                                                11365-11535
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11536-11653
-//   RFID                                                 11654-12590
-//   OTA — Over-the-air firmware + filesystem update    12591-13270
-//   LVGL bridge + main weigh screen                      13271-14210
-//   Remote live view: the screen out, taps back in       14211-15055
-//   SETUP & LOOP                                         15056-16221
+//   WIFI SETUP                                            2655- 7442
+//   LITTLEFS                                              7443- 7742
+//   FIREBASE AUTHENTICATION                               7743- 9404
+//   WEBSOCKET                                             9405- 9431
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9432- 9566
+//   UNIFIED WS FRAME BUILDER                              9567- 9691
+//   WEIGHT FILTER HELPERS                                 9692- 9706
+//   POST-SEND STATE RESET (shared by all send paths)      9707- 9727
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9728- 9824
+//   WEB SERVER                                            9825-10638
+//   CLOUD COMMUNICATION                                  10639-10821
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 10822-11329
+//   mDNS                                                 11330-11367
+//   SCALE                                                11368-11538
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11539-11656
+//   RFID                                                 11657-12593
+//   OTA — Over-the-air firmware + filesystem update    12594-13273
+//   LVGL bridge + main weigh screen                      13274-14213
+//   Remote live view: the screen out, taps back in       14214-15058
+//   SETUP & LOOP                                         15059-16224
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -4414,6 +4414,8 @@ static void runLanguageSettings(bool firstBoot) {
         { LANG_PT,    "Português (Brasil)"    },
         { LANG_PT_PT, "Português (Portugal)"  },
         { LANG_PL,    "Polski"                },
+        { LANG_RU,    "Русский"               },
+        { LANG_NL,    "Nederlands"            },
     };
     enum LangAction { LA_NONE, LA_PICK, LA_BACK };
     static LangAction sLangAction;
@@ -7076,7 +7078,8 @@ static void runSettingsMenu() {
         // Indexed by the Language enum — one entry per language, same order.
         const char *langNames[NUM_LANGS] = { "English", "Português (Brasil)", "Français",
                                              "Español", "Deutsch", "中文", "Italiano",
-                                             "Polski", "Português (Portugal)" };
+                                             "Polski", "Português (Portugal)", "Русский",
+                                             "Nederlands" };
         String langVal = langNames[(int)gLanguage < NUM_LANGS ? (int)gLanguage : 0];
         makeRow(CI_GLOBE, nullptr, LVCOL_TEXT, t(I18N_LANGUAGE), langVal, SA_LANGUAGE);
 
@@ -8185,7 +8188,7 @@ static void fetchUserDisplayName() {
 // startup and writes it on every language change; the scale does the same,
 // so changing the language on either side follows on the other.
 
-static const char* kLangCodes[NUM_LANGS] = { "en", "pt", "fr", "es", "de", "zh", "it", "pl", "pt-pt" };
+static const char* kLangCodes[NUM_LANGS] = { "en", "pt", "fr", "es", "de", "zh", "it", "pl", "pt-pt", "ru", "nl" };
 
 static int codeToLang(const String& code) {
     for (int i = 0; i < NUM_LANGS; i++) if (code == kLangCodes[i]) return i;

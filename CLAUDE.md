@@ -83,7 +83,7 @@ bash scripts/bump-version.sh X.Y.Z   # version + scaffold release notes + change
 | CI says the TOC is out of date | `bash scripts/update_toc.sh`, commit the .ino |
 | i18n check fails | it names the language and the missing key, or the position where the order diverges |
 | UI font check fails | a string uses a character no shipped face carries. It names which: an accented letter means `bash scripts/make-latin-font.sh`, a Han one `bash scripts/make-cjk-font.sh` |
-| UI translation check fails | a string literal carrying a word is handed to an LVGL text setter, so it reaches the panel in one language only. It names the line and the literal. Add a key to `i18n.h` in all nine blocks and use `t(I18N_KEY)` — or, if it really is language-neutral, add it to `ALLOWED` in `scripts/check-ui-translated.py` with the reason |
+| UI translation check fails | a string literal carrying a word is handed to an LVGL text setter, so it reaches the panel in one language only. It names the line and the literal. Add a key to `i18n.h` in all eleven blocks and use `t(I18N_KEY)` — or, if it really is language-neutral, add it to `ALLOWED` in `scripts/check-ui-translated.py` with the reason |
 | generated-file check fails | a bitmap header's array no longer matches its own `_W`x`_H`, or a font face's glyph table no longer matches the range its header declares. Both are regenerated, never hand-edited: `scripts/make-rgb565-header.py`, `scripts/make-latin-font.sh`, `scripts/make-cjk-font.sh` |
 | device-name check fails | a document shows an mDNS name that is not `tigerscale-%02X%02X` — usually a name with no MAC suffix at all, which resolves to nothing, or one with a lowercase suffix. The guard names the offender when it fires. The firmware builds the name in `macSuffix4()`; the document is what is wrong |
 | llms.txt check fails | the summary written for language models has drifted from the repository: an environment name that no longer exists, a stale line count, a dead documentation link, or a list of guard scripts where `bash scripts/verify.sh` belongs. It is the one file no human reads, so it is checked mechanically |
@@ -254,7 +254,7 @@ refuses to do to the heap.
 
 ## i18n
 
-`TigerTagSplashESP32/i18n.h` — **143 keys × 9 languages** (EN/PT/FR/ES/DE/ZH/IT/PL/PT-PT — Studio Manager's exact list).
+`TigerTagSplashESP32/i18n.h` — **157 keys × 11 languages** (EN/PT/FR/ES/DE/ZH/IT/PL/PT-PT/RU/NL — Studio Manager's exact list).
 
 1. Add the key to the enum, before `I18N_COUNT`.
 2. Add one entry to **every** language block, in the same order as the enum.
@@ -273,8 +273,10 @@ stripped, because until `font_latin_*` existed those letters drew as blank
 boxes; that constraint is gone. `scripts/check-ui-fonts.py` fails the build if a
 string ever uses a glyph no compiled face carries, and
 `scripts/check-generated.py` fails if a face stops matching the range its own
-header declares — which is what that first check trusts. Write a new string
-spelled correctly and let the guards decide.
+header declares — which is what that first check trusts. Russian's letters ride in
+the same `font_latin_*` faces (Cyrillic U+0400–045F plus `Ґ ґ`, see
+`scripts/make-latin-font.sh`); Dutch needs nothing beyond Latin-1. Write a new
+string spelled correctly and let the guards decide.
 
 The web UI's translations are a separate set: `data/www/locales/*.json` (9 files, same
 language set as the firmware since PT-PT joined it).

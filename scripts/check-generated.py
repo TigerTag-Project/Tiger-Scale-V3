@@ -41,10 +41,14 @@ ARRAY = re.compile(r"static const uint16_t\s+(\w+)\s*\[\s*(\d+)\s*\]")
 OPTS      = re.compile(r"\*\s*Opts:\s*(.*)")
 RANGE_OPT = re.compile(r"-r\s+(\S+)")
 SYMS_OPT  = re.compile(r"--symbols\s+(\S+)")
+# One entry per cmap subtable. A face built from a single contiguous range has one;
+# lv_font_conv splits anything else (Latin + Cyrillic, with gaps where the source
+# font has no glyph) into several, each naming its own unicode_list array.
 CMAP      = re.compile(
     r"\.range_start\s*=\s*(\d+),\s*\.range_length\s*=\s*(\d+),.*?"
+    r"\.unicode_list\s*=\s*(\w+),.*?"
     r"\.list_length\s*=\s*(\d+),\s*\.type\s*=\s*(\w+)", re.S)
-ULIST     = re.compile(r"static const uint16_t unicode_list_0\[\]\s*=\s*\{(.*?)\}", re.S)
+ULIST     = r"static const uint16_t %s\[\]\s*=\s*\{(.*?)\}"
 
 
 def check_bitmap(path, problems):
@@ -98,25 +102,28 @@ def check_font(path, problems):
         problems.append(f"{path.name}: the Opts line names neither -r nor --symbols")
         return
 
-    cm = CMAP.search(text)
-    if not cm:
+    cmaps = list(CMAP.finditer(text))
+    if not cmaps:
         problems.append(f"{path.name}: no cmap block found")
         return
-    start, length, list_len, kind = int(cm.group(1)), int(cm.group(2)), \
-                                    int(cm.group(3)), cm.group(4)
 
-    if "SPARSE" in kind:
-        ul = ULIST.search(text)
-        if not ul:
-            problems.append(f"{path.name}: sparse cmap without a unicode_list")
-            return
-        offsets = [int(v, 0) for v in re.findall(r"0x[0-9A-Fa-f]+|\d+", ul.group(1))]
-        if len(offsets) != list_len:
-            problems.append(f"{path.name}: list_length says {list_len}, "
-                            f"unicode_list holds {len(offsets)}")
-        actual = {start + o for o in offsets}
-    else:
-        actual = set(range(start, start + length))
+    actual = set()
+    for cm in cmaps:
+        start, length, list_name, list_len, kind = (
+            int(cm.group(1)), int(cm.group(2)), cm.group(3),
+            int(cm.group(4)), cm.group(5))
+        if "SPARSE" in kind:
+            ul = re.search(ULIST % re.escape(list_name), text, re.S)
+            if not ul:
+                problems.append(f"{path.name}: sparse cmap without a unicode_list")
+                return
+            offsets = [int(v, 0) for v in re.findall(r"0x[0-9A-Fa-f]+|\d+", ul.group(1))]
+            if len(offsets) != list_len:
+                problems.append(f"{path.name}: list_length says {list_len}, "
+                                f"{list_name} holds {len(offsets)}")
+            actual |= {start + o for o in offsets}
+        else:
+            actual |= set(range(start, start + length))
 
     missing = declared - actual
     extra   = actual - declared

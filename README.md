@@ -18,7 +18,7 @@
   <img src="https://img.shields.io/badge/Platform-ESP32--S3-blue.svg" alt="Platform: ESP32-S3">
   <img src="https://img.shields.io/badge/Build-PlatformIO-orange.svg" alt="Build: PlatformIO">
   <img src="https://img.shields.io/badge/UI-LVGL%20v8.4-6c3.svg" alt="UI: LVGL v8.4">
-  <img src="https://img.shields.io/badge/Languages-8-informational.svg" alt="8 languages">
+  <img src="https://img.shields.io/badge/Languages-11-informational.svg" alt="11 languages">
   <a href="https://discord.gg/3Qv5TSqnJH"><img src="https://img.shields.io/badge/Discord-Join-5865F2.svg" alt="Discord"></a>
 </p>
 
@@ -105,7 +105,7 @@ that one.
   wizard, hardware self-test, language selection, OTA updater
 - **Runs on USB**, and takes an optional Li-ion battery: the on-board AXP2101
   charges it and reports level and charge state
-- **8 firmware languages** (EN · PT · FR · ES · DE · ZH · IT · PL) and a
+- **11 firmware languages** (EN · PT · FR · ES · DE · ZH · IT · PL · PT-PT · RU · NL) and a
   **9-language web UI**
 - **Works offline** — brand and material identification comes from a database in
   the device's own flash, refreshed at most daily, so tag lookups never wait on

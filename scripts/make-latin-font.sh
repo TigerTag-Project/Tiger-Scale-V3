@@ -26,6 +26,15 @@
 # but subsetting to those would save ~8 KB and would not cover a user whose name
 # is Ffion, Šimon or Løvås. Ship the blocks.
 #
+# Russian joined as the tenth language, and its letters are not Latin at all, so
+# the same reasoning is applied to Cyrillic: U+0400-U+045F plus Ґ ґ (U+0490-0491),
+# 98 code points covering Russian, Ukrainian, Belarusian, Bulgarian, Serbian and
+# Macedonian. Not the whole U+0400-U+04FF block, because Montserrat does not carry
+# all of it and a range the face cannot honour makes its own Opts line untrue
+# (scripts/check-generated.py compares the two). The files keep their
+# font_latin_* names: they are still the one face every non-Han fallback comes
+# from, and renaming them would only churn the chain in the .ino.
+#
 # Source: Montserrat Medium, SIL OFL 1.1 — the *same* file LVGL generated its
 # built-in faces from, taken from the tag matching the LVGL version in
 # platformio.ini, so the accented letters are pixel-identical in style to the
@@ -43,7 +52,7 @@ TTF="$WORK/Montserrat-Medium.ttf"
 # Pinned to the LVGL release in platformio.ini. Bump both together, or the
 # fallback glyphs stop matching the built-in ones they sit beside.
 FONT_URL="https://raw.githubusercontent.com/lvgl/lvgl/v8.4.0/scripts/built_in_font/Montserrat-Medium.ttf"
-RANGE="0xA0-0xFF,0x100-0x17F"
+RANGE="0xA0-0xFF,0x100-0x17F,0x400-0x45F,0x490-0x491"
 
 command -v npx >/dev/null || { echo "npx not found — Node.js is required" >&2; exit 1; }
 

@@ -4,8 +4,8 @@
 Two generated faces sit behind LVGL's built-in Montserrat, which carries ASCII
 and nothing else (`-r 0x20-0x7F,0xB0,0x2022`, recorded in its own header):
 
-    font_latin_{14,16,20}.c   Latin-1 Supplement + Latin Extended-A, a fixed
-                              range — scripts/make-latin-font.sh
+    font_latin_{14,16,20}.c   Latin-1 Supplement + Latin Extended-A + Cyrillic,
+                              a fixed range — scripts/make-latin-font.sh
     font_cjk_{14,16,20}.c     only the Han characters the translations use,
                               a computed subset — scripts/make-cjk-font.sh
 

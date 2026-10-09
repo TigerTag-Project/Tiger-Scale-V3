@@ -7529,7 +7529,7 @@ static void downloadWebUI() {
         if (downloadFileToFS(url.c_str(), f.local)) ok++; else fail++;
     }
 
-    static const char* locales[] = { "en", "pt", "pt-pt", "fr", "es", "de", "it", "pl", "zh" };
+    static const char* locales[] = { "en", "pt", "pt-pt", "fr", "es", "de", "it", "pl", "zh", "ru", "nl" };
     for (const char* lang : locales) {
         String url  = String(BASE) + "/www/locales/" + lang + ".json";
         String path = String("/www/locales/") + lang + ".json";

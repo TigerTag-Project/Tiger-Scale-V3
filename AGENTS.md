@@ -28,7 +28,7 @@ for it.
 | `TigerTagSplashESP32/logo_*.h`, `icon_bolt.h` | Pre-rasterised RGB565 bitmaps |
 | `include/lv_conf.h` | LVGL v8.4 configuration (found via `-I include`) |
 | `data/www/` | Web UI served from LittleFS |
-| `data/www/locales/*.json` | Web UI translations (9 files, separate from `i18n.h`) |
+| `data/www/locales/*.json` | Web UI translations (11 files, separate from `i18n.h`) |
 | `platformio.ini` | Build envs — one per NFC transport |
 | `partitions.csv` | Flash layout. NVS at 0x9000–0xE000 holds WiFi + Firebase state. |
 | `scripts/` | Guard scripts and the flash helper |

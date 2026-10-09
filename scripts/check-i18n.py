@@ -6,7 +6,7 @@ Two independent sets exist and both can rot silently:
   - `TigerTagSplashESP32/i18n.h` — the on-device UI. A C table indexed by an enum,
     so a block with the right number of entries in the wrong ORDER compiles fine
     and mistranslates the entire language. Counting is not enough.
-  - `data/www/locales/*.json` — the web UI. Nine files that nothing was comparing,
+  - `data/www/locales/*.json` — the web UI. Eleven files that nothing was comparing,
     so one could quietly lose a key and only that language would break.
 
 Checks performed:

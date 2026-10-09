@@ -25,7 +25,9 @@
         pl:      { name: 'Polski',               short: 'PL',    flag: '🇵🇱' },
         pt:      { name: 'Português (Brasil)',   short: 'PT-BR', flag: '🇧🇷' },
         'pt-pt': { name: 'Português (Portugal)', short: 'PT',    flag: '🇵🇹' },
-        zh:      { name: '中文 (简体)',            short: 'ZH',    flag: '🇨🇳' }
+        zh:      { name: '中文 (简体)',            short: 'ZH',    flag: '🇨🇳' },
+        ru:      { name: 'Русский',              short: 'RU',    flag: '🇷🇺' },
+        nl:      { name: 'Nederlands',           short: 'NL',    flag: '🇳🇱' }
     };
     const DEFAULT_LANG  = 'en';
     const FALLBACK_LANG = 'en';

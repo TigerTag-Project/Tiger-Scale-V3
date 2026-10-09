@@ -28,7 +28,7 @@ const masterspools = [
 ];
 
 // ========== I18N HOOK ==========
-// Translations are handled by i18n.js + locales/*.json (9 languages).
+// Translations are handled by i18n.js + locales/*.json (11 languages).
 // window.t() and window.setLanguage() are provided by i18n.js as compat shims.
 // We hook in only for data-tooltip sync and updateCloudText() refresh.
 document.addEventListener('i18n:applied', () => {

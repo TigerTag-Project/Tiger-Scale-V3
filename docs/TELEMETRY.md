@@ -173,7 +173,8 @@ first-match behaviour.
 `sessions_started`, `send_ok_count`, `send_fail_count`, `rfid_read_ok_count`,
 `rfid_read_fail_count`, `auto_tare_count`, `workflow_reset_count`,
 `last_measurement_uid_1`, `last_measurement_uid_2`,
-`last_measurement_weight_g`, `last_measurement_status`.
+`last_measurement_weight_g`, `last_measurement_status`, and the three LAN
+live-view fields below.
 
 **Sent only when the value changed** (and in every full snapshot):
 `current_spool_uid_1`, `current_spool_uid_2`, `calibration_factor`,
@@ -185,8 +186,60 @@ first-match behaviour.
 A consumer must therefore treat an absent field as "unchanged", never as "null".
 Only an explicit `nullValue` means null.
 
-Timestamps are server-set. The ESP32 has no battery-backed clock and deliberately
-runs no NTP for this.
+Timestamps are server-set. The board carries a battery-backed PCF85063 clock the
+firmware does not read yet, and it deliberately runs no NTP for this.
+
+## LAN live view: the screen itself
+
+Three fields let Tiger Studio take a screenshot of the scale without asking the
+user for anything, the same contract as Tiger Touch's LAN mode. They are written
+on every heartbeat, and at once when the switch or the code changes on the
+scale (Settings > LAN).
+
+| Field | Type | Meaning |
+|---|---|---|
+| `lan_live` | bool | live view is on (the default) |
+| `lan_access_code` | string | six characters, letters of both cases and digits, without `l`, `I`, `O`, `0` or `1`, e.g. `J6fxda`. **Compared case-sensitively.** |
+| `lan_url` | string or null | `http://<ip>:81`, the base of the stream, while live view is on and the scale has an address; null otherwise |
+
+- **`lan_access_code` is a secret.** Only the owner can read this document.
+  Never copy it, or a URL carrying it, anywhere another user can read: a shared
+  or public inventory, a friend's view, an export, a log, analytics. The scale
+  itself never logs it.
+- **One frame is a screenshot.** `GET {lan_url}/stream?c={lan_access_code}`
+  answers `200` with a chunked `application/octet-stream`, or `403` for a wrong
+  code. Both carry `Access-Control-Allow-Origin: *`. Read until the first
+  `FRAME_END`, then close: a new viewer is sent the whole screen first, within
+  about half a second.
+- **Two viewers at most.** The scale serves two streams at once, and a browser
+  on Settings > LAN > Live view is one of them. Close the connection as soon as
+  the frame is in.
+- **No stream while live view is off**, while the scale has no WiFi, or while
+  its own pairing screen is up; `lan_url` being null covers the first two.
+- **A sleeping screen is black, and the frame says so faithfully.** When
+  `power_state` is `"screen_off"`, first `POST {lan_url}/tap?c={code}&x=240&y=160`:
+  on a dark screen a press only wakes it and is swallowed, exactly as a finger's
+  would be, so it opens nothing. Read the frame about a second and a half later.
+  The scale goes back to sleep on its own after its usual delay.
+
+The stream is a sequence of messages, little-endian, the first byte giving the
+type:
+
+| Byte | Message | Then |
+|---|---|---|
+| `1` | HELLO | width (u16, 480), height (u16, 320), band width (u16, 16) |
+| `2` | FRAME_BEGIN | nothing |
+| `5` | BAND | band index (u8, 0-29), length (u16), that many bytes of encoded pixels |
+| `4` | FRAME_END | nothing: the frame is complete, draw it now |
+| `3` | PING | nothing, every 5 s |
+
+A band is 16 screen columns. Its pixels are RGB565, ordered down a column and
+then right to left across the band: pixel `i` of band `n` lands at
+`x = n*16 + 15 - floor(i / 320)`, `y = i % 320`. The encoding is a run of
+tokens: `t < 0x80` is `t+1` literal pixels (2 bytes each) that follow;
+`0x80 <= t < 0xFF` is one pixel repeated `t-0x80+2` times; `t == 0xFF` is a
+u16 count, then one pixel repeated that many times. `live_page.h` in the
+firmware is a complete decoder in fifty lines of JavaScript.
 
 ## The WebSocket frame
 
@@ -282,6 +335,23 @@ Self-contained; paste it as-is.
 > **Absent is not null.** Some fields are written only when they change, and some
 > only in the boot snapshot. A field missing from a heartbeat means unchanged —
 > keep the previous value. Only an explicit null means null.
+>
+> **Screenshot.** When `lan_live` is true and `lan_url` is not null, fetch
+> `{lan_url}/stream?c={lan_access_code}`: a `403` means the code is stale (wait
+> for the next heartbeat); otherwise read messages until the first
+> `FRAME_END` (byte `4`), decode the bands into a 480x320 image and close the
+> connection. If `power_state` is `"screen_off"` the screen is black: first
+> `POST {lan_url}/tap?c={lan_access_code}&x=240&y=160`, which only wakes it, and
+> read the frame about 1.5 s later. The scale serves two viewers at most, so
+> never hold it open. The
+> format is in the "LAN live view" section of TELEMETRY.md. When `lan_live` is
+> false, say "Live view is off on the scale (Settings > LAN)". Show
+> `lan_access_code` in the scale's details, monospace, with a copy button, and no
+> regenerate button: the code is changed on the scale only.
+>
+> **`lan_access_code` is a secret** that controls the screen for anyone on that
+> network. Never put it, or a URL carrying it, in anything shared: friends'
+> views, public inventory, exports, logs, MCP output, analytics.
 >
 > Other fields you can surface: `current_weight_g`, `workflow_phase`,
 > `send_phase`, `current_spool_uid_1` / `_2`, `last_measurement_weight_g`,

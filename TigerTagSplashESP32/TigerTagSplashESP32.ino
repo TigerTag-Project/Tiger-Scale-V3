@@ -23,26 +23,26 @@
 //   CONFIGURATION VARIABLES                               1470- 1889
 //   OLED DISPLAY                                          1890- 2667
 //   CLOUD PARSING                                         2668- 2682
-//   WIFI SETUP                                            2683- 7501
-//   LITTLEFS                                              7502- 7801
-//   FIREBASE AUTHENTICATION                               7802- 9463
-//   WEBSOCKET                                             9464- 9490
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9491- 9625
-//   UNIFIED WS FRAME BUILDER                              9626- 9750
-//   WEIGHT FILTER HELPERS                                 9751- 9765
-//   POST-SEND STATE RESET (shared by all send paths)      9766- 9786
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9787- 9890
-//   WEB SERVER                                            9891-10917
-//   CLOUD COMMUNICATION                                  10918-11100
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 11101-11608
-//   mDNS                                                 11609-11646
-//   SCALE                                                11647-11817
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11818-11935
-//   RFID                                                 11936-12872
-//   OTA — Over-the-air firmware + filesystem update    12873-13552
-//   LVGL bridge + main weigh screen                      13553-14492
-//   Remote live view: the screen out, taps back in       14493-15337
-//   SETUP & LOOP                                         15338-16503
+//   WIFI SETUP                                            2683- 7600
+//   LITTLEFS                                              7601- 7900
+//   FIREBASE AUTHENTICATION                               7901- 9583
+//   WEBSOCKET                                             9584- 9610
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9611- 9745
+//   UNIFIED WS FRAME BUILDER                              9746- 9870
+//   WEIGHT FILTER HELPERS                                 9871- 9885
+//   POST-SEND STATE RESET (shared by all send paths)      9886- 9906
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9907-10010
+//   WEB SERVER                                           10011-11037
+//   CLOUD COMMUNICATION                                  11038-11220
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 11221-11728
+//   mDNS                                                 11729-11766
+//   SCALE                                                11767-11937
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11938-12055
+//   RFID                                                 12056-12992
+//   OTA — Over-the-air firmware + filesystem update    12993-13672
+//   LVGL bridge + main weigh screen                      13673-14612
+//   Remote live view: the screen out, taps back in       14613-15462
+//   SETUP & LOOP                                         15463-16628
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -5168,8 +5168,8 @@ static void runHardwareTest() {
 // comparison, no-firmware-url fallback message, restart on success) is
 // unchanged.
 // Yes/No modal drawn over whatever screen is currently loaded. Returns true for
-// Yes. Used by the two steps of the update flow: the prompt raised when a new
-// version is detected, and the confirmation before the point of no return.
+// Yes. The prompt raised when a new version is detected has its own card,
+// lvglAskUpdate() below.
 //
 // It blocks on lv_timer_handler() instead of returning through a callback, so it
 // must never be called from inside an LVGL event callback — that is the first
@@ -5277,6 +5277,96 @@ static bool lvglAskYesNo(const char *body, const char *sub) {
     lv_timer_handler();
     // Drain the touch so the release does not immediately fire whatever sits under
     // the card — the same guard every screen transition here uses.
+    { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis() - t0 < 800) delay(20); }
+    return sAnswer == 1;
+}
+
+// The prompt raised when a new version is detected: download glyph, the
+// question, "v<installed>  >  v<latest>", then Later / Yes -- the same card
+// Tiger Touch shows, in its orange, so the two products announce an update the
+// same way. Returns true for Yes. Same blocking rules as lvglAskYesNo().
+static bool lvglAskUpdate(const char *latest) {
+    static int sAnswer;
+    sAnswer = -1;
+    auto answerCb = [](lv_event_t *e) {
+        lv_obj_t *o = (lv_obj_t *)lv_event_get_target(e);
+        sAnswer = (int)(intptr_t)lv_obj_get_user_data(o);
+    };
+
+    const int CARD_W = 400, PAD = 18, TEXT_W = CARD_W - 2 * PAD, BTN_H = 44, GAP = 12;
+    const lv_color_t ORANGE = LVCOL_ORANGE;
+
+    lv_obj_t *scrim = lv_obj_create(lv_scr_act());
+    lv_obj_remove_style_all(scrim);
+    lv_obj_set_size(scrim, 480, 320);
+    lv_obj_set_pos(scrim, 0, 0);
+    lv_obj_set_style_bg_color(scrim, lv_color_hex(0x04070B), 0);
+    lv_obj_set_style_bg_opa(scrim, 190, 0);
+    lv_obj_clear_flag(scrim, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(scrim, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *card = lv_obj_create(scrim);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_width(card, CARD_W);
+    lv_obj_set_style_bg_color(card, LVCOL_CARD, 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card, ORANGE, 0);
+    lv_obj_set_style_border_width(card, 2, 0);
+    lv_obj_set_style_radius(card, 12, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Each line is a full-width label with centred text, so the ink is centred
+    // by the font rather than by lv_obj_align() on a glyph's declared box.
+    auto line = [&](const char *txt, const lv_font_t *font, lv_color_t col, int y) {
+        lv_obj_t *l = lv_label_create(card);
+        lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(l, TEXT_W);
+        lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_font(l, font, 0);
+        lv_obj_set_style_text_color(l, col, 0);
+        lv_label_set_text(l, txt);
+        lv_obj_set_pos(l, PAD, y);
+        lv_obj_update_layout(card);   // measure: the question wraps differently per language
+        return y + lv_obj_get_height(l);
+    };
+
+    int y = line(LV_SYMBOL_DOWNLOAD, &lv_font_montserrat_28, ORANGE, 14);
+    y = line(t(I18N_OTA_DETECTED), &gFont14, LVCOL_TEXT, y + 8);
+    char ver[48];
+    snprintf(ver, sizeof(ver), "v%s  >  v%s", TIGERSCALE_FW_VERSION, latest);
+    y = line(ver, &gFont16, ORANGE, y + 12);
+    y += 16;
+
+    const int BTN_W = (TEXT_W - GAP) / 2;
+    const struct { LangKey key; bool primary; int val; int x; } BTN[2] = {
+        { I18N_LATER, false, 0, PAD               },
+        { I18N_YES,   true,  1, PAD + BTN_W + GAP },
+    };
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t *b = lv_btn_create(card);
+        lv_obj_remove_style_all(b);
+        lv_obj_set_size(b, BTN_W, BTN_H);
+        lv_obj_set_pos(b, BTN[i].x, y);
+        lv_obj_set_style_radius(b, 8, 0);
+        lv_obj_set_style_bg_color(b, BTN[i].primary ? ORANGE : lv_color_hex(0x232A36), 0);
+        lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(b, BTN[i].primary ? lv_color_hex(0xB8661A) : LVCOL_BORDER, LV_STATE_PRESSED);
+        lv_obj_set_user_data(b, (void *)(intptr_t)BTN[i].val);
+        lv_obj_add_event_cb(b, answerCb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t *l = lv_label_create(b);
+        lv_label_set_text(l, t(BTN[i].key));
+        lv_obj_set_style_text_font(l, &gFont16, 0);
+        lv_obj_set_style_text_color(l, LVCOL_TEXT, 0);
+        lv_obj_center(l);
+    }
+
+    lv_obj_set_height(card, y + BTN_H + PAD);
+    lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+
+    while (sAnswer < 0) { lv_timer_handler(); delay(5); }
+
+    lv_obj_del(scrim);
+    lv_timer_handler();
     { int16_t dx, dy; uint32_t t0 = millis(); while (tsRead(dx, dy) && millis() - t0 < 800) delay(20); }
     return sAnswer == 1;
 }
@@ -5479,7 +5569,7 @@ static void runLanSettings() {
     lv_obj_set_style_border_width(scr, 0, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    lvglAddHeader(scr, t(I18N_LAN_TITLE), cb, nullptr, (intptr_t)L_BACK);
+    lvglAddHeader(scr, t(I18N_LAN_LIVE), cb, nullptr, (intptr_t)L_BACK);
 
     // One row: a label on the left, a value on the right.
     auto row = [&](int y, const char *label) {
@@ -5570,10 +5660,14 @@ static void runLanSettings() {
             if (lvglConfirm(t(I18N_LAN_REGEN_Q))) {
                 gLanAccessCode = lanMakeCode();
                 prefs.begin("config", false); prefs.putString("lanCode", gLanAccessCode); prefs.end();
+                // Studio reads the code from the heartbeat; a stale one there
+                // locks it out until the next beat, so publish it now.
+                if (WiFi.isConnected()) { gLastHeartbeatScheduleMs = millis(); gHeartbeatForce = true; gHeartbeatPending = true; }
             }
         } else if (sAct == L_TOGGLE) {
             gLanLiveView = lv_obj_has_state(sw, LV_STATE_CHECKED);
             prefs.begin("config", false); prefs.putBool("lanLive", gLanLiveView); prefs.end();
+            if (WiFi.isConnected()) { gLastHeartbeatScheduleMs = millis(); gHeartbeatForce = true; gHeartbeatPending = true; }
         }
         paint();
     }
@@ -7156,8 +7250,13 @@ static void runSettingsMenu() {
                          : String(TIGERSCALE_FW_VERSION),
                 SA_UPDATE);
 
-        makeRow(CI_LAN, nullptr, gLanLiveView ? LVCOL_GREEN : LVCOL_MUTED,
-                t(I18N_LAN_TITLE), String(t(gLanLiveView ? I18N_YES : I18N_NO)), SA_LAN);
+        // LV_SYMBOL_EYE_OPEN rather than the drawn CI_LAN node pair: the row is
+        // named after what it does -- watch the panel from elsewhere -- and an
+        // eye says that where two joined dots said "network". The glyph is
+        // FontAwesome's, already in the built-in Montserrat symbol set, so it
+        // costs nothing and tints like every other glyph icon in this list.
+        makeRow(CI_GLYPH, LV_SYMBOL_EYE_OPEN, gLanLiveView ? LVCOL_GREEN : LVCOL_MUTED,
+                t(I18N_LAN_LIVE), String(t(gLanLiveView ? I18N_YES : I18N_NO)), SA_LAN);
 
         // Restart, just above the destructive row. With a battery fitted there
         // is no other way to power-cycle: pulling the USB cable no longer stops
@@ -8940,7 +9039,10 @@ void sendScaleHeartbeat() {
     // -- Construction du payload documents:commit -----------------------------
     // Structure : { writes: [{ update: { name, fields }, updateMask: { fieldPaths },
     //                          updateTransforms: [{ fieldPath, setToServerValue }] }] }
-    DynamicJsonDocument doc(2048);
+    // 3072: a full beat carries over thirty fields, each a nested object plus a
+    // mask entry, and ArduinoJson drops whatever does not fit without a word --
+    // the fields at the end simply stop appearing. Checked below.
+    DynamicJsonDocument doc(3072);
     JsonArray  writes    = doc.createNestedArray("writes");
     JsonObject writeObj  = writes.createNestedObject();
 
@@ -9062,6 +9164,22 @@ void sendScaleHeartbeat() {
     else fields["last_measurement_status"]["nullValue"] = "NULL_VALUE";
     addMask("last_measurement_status");
 
+    // -- LAN live view — always sent -----------------------------------------
+    // What Studio needs to take a screenshot without asking the user for the
+    // code: GET {lan_url}/stream?c={lan_access_code}, one frame. The code is a
+    // secret: this document is owner-only, and it must never reach a log --
+    // which is why these fields come last, well past the 200 bytes the verbose
+    // payload dump below prints.
+    fields["lan_live"]["booleanValue"] = gLanLiveView;
+    addMask("lan_live");
+    fields["lan_access_code"]["stringValue"] = gLanAccessCode;
+    addMask("lan_access_code");
+    if (gLanLiveView && WiFi.isConnected() && (uint32_t)WiFi.localIP() != 0)
+        fields["lan_url"]["stringValue"] = "http://" + currentIp + ":" + String(LIVE_PORT);
+    else
+        fields["lan_url"]["nullValue"] = "NULL_VALUE";
+    addMask("lan_url");
+
     // -- Champs snapshot uniquement (boot + nouveau compte) -------------------
     if (isFull) {
         fields["fw_version"]["stringValue"]    = TIGERSCALE_FW_VERSION;
@@ -9104,11 +9222,13 @@ void sendScaleHeartbeat() {
     http.addHeader("Content-Type", "application/json");
     http.addHeader("Authorization", "Bearer " + firebaseIdToken);
 
+    if (doc.overflowed()) Serial.println("[HEARTBEAT] payload truncated -- grow the document");
     String payload;
     serializeJson(doc, payload);
 
-    Serial.printf("[HEARTBEAT] commit %s (%s, %d fields + server ts)\n",
-                  docPath.c_str(), isFull ? "FULL" : "delta", (int)fieldPaths.size());
+    Serial.printf("[HEARTBEAT] commit %s (%s, %d fields + server ts, %u/%u B)\n",
+                  docPath.c_str(), isFull ? "FULL" : "delta", (int)fieldPaths.size(),
+                  (unsigned)doc.memoryUsage(), (unsigned)doc.capacity());
     #if DEBUG_VERBOSE_LOGS
     Serial.printf("[HEARTBEAT] Payload (%d bytes): %.200s\n", payload.length(), payload.c_str());
     #endif
@@ -14817,8 +14937,13 @@ static void liveCtrlKeep(int fd) {
 // what took the port down after a minute of clicking.
 static const char LIVE_404[] =
     "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
+// The 403 and the stream carry Access-Control-Allow-Origin so Tiger Studio can
+// fetch a frame straight from its renderer, as it does from Tiger Touch, and
+// tell a wrong code from an unreachable scale. The code is still the guard: a
+// page that does not hold it gets the 403 and nothing else.
 static const char LIVE_403[] =
-    "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
+    "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: keep-alive\r\n"
+    "Access-Control-Allow-Origin: *\r\n\r\n";
 static const char LIVE_204[] =
     "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
 
@@ -14904,7 +15029,7 @@ static bool liveAcceptViewer(int fd) {
     static const char OK[] =
         "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
         "Transfer-Encoding: chunked\r\nCache-Control: no-store\r\n"
-        "X-Content-Type-Options: nosniff\r\n\r\n";
+        "X-Content-Type-Options: nosniff\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
     if (!liveSend(fd, OK, sizeof(OK) - 1)) { free(v); close(fd); return false; }
 
     v->fd = fd;
@@ -15793,8 +15918,8 @@ void loop() {
         bool snoozed = gOtaPromptSnoozeUntil != 0
                        && (int32_t)(millis() - gOtaPromptSnoozeUntil) < 0;
         if (!snoozed) {
-            if (lvglAskYesNo(t(I18N_OTA_DETECTED), nullptr)) {
-                runOtaMenu();   // the version numbers live there, not in the modal
+            if (lvglAskUpdate(gOtaLatestVer.c_str())) {
+                runOtaMenu();
             } else {
                 gOtaPromptSnoozeUntil = millis() + OTA_PROMPT_SNOOZE_MS;
                 Serial.println("[OTA] update declined — not asking again for 24 h");

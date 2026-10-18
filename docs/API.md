@@ -151,6 +151,41 @@ as a number will show "-1 g".
 | `GET /` , `/style.css`, `/app.js` | the scale's own web UI |
 | `GET /live` | 302 to the live view on port 81 |
 
+### The screen
+
+Two ways in, for two jobs.
+
+**Port 80, to check a screen.** No code, like every other route here.
+
+| Endpoint | Returns |
+|---|---|
+| `GET /screen.bmp` | what LVGL last drew, 480x320, as a 24-bit BMP (about 450 KB) |
+| `GET /api/tap?x=&y=` | presses the panel at that point; add `x2`/`y2` for a swipe. Answers once the press was taken and the screen has finished changing, so it chains with `/screen.bmp` without a delay |
+| `GET /screen.ver` | four bytes of frame counter, to poll cheaply |
+| `GET /screen` | the picture in a page: click to tap, drag to swipe |
+
+A press on a dark screen wakes it and is swallowed, as a finger's would be.
+
+**Port 81, to watch it.** The real-time stream behind Settings > LAN > Live view,
+guarded by the six-character code from that screen.
+
+| Endpoint | Returns |
+|---|---|
+| `GET :81/stream?c=CODE` | `200`, a chunked binary stream of frames, or `403` for a wrong code. Two viewers at most. |
+| `POST :81/tap?c=CODE&x=&y=` | `204`; a press (the method is not checked) |
+| `GET :81/` or `GET :81/CODE` | the viewer page |
+
+`/stream` and its `403` carry `Access-Control-Allow-Origin: *`, so a page can
+fetch a frame directly. The message format, and how to take a single-frame
+screenshot, are in [TELEMETRY.md](TELEMETRY.md#lan-live-view-the-screen-itself).
+
+**From the account, without asking anyone.** The heartbeat publishes
+`lan_live`, `lan_access_code` and `lan_url` (`http://<ip>:81`, or null when live
+view is off or there is no address) in `users/{uid}/scales/{mac}`, so the
+owner's own apps can open the stream with no code typed.
+`lan_access_code` is a secret: that document is owner-only, and the code must
+never be copied anywhere shared, nor into a log.
+
 ## Commanding the scale
 
 All of these are `POST`. Bodies are JSON unless noted.
@@ -243,6 +278,7 @@ state feed.
 | Account | yes | yes | `display_name` |
 | Calibration | yes | yes | `calibration_factor` |
 | Counters, session stats | no | no | yes |
+| LAN live view: on, code, URL | no | no | `lan_live`, `lan_access_code`, `lan_url` |
 
 ## Known gaps
 

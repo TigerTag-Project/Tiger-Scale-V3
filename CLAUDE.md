@@ -280,7 +280,7 @@ you want to watch; reach for the two requests above when you want to check.
 
 ## i18n
 
-`TigerTagSplashESP32/i18n.h` — **158 keys × 11 languages** (EN/PT/FR/ES/DE/ZH/IT/PL/PT-PT/RU/NL — Studio Manager's exact list).
+`TigerTagSplashESP32/i18n.h` — **117 keys × 11 languages** (EN/PT/FR/ES/DE/ZH/IT/PL/PT-PT/RU/NL — Studio Manager's exact list).
 
 1. Add the key to the enum, before `I18N_COUNT`.
 2. Add one entry to **every** language block, in the same order as the enum.

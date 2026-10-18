@@ -12,7 +12,7 @@ One Arduino C++ file, **about 16 500 lines**, divided into 26 numbered sections 
 by `bash scripts/update_toc.sh` from the `// §N — TITLE` banners, so it cannot
 silently disagree with the file.
 
-`i18n.h` holds every on-device string: **88 keys × 8 languages**
+`i18n.h` holds every on-device string: **117 keys × 11 languages**
 (EN/PT/FR/ES/DE/ZH/IT/PL). The web UI's translations are separate, under
 `data/www/locales/`.
 

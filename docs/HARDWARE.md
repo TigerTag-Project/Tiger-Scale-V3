@@ -2,6 +2,9 @@
 
 Pinout, bus topology and wiring for TigerScale V3.
 
+For the **Guition JC3248W535C_I_Y**, use `jc3248w535_hsu` and the separate
+[JC3248W535 wiring guide](JC3248W535.md). The Waveshare pinouts below do not apply.
+
 Everything here was read out of `TigerTagSplashESP32/TigerTagSplashESP32.ino` §1
 (`HARDWARE CONFIGURATION`) rather than transcribed from memory. If you change a
 pin in the firmware, change it here too.

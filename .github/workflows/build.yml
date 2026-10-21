@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  # Cheap checks first: if a guard fails there is no point burning five build
+  # Cheap checks first: if a guard fails there is no point burning build
   # slots. These are the same scripts contributors run locally.
   guards:
     name: consistency guards
@@ -47,7 +47,7 @@ jobs:
 
 
   # Does this commit actually touch the firmware? Most do not — this repository
-  # gets a lot of documentation and installer-page commits, and compiling five
+  # gets a lot of documentation and installer-page commits, and compiling all
   # environments to prove a README typo still builds is six wasted minutes every
   # time. The guards above always run; only the matrix below is conditional.
   scope:
@@ -83,7 +83,7 @@ jobs:
           # because it becomes the LittleFS image the release publishes.
           if echo "$CHANGED" | grep -qE '^(TigerTagSplashESP32/|include/|lib/|data/|platformio\.ini|partitions\.csv|\.github/workflows/build\.yml)'; then
             echo "firmware=true" >> "$GITHUB_OUTPUT"
-            echo "-> firmware touched, building all five environments"
+            echo "-> firmware touched, building all environments"
           else
             echo "firmware=false" >> "$GITHUB_OUTPUT"
             echo "-> documentation or web installer only, skipping the build matrix"
@@ -100,6 +100,7 @@ jobs:
         env:
           - esp32s3_hsu_b      # -3.5B, published, bench-verified
           - esp32s3_hsu        # -3.5,  published
+          - jc3248w535_hsu     # Guition JC3248W535C, source builds only
           - esp32s3            # SPI, not published
           - esp32s3_i2c        # I2C on Wire1, not published
           - esp32s3_hsu_debug  # + PN532DEBUG

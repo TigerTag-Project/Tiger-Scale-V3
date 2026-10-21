@@ -4238,9 +4238,9 @@ static bool runCalibrationWizard() {
             uint32_t t0 = millis(); while (millis() - t0 < 2000) { lv_timer_handler(); delay(20); }
         }
         rawReading = scale.get_units(30);
+        // Preserve polarity: HX711 divides raw counts by this signed factor.
         newFactor  = rawReading / knownWeight;
-        if (newFactor < 0.0f) newFactor = -newFactor;
-        if (newFactor < 0.5f) {
+        if (fabs(newFactor) < 0.5f) {
             lv_obj_t *errCol;
             lv_obj_t *errScr = lvglCenteredScreen(&errCol);
             lvglAddStatusBadge(errCol, false);

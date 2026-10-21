@@ -15,34 +15,34 @@
 //
 //   TABLE OF CONTENTS                                     line range
 //   ---------------------------------------------------- -----------
-//   HARDWARE CONFIGURATION                                 258-  451
-//   OTA CONFIGURATION                                      452-  484
-//   FORWARD DECLARATIONS                                   485-  787
-//   WEIGHT ROUNDING                                        788-  807
-//   GLOBAL OBJECTS                                         808- 1469
-//   CONFIGURATION VARIABLES                               1470- 1889
-//   OLED DISPLAY                                          1890- 2667
-//   CLOUD PARSING                                         2668- 2682
-//   WIFI SETUP                                            2683- 7600
-//   LITTLEFS                                              7601- 7900
-//   FIREBASE AUTHENTICATION                               7901- 9583
-//   WEBSOCKET                                             9584- 9610
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9611- 9745
-//   UNIFIED WS FRAME BUILDER                              9746- 9870
-//   WEIGHT FILTER HELPERS                                 9871- 9885
-//   POST-SEND STATE RESET (shared by all send paths)      9886- 9906
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9907-10010
-//   WEB SERVER                                           10011-11037
-//   CLOUD COMMUNICATION                                  11038-11220
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 11221-11728
-//   mDNS                                                 11729-11766
-//   SCALE                                                11767-11937
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11938-12055
-//   RFID                                                 12056-12992
-//   OTA — Over-the-air firmware + filesystem update    12993-13672
-//   LVGL bridge + main weigh screen                      13673-14612
-//   Remote live view: the screen out, taps back in       14613-15462
-//   SETUP & LOOP                                         15463-16628
+//   HARDWARE CONFIGURATION                                 258-  492
+//   OTA CONFIGURATION                                      493-  527
+//   FORWARD DECLARATIONS                                   528-  832
+//   WEIGHT ROUNDING                                        833-  852
+//   GLOBAL OBJECTS                                         853- 1514
+//   CONFIGURATION VARIABLES                               1515- 1934
+//   OLED DISPLAY                                          1935- 2712
+//   CLOUD PARSING                                         2713- 2727
+//   WIFI SETUP                                            2728- 7650
+//   LITTLEFS                                              7651- 7950
+//   FIREBASE AUTHENTICATION                               7951- 9633
+//   WEBSOCKET                                             9634- 9660
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9661- 9795
+//   UNIFIED WS FRAME BUILDER                              9796- 9920
+//   WEIGHT FILTER HELPERS                                 9921- 9935
+//   POST-SEND STATE RESET (shared by all send paths)      9936- 9956
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9957-10060
+//   WEB SERVER                                           10061-11087
+//   CLOUD COMMUNICATION                                  11088-11270
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 11271-11778
+//   mDNS                                                 11779-11816
+//   SCALE                                                11817-11987
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11988-12111
+//   RFID                                                 12112-13050
+//   OTA — Over-the-air firmware + filesystem update    13051-13730
+//   LVGL bridge + main weigh screen                      13731-14670
+//   Remote live view: the screen out, taps back in       14671-15520
+//   SETUP & LOOP                                         15521-16686
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -263,8 +263,9 @@ uint8_t  gSoundTheme  = 0;    // 0=Beep 1=Double 2=Chime 3=Click
 //
 //   TS_BOARD_NONB = 0  Waveshare ESP32-S3-Touch-LCD-3.5B  (env esp32s3_hsu_b)
 //   TS_BOARD_NONB = 1  Waveshare ESP32-S3-Touch-LCD-3.5   (env esp32s3_hsu)
+//   TS_BOARD_JC3248 = 1  Guition JC3248W535C_I_Y (env jc3248w535_hsu)
 //
-// The two boards share one netlist. Comparing the official schematics net by
+// The two Waveshare boards share one netlist. Comparing their schematics net by
 // net, exactly ONE GPIO differs -- GPIO12: LCD_CS on the B, I2S_MCLK on the
 // -3.5, where the panel's chip select is instead strapped to GND through R16.
 // Everything else is identical, including the 2.54 mm header pin numbering, so
@@ -278,8 +279,24 @@ uint8_t  gSoundTheme  = 0;    // 0=Beep 1=Double 2=Chime 3=Click
 #ifndef TS_BOARD_NONB
 #define TS_BOARD_NONB 0
 #endif
+#ifndef TS_BOARD_JC3248
+#define TS_BOARD_JC3248 0
+#endif
 
-#if TS_BOARD_NONB
+#if TS_BOARD_JC3248 && (TS_BOARD_NONB || !RFID_TRANSPORT_HSU || RFID_TRANSPORT_I2C)
+#error "JC3248W535 requires its dedicated HSU environment"
+#endif
+
+#if TS_BOARD_JC3248
+// Guition JC3248W535C_I_Y -- vendor DEMO_LVGL/esp_bsp.h pinout.
+#define LCD_QSPI_CS   45
+#define LCD_QSPI_CLK  47
+#define LCD_QSPI_D0   21
+#define LCD_QSPI_D1   48
+#define LCD_QSPI_D2   40
+#define LCD_QSPI_D3   39
+#define LCD_BL        1
+#elif TS_BOARD_NONB
 // -3.5 -- ST7796 over SPI. Same physical lines as the B's QSPI bus: what the
 // B calls D0/D1 are MOSI/MISO here, D2 is the data/command line, and D3 is not
 // connected at all. No CS pin: the panel's is tied low on the board.
@@ -296,8 +313,24 @@ uint8_t  gSoundTheme  = 0;    // 0=Beep 1=Double 2=Chime 3=Click
 #define LCD_QSPI_D2    3
 #define LCD_QSPI_D3    4
 #endif
+#if !TS_BOARD_JC3248
 #define LCD_BL         6
+#endif
 
+#if TS_BOARD_JC3248
+// Two HSU readers on the exposed 8-pin connector; HX711 on the 4-pin port.
+// HSU has no SS pin. 255 marks the unused pins in the shared reader helpers.
+#define PN532_1_SS     255
+#define PN532_2_SS     255
+#define PN532_1_RXD      6
+#define PN532_1_TXD      7
+#define PN532_2_RXD     15
+#define PN532_2_TXD     16
+#define PN532_1_RST      9
+#define PN532_2_RST     14
+#define HX711_DOUT     17
+#define HX711_SCK      18
+#else
 // BROKEN on ESP32-S3, inherited from V4 -- GPIO22 doesn't physically exist
 // on this chip (S3 skips GPIO22-25) and GPIO21 is wired to the camera
 // connector (CAM_D7) on this board, not I2C. Every boot's I2C scan on this
@@ -306,7 +339,6 @@ uint8_t  gSoundTheme  = 0;    // 0=Beep 1=Double 2=Chime 3=Click
 // peripherals (e.g. PN532 I2C) on this bus -- use Wire1 (GPIO8/7) instead.
 #define I2C_SDA       21   // Waveshare demo + .bak: TCA9554 SDA on GPIO21
 #define I2C_SCL       22   // Waveshare demo + .bak: TCA9554 SCL on GPIO22
-#define TCA_ADDR    0x20
 
 #define PN532_SPI_SCK   47
 #define PN532_SPI_MISO  48
@@ -346,16 +378,24 @@ uint8_t  gSoundTheme  = 0;    // 0=Beep 1=Double 2=Chime 3=Click
 
 #define HX711_DOUT    39
 #define HX711_SCK     40
+#endif
+#define TCA_ADDR    0x20
 #define AXP2101_ADDR  0x34  // AXP2101 PMIC I2C address (shares Wire1 with touch)
 
 #define SERVO_PIN     11
 #define LED_PIN      -1
 
-// ES8311 audio codec — speaker beep on RFID detect
-// GPIO 13-16 are the only internal GPIOs not used by display/RFID/HX711/backlight/servo
-// Checked against both official schematics: I2S_SCLK=13, I2S_ASDOUT=14 (mic in,
-// unused here), I2S_LRCK=15 and I2S_DSDIN=16 are the same on both boards. Only
-// MCLK moves, which is what the #if below is for.
+// Speaker beep on RFID detect: ES8311 on Waveshare, direct I2S on Guition.
+// On Waveshare, GPIO 13-16 are free of display/RFID/HX711/backlight/servo.
+// Both Waveshare schematics use I2S_SCLK=13, I2S_ASDOUT=14 (mic in, unused),
+// I2S_LRCK=15 and I2S_DSDIN=16. Only MCLK moves between those two boards;
+// the Guition amplifier has its own pinout and needs no MCLK.
+#if TS_BOARD_JC3248
+#define SPK_I2S_MCLK  -1   // direct I2S amplifier, no ES8311 or MCLK
+#define SPK_I2S_BCLK  42
+#define SPK_I2S_WS     2
+#define SPK_I2S_DOUT  41
+#else
 #if TS_BOARD_NONB
 #define SPK_I2S_MCLK  12   // -3.5: GPIO12 goes straight to the ES8311's MCLK
 #else
@@ -364,6 +404,7 @@ uint8_t  gSoundTheme  = 0;    // 0=Beep 1=Double 2=Chime 3=Click
 #define SPK_I2S_BCLK  13
 #define SPK_I2S_WS    15
 #define SPK_I2S_DOUT  16
+#endif
 #define ES8311_I2C_ADDR 0x18
 
 #define WS_UPDATE_INTERVAL_MS 100   // was 250ms — 10 Hz display, kitchen-scale feel
@@ -458,9 +499,11 @@ const char* TIGERTAG_FIREBASE_WEB_API_KEY = "AIzaSyCkxPTs_Cv0KVLqsZj-UKWWqIY0Otf
 
 // Which board this binary was built for, as it appears on the silkscreen. The
 // published manifest keys its per-board firmware entries by exactly this
-// string, and the web installer offers the same two names — so a buyer chooses
+// string. The web installer offers the two published Waveshare names — a buyer chooses
 // by looking at their board rather than by understanding a transport.
-#if TS_BOARD_NONB
+#if TS_BOARD_JC3248
+#define TIGERSCALE_BOARD_ID    "jc3248w535"
+#elif TS_BOARD_NONB
 #define TIGERSCALE_BOARD_ID    "3.5"
 #else
 #define TIGERSCALE_BOARD_ID    "3.5b"
@@ -576,6 +619,7 @@ static void drawSettingsIcon(int16_t cx, int16_t cy, uint16_t color, uint16_t bg
 static void drawBatteryIcon(int16_t bx, int16_t by, uint8_t pct, bool charging);
 // AXP2101: read one register via Wire1 (SDA=8, SCL=7)
 static uint8_t axpRead(uint8_t reg) {
+    if (TS_BOARD_JC3248) return 0xFF; // no AXP2101 on the Guition board
     Wire1.beginTransmission(AXP2101_ADDR);
     Wire1.write(reg);
     if (Wire1.endTransmission(false) != 0) return 0xFF;
@@ -587,6 +631,7 @@ static uint8_t axpRead(uint8_t reg) {
 // PMIC before the power-off row existed -- every other use of this chip is a
 // read -- so this is the only write path and it stays that way deliberately.
 static bool axpWrite(uint8_t reg, uint8_t val) {
+    if (TS_BOARD_JC3248) return false;
     Wire1.beginTransmission(AXP2101_ADDR);
     Wire1.write(reg);
     Wire1.write(val);
@@ -853,7 +898,7 @@ Arduino_DataBus *bus = new Arduino_ESP32QSPI(
 );
 Arduino_GFX *panel = new Arduino_AXS15231B(bus, -1, 0, false, 320, 480);
 #endif
-// Same canvas and the same rotation on both boards: the panel is the same
+// Same canvas and the same rotation on all boards: each panel uses
 // 320x480 glass, only the controller in front of it changes.
 static const uint8_t ROTATION = 3;
 Arduino_Canvas *gfx = new Arduino_Canvas(320, 480, panel, 0, 0, ROTATION);
@@ -2688,22 +2733,27 @@ static bool parseCloudNetWeights(const String& resp, float& netOut, float& rawOu
 // =========================================================================
 // TOUCH-BASED WIFI SETUP  (replaces WiFiManager captive portal)
 // =========================================================================
-// Touch — I2C on Wire1 (SDA=GPIO8, SCL=GPIO7) on BOTH boards. Only the IC and
-// its address change:
+// Touch — I2C on Wire1. Waveshare uses SDA=8/SCL=7; Guition uses SDA=4/SCL=8.
 //
 //   -3.5B  AXS5106L @ 0x3B — write an 11-byte command, then read 14 bytes back
 //          in a separate transaction. Source: Waveshare's own
 //          esp_lcd_touch_axs15231b library.
 //   -3.5   FT6336   @ 0x38 — the ordinary FocalTech register file: point count
 //          at 0x02, then the first point's X/Y in 0x03..0x06.
+//   JC3248W535C AXS15231B @ 0x3B — 11-byte command, 8-byte response.
 //
-// Both report portrait coordinates (px 0..319, py 0..479), so the landscape
+// All report portrait coordinates (px 0..319, py 0..479), so the landscape
 // mapping at the end of tsRead() is shared and does not vary by board.
 //
 // (An earlier comment here claimed the touch was read over the QSPI bus rather
 // than I2C. It never was — the code below has always used Wire1.)
+#if TS_BOARD_JC3248
+#define TS_SDA  4
+#define TS_SCL  8
+#else
 #define TS_SDA  8
 #define TS_SCL  7
+#endif
 #if TS_BOARD_NONB
 #define TS_I2C_ADDR 0x38
 #else
@@ -2826,12 +2876,13 @@ static bool tsRead(int16_t &tx, int16_t &ty) {
     px = ((int16_t)(d[1] & 0x0F) << 8) | d[2];
     py = ((int16_t)(d[3] & 0x0F) << 8) | d[4];
 #else
-    // Step 1: write 11-byte command required by AXS5106L
+    // Vendor protocol: an 11-byte request carrying the response length.
+    static const uint8_t AXS_READ_LEN = TS_BOARD_JC3248 ? 8 : 14;
     static const uint8_t AXS_CMD[11] = {
-        0xb5, 0xab, 0xa5, 0x5a, 0x00, 0x00, 0x00, 0x0e, 0x00, 0x00, 0x00
+        0xb5, 0xab, 0xa5, 0x5a, 0x00, 0x00, 0x00, AXS_READ_LEN, 0x00, 0x00, 0x00
     };
     Wire1.beginTransmission(TS_I2C_ADDR);
-    for (int i = 0; i < 11; i++) Wire1.write(AXS_CMD[i]);
+    for (size_t i = 0; i < sizeof(AXS_CMD); i++) Wire1.write(AXS_CMD[i]);
     uint8_t werr = Wire1.endTransmission();  // STOP, then separate read
     if (werr != 0) {
         static uint32_t _we = 0;
@@ -2839,10 +2890,9 @@ static bool tsRead(int16_t &tx, int16_t &ty) {
         return false;
     }
 
-    // Step 2: read 14 bytes
-    uint8_t n = Wire1.requestFrom((uint8_t)TS_I2C_ADDR, (uint8_t)14);
-    uint8_t d[14] = {};
-    for (int i = 0; i < n && i < 14; i++) d[i] = Wire1.read();
+    uint8_t n = Wire1.requestFrom((uint8_t)TS_I2C_ADDR, AXS_READ_LEN);
+    uint8_t d[AXS_READ_LEN] = {};
+    for (int i = 0; i < n && i < AXS_READ_LEN; i++) d[i] = Wire1.read();
 
     if (n < 6) return false;
     if (d[0] == 0xFF || d[1] == 0 || d[1] > 2) return false;
@@ -11941,6 +11991,7 @@ float readWeight() {
 static I2SClass spkI2s;
 static bool     spkReady = false;
 
+#if !TS_BOARD_JC3248
 static void es8311Write(uint8_t reg, uint8_t val) {
     // ES8311 is on Wire1 (GPIO8=SDA, GPIO7=SCL) — same bus as touch controller
     Wire1.beginTransmission(ES8311_I2C_ADDR);
@@ -11986,12 +12037,15 @@ static void es8311Init() {
     // DAC digital volume from gVolume (0–100 → 0x00–0xFF)
     es8311Write(0x32, gMute ? 0x00 : (uint8_t)(gVolume * 255 / 100));
 }
+#endif
 
 // Internal: generate one tone. Requires spkReady already confirmed.
 static void playNote(int freqHz, int durationMs) {
+#if !TS_BOARD_JC3248
     es8311Write(0x32, (uint8_t)(gVolume * 255 / 100));
+#endif
     const int     RATE = 16000;
-    const int16_t AMP  = 28000;
+    const int16_t AMP  = TS_BOARD_JC3248 ? 28000 * gVolume / 100 : 28000;
     int halfW = (freqHz > 0) ? RATE / freqHz / 2 : 0;
     int total = RATE * durationMs / 1000;
     int16_t s = AMP;
@@ -12017,12 +12071,14 @@ static void playSilence(int durationMs) {
 static void playSoundTheme() {
     if (gMute) return;
     if (!spkReady) {
+#if !TS_BOARD_JC3248
         Wire1.beginTransmission(ES8311_I2C_ADDR);
         uint8_t scanErr = Wire1.endTransmission();
         log_e("[BEEP] ES8311 scan 0x%02X: %s (err=%d)",
               ES8311_I2C_ADDR, scanErr == 0 ? "ACK" : "NACK", scanErr);
         es8311Init();
         delay(50);
+#endif
         spkI2s.setPins(SPK_I2S_BCLK, SPK_I2S_WS, SPK_I2S_DOUT, -1, SPK_I2S_MCLK);
         if (!spkI2s.begin(I2S_MODE_STD, 16000,
                           I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO)) {
@@ -12030,7 +12086,7 @@ static void playSoundTheme() {
             return;
         }
         spkReady = true;
-        log_e("[BEEP] ES8311 + I2S ready");
+        log_e("[BEEP] I2S ready");
     }
     switch (gSoundTheme) {
         case 0:  // Beep — single 880 Hz pulse
@@ -12066,8 +12122,10 @@ static String normalizeUidHex(const String& uid) {
 
 static bool initPN532Reader(PN532Reader &reader, uint8_t ssPin, uint8_t rstPin, const char *label) {
     Serial.printf("[RFID] init %s ss=%u rst=%u\n", label, ssPin, rstPin);
-    pinMode(ssPin, OUTPUT);
-    digitalWrite(ssPin, HIGH);
+    if (ssPin != 255) {
+        pinMode(ssPin, OUTPUT);
+        digitalWrite(ssPin, HIGH);
+    }
     pinMode(rstPin, OUTPUT);
     digitalWrite(rstPin, LOW);
     delay(5);
@@ -12118,8 +12176,8 @@ static void rfidSelectReader(uint8_t which) {
     gRfidSelectedReader = which;
     gRfidSelectedSinceMs = millis();
 
-    digitalWrite(PN532_1_SS, HIGH);
-    digitalWrite(PN532_2_SS, HIGH);
+    if (PN532_1_SS != 255) digitalWrite(PN532_1_SS, HIGH);
+    if (PN532_2_SS != 255) digitalWrite(PN532_2_SS, HIGH);
 
     // Put both readers into reset first so only one device is electrically
     // active on the shared SPI bus at a time. PN532's RSTPDN pin doubles as a
@@ -12179,13 +12237,13 @@ void setupRFID() {
                   hwRfidSide == 1 ? "right" : "left");
     Serial.printf("[RFID] reader test mode=%d (0=both,1=right,2=left)\n", RFID_READER_TEST_MODE);
 
-    pinMode(PN532_1_SS, OUTPUT);
-    digitalWrite(PN532_1_SS, HIGH);
+    if (PN532_1_SS != 255) pinMode(PN532_1_SS, OUTPUT);
+    if (PN532_1_SS != 255) digitalWrite(PN532_1_SS, HIGH);
     pinMode(PN532_1_RST, OUTPUT);
     digitalWrite(PN532_1_RST, HIGH);
 
-    pinMode(PN532_2_SS, OUTPUT);
-    digitalWrite(PN532_2_SS, HIGH);
+    if (PN532_2_SS != 255) pinMode(PN532_2_SS, OUTPUT);
+    if (PN532_2_SS != 255) digitalWrite(PN532_2_SS, HIGH);
     pinMode(PN532_2_RST, OUTPUT);
     digitalWrite(PN532_2_RST, HIGH);
 
@@ -12252,7 +12310,7 @@ void setupRFID() {
             digitalWrite(PN532_2_RST, LOW);
             delay(5);
             ok1 = initPN532Reader(rfid1, PN532_1_SS, PN532_1_RST, "PN532-1");
-            digitalWrite(PN532_1_SS, HIGH);
+            if (PN532_1_SS != 255) digitalWrite(PN532_1_SS, HIGH);
         } else {
             Serial.println("[RFID] skipping PN532-1 by config");
         }
@@ -12261,7 +12319,7 @@ void setupRFID() {
             if (wantRight) digitalWrite(PN532_1_RST, LOW);
             delay(5);
             ok2 = initPN532Reader(rfid2, PN532_2_SS, PN532_2_RST, "PN532-2");
-            digitalWrite(PN532_2_SS, HIGH);
+            if (PN532_2_SS != 255) digitalWrite(PN532_2_SS, HIGH);
         } else {
             Serial.println("[RFID] skipping PN532-2 by config");
         }
@@ -12299,8 +12357,8 @@ void setupRFID() {
             digitalWrite(PN532_2_RST, LOW);
         }
     } else {
-        digitalWrite(PN532_1_SS, HIGH);
-        digitalWrite(PN532_2_SS, HIGH);
+        if (PN532_1_SS != 255) digitalWrite(PN532_1_SS, HIGH);
+        if (PN532_2_SS != 255) digitalWrite(PN532_2_SS, HIGH);
         if (ok1 && ok2) {
             digitalWrite(PN532_1_RST, HIGH);
             digitalWrite(PN532_2_RST, HIGH);
@@ -13358,8 +13416,8 @@ bool otaFetchLatest() {
     filter["version"]      = true;
     filter["littlefs_url"] = true;
     filter["littlefs_sha"] = true;
-#if TS_BOARD_NONB
-    // A -3.5 takes its firmware from its own section of the manifest, and has
+#if TS_BOARD_NONB || TS_BOARD_JC3248
+    // Other boards take firmware from their own section of the manifest, with
     // NO fallback to the flat keys. That is deliberate: the flat keys describe
     // the -3.5B build, and a -3.5 that installed it would come up with a black
     // screen and no way to say why.
@@ -13382,7 +13440,7 @@ bool otaFetchLatest() {
     }
 
     gOtaLatestVer   = String(doc["version"]      | "");
-#if TS_BOARD_NONB
+#if TS_BOARD_NONB || TS_BOARD_JC3248
     JsonVariantConst board = doc["boards"][TIGERSCALE_BOARD_ID];
     if (board.isNull()) {
         Serial.printf("[OTA] fetch: manifest carries no entry for board %s\n",
@@ -15569,7 +15627,7 @@ void setup() {
         // Canvas handles rotation — no setRotation() needed here
         applyBrightness(gBrightness); // backlight on, at the saved brightness
         Serial.printf("[LCD] begin OK w=%d h=%d\n", gfx->width(), gfx->height());
-        setupTouchI2C();  // AXS5106L @0x3B (-3.5B) or FT6336 @0x38 (-3.5), both on Wire1
+        setupTouchI2C();  // board-specific touch controller on Wire1
         _touchI2CReady = true;
         // Scan the bus that is actually wired, now that it has been begun. This
         // enumerates the touch controller (0x3B), the AXP2101 PMIC (0x34), the

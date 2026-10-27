@@ -38,11 +38,11 @@
 //   mDNS                                                 11729-11766
 //   SCALE                                                11767-11937
 //   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11938-12055
-//   RFID                                                 12056-12992
-//   OTA — Over-the-air firmware + filesystem update    12993-13672
-//   LVGL bridge + main weigh screen                      13673-14612
-//   Remote live view: the screen out, taps back in       14613-15462
-//   SETUP & LOOP                                         15463-16628
+//   RFID                                                 12056-13097
+//   OTA — Over-the-air firmware + filesystem update    13098-13777
+//   LVGL bridge + main weigh screen                      13778-14717
+//   Remote live view: the screen out, taps back in       14718-15567
+//   SETUP & LOOP                                         15568-16745
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -12056,11 +12056,78 @@ static void playSoundTheme() {
 // §24 — RFID
 // ============================================================================
 
+// Uppercases a chip UID. An inventory id that is not hex (a chipless spool,
+// "TigerData_6967036161", reached through a linked chip) is a Firestore doc id
+// whose case matters, so it is returned trimmed but otherwise untouched.
 static String normalizeUidHex(const String& uid) {
     String s = uid;
     s.trim();
+    for (size_t i = 0; i < s.length(); i++) {
+        if (!isxdigit((unsigned char)s[i])) return s;
+    }
     s.toUpperCase();
     return s;
+}
+
+// -- Linked chips -------------------------------------------------------------
+// A maker's MIFARE Classic chip (Bambu Lab, Creality CFS...) carries a 4-byte
+// UID and memory the scale cannot read as a TigerTag. Tiger Studio links such a
+// chip to a spool of the inventory in users/{uid}/rfidAliases/{UID_HEX}, whose
+// spoolId names the inventory doc. resolveLinkedChipUid() turns a scanned UID
+// into that spoolId once, where the UID enters the weighing pipeline, so the
+// metadata, container, twin, weight write and cloud sync all use the spool's
+// own id. A 7-byte TigerTag UID is returned as is without any lookup.
+struct LinkedChipEntry {
+    String   spoolId;     // empty = no link known
+    uint32_t checkedMs;
+};
+static std::map<String, LinkedChipEntry> gLinkedChipCache;
+static const uint32_t LINKED_CHIP_NEG_RETRY_MS = 60000;    // a link just made in Studio
+static const uint32_t LINKED_CHIP_POS_TTL_MS   = 600000;   // a link removed in Studio
+
+static String resolveLinkedChipUid(const String& uidHex) {
+    if (uidHex.length() != 8) return uidHex;   // only 4-byte UIDs can be linked chips
+
+    auto it = gLinkedChipCache.find(uidHex);
+    if (it != gLinkedChipCache.end()) {
+        uint32_t age = millis() - it->second.checkedMs;
+        uint32_t ttl = it->second.spoolId.length() ? LINKED_CHIP_POS_TTL_MS : LINKED_CHIP_NEG_RETRY_MS;
+        if (age < ttl) return it->second.spoolId.length() ? it->second.spoolId : uidHex;
+    }
+    if (firebaseIdToken.length() == 0 || firebaseUid.length() == 0 || !WiFi.isConnected()) {
+        // Offline: keep a known link rather than drop it; never cache a guess.
+        return (it != gLinkedChipCache.end() && it->second.spoolId.length()) ? it->second.spoolId : uidHex;
+    }
+
+    String url = "https://firestore.googleapis.com/v1/projects/tigertag-connect/databases/(default)/documents/"
+                 "users/" + firebaseUid + "/rfidAliases/" + uidHex + "?mask.fieldPaths=spoolId";
+    HTTPClient http;
+    http.setTimeout(4000);
+    if (!http.begin(url)) return uidHex;
+    http.addHeader("Authorization", "Bearer " + firebaseIdToken);
+    int code = http.GET();
+    String resp = (code == 200) ? http.getString() : String();
+    http.end();
+
+    String spoolId;
+    if (code == 200) {
+        DynamicJsonDocument doc(768);
+        if (!deserializeJson(doc, resp)) {
+            spoolId = doc["fields"]["spoolId"]["stringValue"] | "";
+            spoolId.trim();
+        }
+        // The id is spliced into Firestore paths and URLs: anything beyond
+        // [A-Za-z0-9_-] (a '/', '?', '%'...) is refused rather than escaped.
+        for (size_t i = 0; i < spoolId.length(); i++) {
+            char c = spoolId[i];
+            if (!isalnum((unsigned char)c) && c != '_' && c != '-') { spoolId = ""; break; }
+        }
+    }
+    // A transport error is cached like a 404: retrying it on every poll would
+    // block loop() on HTTPS each time the chip is seen.
+    gLinkedChipCache[uidHex] = { spoolId, millis() };
+    netLog("[ALIAS] uid=" + uidHex + " HTTP=" + String(code) + " spool=" + (spoolId.length() ? spoolId : String("none")));
+    return spoolId.length() ? spoolId : uidHex;
 }
 
 
@@ -12670,17 +12737,29 @@ String readRFIDFromReaderStable(PN532Reader &reader, String &uidHexOut, const ch
     return hexStr;
 }
 
+// NVS keys are at most 15 characters. A chip UID (14 hex chars) is its own
+// key, as it always was; a longer inventory id ("TigerData_6967036161",
+// reached through a linked chip) is keyed by a 32-bit FNV-1a hash of itself.
+static String metaNvsKey(const String& uid) {
+    if (uid.length() <= 15) return uid;
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < uid.length(); i++) { h ^= (uint8_t)uid[i]; h *= 16777619u; }
+    char key[12];
+    snprintf(key, sizeof(key), "h%08lX", (unsigned long)h);
+    return String(key);
+}
+
 static void saveMetaCacheToNVS(const String& uid, const MetadataCache& m) {
     String val = m.mfr + "|" + m.mat + "|" + m.col + "|" + String(m.productId);
     prefs.begin("metacache", false);
-    prefs.putString(uid.c_str(), val.c_str());
+    prefs.putString(metaNvsKey(uid).c_str(), val.c_str());
     prefs.end();
     netLog("[META] NVS+ uid=" + uid + " mfr=" + m.mfr);
 }
 
 static bool loadMetaCacheFromNVS(const String& uid) {
     prefs.begin("metacache", true);
-    String val = prefs.getString(uid.c_str(), "");
+    String val = prefs.getString(metaNvsKey(uid).c_str(), "");
     prefs.end();
     if (val.length() == 0) return false;
     int p1 = val.indexOf('|');
@@ -12794,7 +12873,33 @@ static bool fetchMetaFromFirestore(const String& uidHex) {
     return true;
 }
 
+// True when uidHex is an inventory id reached through a linked chip: the chip
+// in the field is a maker's MIFARE Classic, with no TigerTag pages to read.
+static bool isLinkedSpoolId(const String& uidHex) {
+    for (const auto& kv : gLinkedChipCache)
+        if (kv.second.spoolId.length() && kv.second.spoolId == uidHex) return true;
+    return false;
+}
+
 static void readTigerTagMetadata(PN532Reader &reader, const String& uidHex) {
+    // A linked spool's brand, material and colour live only in its inventory
+    // doc, which Studio can change at any time: read it fresh, and fall back
+    // to the cache only when Firestore cannot be reached.
+    if (isLinkedSpoolId(uidHex)) {
+        if (!fetchMetaFromFirestore(uidHex)) {
+            auto cIt = gMetaCache.find(uidHex);
+            if (cIt == gMetaCache.end() && loadMetaCacheFromNVS(uidHex)) cIt = gMetaCache.find(uidHex);
+            if (cIt != gMetaCache.end()) {
+                gLastManufacturer = cIt->second.mfr;
+                gLastMaterial     = cIt->second.mat;
+                if (!cIt->second.col.isEmpty()) gLastColor = cIt->second.col;
+            }
+        }
+        netLog("[META] linked uid=" + uidHex + " mfr=" + gLastManufacturer + " mat=" + gLastMaterial);
+        finishRfidSession(reader);
+        return;
+    }
+
     dumpTigerTagPages(reader, uidHex);
 
     uint8_t data[16];
@@ -15966,6 +16071,10 @@ void loop() {
             } else if (hwRfidSide == 0 && canPollLeft) {
                 uid2Hex = readRFIDFromReaderTestStyle(rfid2, uid2Hex, "LEFT", nullptr);
             }
+            // A linked chip (4-byte UID) becomes the spool's inventory id here,
+            // before anything else sees it.
+            if (uid1Hex.length() > 0) uid1Hex = resolveLinkedChipUid(uid1Hex);
+            if (uid2Hex.length() > 0) uid2Hex = resolveLinkedChipUid(uid2Hex);
 
             if (uid1Hex.length() == 0 && uid2Hex.length() == 0 && millis() - lastRfidDiagMs >= 3000) {
                 lastRfidDiagMs = millis();
@@ -16046,6 +16155,12 @@ void loop() {
                 uid2Hex = pollRFIDReader(rfid2, uid2Hex, PN532_2_SS, PN532_2_RST, "LEFT", gRfid2TimeoutStreak);
             }
         }
+
+        // A linked chip (4-byte UID) becomes the spool's inventory id here, before
+        // dedup, latch and lastUID see it: both flange chips of one spool then
+        // resolve to the same id, so the second is a repeat, never a twin pair.
+        if (uid1Hex.length() > 0) uid1Hex = resolveLinkedChipUid(uid1Hex);
+        if (uid2Hex.length() > 0) uid2Hex = resolveLinkedChipUid(uid2Hex);
 
         if (uid1Hex.length() > 0 && !isLikelyTigerTagUidHex(uid1Hex)) {
             RFID_DEBUG_PRINTF("[RFID] Non-TigerTag UID1 detected: %s\n", uid1Hex.c_str());
@@ -16166,6 +16281,7 @@ void loop() {
                 String rfid2UidOut;
                 bool rfid2Fail = false;
                 String foundUid = readRFIDFromReaderTestStyle(rfid2, rfid2UidOut, "LEFT_FB", &rfid2Fail);
+                if (foundUid.length() > 0) foundUid = resolveLinkedChipUid(foundUid);
                 if (foundUid.length() > 0) {
                     Serial.printf("[META] Left reader found uid=%s, reading metadata\n", foundUid.c_str());
                     readTigerTagMetadata(rfid2, foundUid);
@@ -16209,6 +16325,7 @@ void loop() {
                 String rfid1UidOut;
                 bool rfid1Fail = false;
                 String foundUid = readRFIDFromReaderTestStyle(rfid1, rfid1UidOut, "RIGHT_FB", &rfid1Fail);
+                if (foundUid.length() > 0) foundUid = resolveLinkedChipUid(foundUid);
                 if (foundUid.length() > 0) {
                     Serial.printf("[META] Right reader found uid=%s, reading metadata\n", foundUid.c_str());
                     readTigerTagMetadata(rfid1, foundUid);

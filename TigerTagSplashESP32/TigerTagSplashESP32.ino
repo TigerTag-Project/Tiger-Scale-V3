@@ -1118,10 +1118,11 @@ static const PN532RfLevel PN532_RF_LEVELS[] = {
     { 0x20, 0x08, 0x02, 0xD },
     { 0x30, 0x0C, 0x03, 0xC },
     { 0x40, 0x10, 0x04, 0xB }, // 4: former level 1 endpoint
+    { 0xF4, 0x3F, 0x11, 0x8 }, // 5: PN532 datasheet reset values (full TX drive, default RxThreshold)
 };
 static const uint8_t PN532_RF_LEVEL_COUNT = sizeof(PN532_RF_LEVELS) / sizeof(PN532_RF_LEVELS[0]);
 
-uint8_t gRfidPowerLevel = 3; // index into PN532_RF_LEVELS, adjustable live from the Hardware/RFID Test screen
+uint8_t gRfidPowerLevel = 5; // index into PN532_RF_LEVELS, adjustable live from the Hardware/RFID Test screen
 
 // Sent through Adafruit_PN532's public sendCommandCheckAck(), no library
 // patch needed. Baseline payload byte-for-byte confirmed against dotnet/
@@ -1129,7 +1130,27 @@ uint8_t gRfidPowerLevel = 3; // index into PN532_RF_LEVELS, adjustable live from
 // reset values); RFCfg (RxGain, bits 6:4) is left at that datasheet default
 // (0x59) at every level -- another lever to pull later if levels 0-4 aren't
 // enough on their own.
-static void applyPN532RfTuning(Adafruit_PN532 &pn532, uint8_t level) {
+// Adafruit_PN532 reads only the ACK of RFConfiguration / SetParameters-style
+// commands (sendCommandCheckAck); the command's own response frame stays in the
+// UART RX buffer. On HSU the next readPassiveTargetID() then parses that stale
+// frame as its ACK, fails at once, and every poll after it is shifted by one
+// frame -- the reader answers but never returns a UID (hundreds of failed polls
+// per second instead of ~tens). Discard it after each such command. I2C/SPI
+// pass no serial port and are unaffected.
+static void drainPn532Uart(HardwareSerial *ser) {
+    if (!ser) return;
+    delay(40);
+    while (ser->available()) ser->read();
+}
+
+// Same, without waiting: for the start of a command, when anything already in the
+// RX buffer is by definition left over from the previous exchange.
+static void flushPn532Rx(HardwareSerial *ser) {
+    if (!ser) return;
+    while (ser->available()) ser->read();
+}
+
+static void applyPN532RfTuning(Adafruit_PN532 &pn532, uint8_t level, HardwareSerial *ser = nullptr) {
     if (level >= PN532_RF_LEVEL_COUNT) level = PN532_RF_LEVEL_COUNT - 1;
     const PN532RfLevel &lv = PN532_RF_LEVELS[level];
     uint8_t cmd[13] = {
@@ -1156,10 +1177,15 @@ static void applyPN532RfTuning(Adafruit_PN532 &pn532, uint8_t level) {
     // serial log showed "no ACK (kept previous config)" on every single call,
     // so the RF power level chosen in Settings -> Hardware was never actually
     // applied to either reader. The setting moved, the radio did not.
+    flushPn532Rx(ser);
     delay(20);
-    if (!pn532.sendCommandCheckAck(cmd, sizeof(cmd), 500)) {
+    bool acked = pn532.sendCommandCheckAck(cmd, sizeof(cmd), 500);
+    drainPn532Uart(ser);
+    if (!acked) {
         delay(40);
-        if (!pn532.sendCommandCheckAck(cmd, sizeof(cmd), 500)) {
+        acked = pn532.sendCommandCheckAck(cmd, sizeof(cmd), 500);
+        drainPn532Uart(ser);
+        if (!acked) {
             netLog("RFTUNE L" + String(level) + " no ACK (kept previous config)");
             return;
         }
@@ -1193,11 +1219,17 @@ public:
         // last-configured pins when none are given, so this explicit call
         // has to run first to actually land on _rxPin/_txPin.
         _serial.begin(115200, SERIAL_8N1, _rxPin, _txPin);
+        // Adafruit_PN532 reads replies with Stream::readBytes(), which waits the
+        // stream timeout (1000 ms by default) for every byte it asked for. A reply
+        // for a 4-byte UID is 19 bytes but readdata() asks for 20, so each
+        // successful read of a MIFARE Classic tag stalled for a full second.
+        _serial.setTimeout(50);
         _pn532.begin();
         if (_pn532.getFirmwareVersion() == 0) return false;
         _pn532.SAMConfig();
-        applyPN532RfTuning(_pn532, gRfidPowerLevel);
+        applyPN532RfTuning(_pn532, gRfidPowerLevel, &_serial);
         _pn532.setPassiveActivationRetries(1);
+        drainPn532Uart(&_serial);  // its response frame is not read by the library either
         return true;
     }
 
@@ -1205,7 +1237,14 @@ public:
 
     bool isNewCardPresent() {
         uint8_t len = 0;
+        // Anything still in the RX buffer is left over from the previous poll.
+        flushPn532Rx(&_serial);
         bool ok = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.uidByte, &len, 30);
+        // readDetectedPassiveTargetID() reads a fixed 20 bytes, but the reply is
+        // 19 bytes for a 4-byte UID and 22 for a 7-byte one (every NTAG/TigerTag).
+        // The 2 bytes it leaves behind were parsed as the next command's ACK, so
+        // after the first good read of a 7-byte tag every poll failed at once.
+        if (ok) { delay(3); flushPn532Rx(&_serial); }
         // An ISO14443A UID is 4, 7 or 10 bytes, and uidByte is sized for 10.
         // The library reports whatever length the frame claimed, and a corrupted
         // read has been seen claiming about 250: the hex loops in §24 then ran
@@ -1235,7 +1274,7 @@ public:
     void antennaOff() { _fieldOn = false; }
     // Re-applies RF power/sensitivity live (no re-init needed) -- used by
     // the Hardware/RFID Test screen's "Pot:" stepper.
-    void applyRfPower(uint8_t level) { applyPN532RfTuning(_pn532, level); }
+    void applyRfPower(uint8_t level) { applyPN532RfTuning(_pn532, level, &_serial); }
 
     // Send a raw frame and stop at the ACK, deliberately without reading the
     // response. TgInitAsTarget only answers once an initiator activates the
@@ -15620,8 +15659,8 @@ void setup() {
     servoEnabled         = prefs.getBool("servoEnabled",   false);
     hwRfidCount          = prefs.getUChar("hwRfidCnt",     1);
     hwRfidSide           = prefs.getUChar("hwRfidSide",    1);
-    gRfidPowerLevel      = prefs.getUChar("rfidPower",     3);
-    if (gRfidPowerLevel >= PN532_RF_LEVEL_COUNT) gRfidPowerLevel = 3;
+    gRfidPowerLevel      = prefs.getUChar("rfidPower",     5);
+    if (gRfidPowerLevel >= PN532_RF_LEVEL_COUNT) gRfidPowerLevel = 5;
     hwMotorConnected     = prefs.getBool("hwMotorConn",    false);
     hwMotorSpeed         = prefs.getUChar("hwMotorSpd",    0);
     if (hwMotorSpeed > 5) hwMotorSpeed = 0;

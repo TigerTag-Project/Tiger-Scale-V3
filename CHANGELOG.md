@@ -12,7 +12,23 @@ scaffold's placeholder text.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **HSU reader stops returning UIDs after the first read of a 7-byte tag (NTAG /
+  TigerTag).** `Adafruit_PN532` reads a fixed 20 bytes of the `InListPassiveTarget`
+  reply, which is 22 bytes for a 7-byte UID; the 2 left in the UART were parsed as the
+  next command's ACK, so every following poll failed at once. The RX buffer is now
+  flushed before each poll and after each good read. The reply frames of
+  `RFConfiguration` and `setPassiveActivationRetries`, which the library also does not
+  read, are drained the same way.
+- **HSU: a 4-byte UID read stalled for a full second.** The same 20-byte read waits
+  for a 20th byte that a 19-byte reply never sends, so it ran into the stream's
+  default 1000 ms timeout. The reader's serial port now uses a 50 ms timeout.
+
+### Changed
+
+- RF power level 5 added (PN532 datasheet reset values) and made the default. Units
+  with a level already stored in NVS keep it.
 
 ## [v3.11.0](docs/release-notes/v3.11.0.md)
 

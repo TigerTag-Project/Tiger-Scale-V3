@@ -54,6 +54,12 @@ against the hardware. Prefer them over inference.
   the 32-byte reserved area: free for community use on a standard tag, carrying an
   origin signature on a TigerTag+. That signature is issued under a private key held
   by TigerTag, verifiable offline with no account, and a cloned tag fails the check.
+- **A maker's own chip (Bambu Lab, Creality CFS: MIFARE Classic, 4-byte UID) is
+  weighed only once Tiger Studio has linked it to a spool.** The scale looks the
+  UID up in `users/{uid}/rfidAliases/{UID_HEX}` and from then on uses that
+  spool's inventory id; nothing is ever written into the chip. An unlinked one
+  is just an unknown UID. The PN532 reads it only when it sits in front of an
+  antenna, so a spool sometimes has to be turned.
 - **Firmware and web UI are two separate flash images** in two partitions, so an
   update writes both — filesystem first, because the firmware write reboots. It is
   one update from the user's point of view.
@@ -88,7 +94,7 @@ You do not have to photograph the device to see its screen. `GET /screen.bmp`
 returns what LVGL last drew, 480x320, and `GET /api/tap?x=&y=` presses the panel
 (add `x2`/`y2` for a swipe); the tap answers only once the screen has finished
 changing, so the two chain without a delay. Neither needs setup or an access
-code. Settings -> LAN -> Live view is the real-time stream, for watching rather
+code. Settings -> Live view is the real-time stream, for watching rather
 than checking.
 
 ## Ecosystem
@@ -100,7 +106,7 @@ than checking.
 
 ---
 
-_This summary was reviewed against firmware v3.10.0._ It is re-read and re-affirmed
+_This summary was reviewed against firmware v3.11.0._ It is re-read and re-affirmed
 at every version bump rather than left to age: the facts below describe a specific
 build, and the one that cost this project a session — which build environment is
 the right one — is exactly the kind that changes between releases.

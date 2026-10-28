@@ -11,7 +11,7 @@ readers, an HX711 load-cell amplifier, an AXP2101 PMIC and an ES8311 audio codec
 The two variants share a netlist and differ on one GPIO, but their panel
 controllers differ — AXS15231B over QSPI on the B, ST7796 over SPI on the other —
 so the board is a build-time choice and the wrong image is a black screen with no
-diagnostic. One Arduino C++ file of about 16 500 lines, built with PlatformIO.
+diagnostic. One Arduino C++ file of about 17 200 lines, built with PlatformIO.
 MIT licensed.
 
 Maintained by the TigerTag Project. Repository:
@@ -81,7 +81,7 @@ against the hardware. Prefer them over inference.
 - [AGENTS.md](https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/AGENTS.md): tool-agnostic conventions
 - [CLAUDE.md](https://github.com/TigerTag-Project/Tiger-Scale-V3/blob/main/CLAUDE.md): the Claude-specific superset
 
-Do not read the firmware file whole — it is about 16 500 lines. Find the target in
+Do not read the firmware file whole — it is about 17 200 lines. Find the target in
 CODEMAP.md, grep the name, read that region.
 
 One command runs every check CI runs, and it must pass before any change is
@@ -106,7 +106,7 @@ than checking.
 
 ---
 
-_This summary was reviewed against firmware v3.11.0._ It is re-read and re-affirmed
+_This summary was reviewed against firmware v3.12.0._ It is re-read and re-affirmed
 at every version bump rather than left to age: the facts below describe a specific
 build, and the one that cost this project a session — which build environment is
 the right one — is exactly the kind that changes between releases.

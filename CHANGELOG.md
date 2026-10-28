@@ -12,8 +12,13 @@ scaffold's placeholder text.
 
 ## [Unreleased]
 
-### Fixed
+Nothing yet.
 
+## [v3.12.0](docs/release-notes/v3.12.0.md)
+
+See the release notes for the full entry.
+
+### Fixed
 - **HSU reader stops returning UIDs after the first read of a 7-byte tag (NTAG /
   TigerTag).** `Adafruit_PN532` reads a fixed 20 bytes of the `InListPassiveTarget`
   reply, which is 22 bytes for a 7-byte UID; the 2 left in the UART were parsed as the
@@ -24,11 +29,31 @@ scaffold's placeholder text.
 - **HSU: a 4-byte UID read stalled for a full second.** The same 20-byte read waits
   for a 20th byte that a 19-byte reply never sends, so it ran into the stream's
   default 1000 ms timeout. The reader's serial port now uses a 50 ms timeout.
+- **A scale could come up half-blind and stay that way.** `setupRFID()` judged a
+  reader present by asking for its firmware version -- a query the firmware's own
+  comment says is not a presence test -- and wrote that verdict to NVS, so one
+  flaky boot made the scale single-reader for good. A reader the probe cannot
+  reach is now unproven rather than absent: polled once a second instead of every
+  cycle, and promoted the instant it reads a tag. The stored reader count records
+  whether it was inferred or chosen by the owner.
+- **A reader that failed the version query ran unconfigured.** `init()` returned
+  before `SAMConfig()`, the RF tuning and `setPassiveActivationRetries()`, and the
+  PN532's reset analog values are the top of the level table -- so unconfigured
+  meant maximum drive, with a second antenna 75 mm away facing it.
+- Reader bring-up gets three attempts with the reset pulse outside the retry loop,
+  a 250 ms window for the version query, and the link drained until quiet before a
+  configuration command. `RFTUNE` no longer reports a configuration failure that
+  did not happen.
+
+### Added
+- **Auto-calibration of RF power** (Settings > RFID > Auto). Sweeps every level
+  with a tagged spool in place and keeps the one giving the weaker reader its best
+  result, in two passes so the answer is repeatable. Each level is logged.
 
 ### Changed
-
-- RF power level 5 added (PN532 datasheet reset values) and made the default. Units
-  with a level already stored in NVS keep it.
+- RF power range widened from 5 levels to 16, from zero drive to the PN532's
+  datasheet reset values. The default is unchanged; units with a level already
+  stored in NVS keep it.
 
 ## [v3.11.0](docs/release-notes/v3.11.0.md)
 

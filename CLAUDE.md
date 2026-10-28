@@ -24,7 +24,7 @@ spool's weight and syncs the net filament weight to the owner's TigerTag account
 - **Weighing** — HX711 + load cell
 - **Power** — USB; AXP2101 PMIC reports level and charge state for the optional battery
 - **Audio** — ES8311 codec (beep on tag detect)
-- **Source** — one Arduino C++ file, about 16 500 lines, plus `i18n.h`
+- **Source** — one Arduino C++ file, about 17 200 lines, plus `i18n.h`
 - **Build** — PlatformIO only (see below for why the Arduino IDE cannot build it)
 
 ## Non-negotiables
@@ -36,7 +36,7 @@ spool's weight and syncs the net filament weight to the owner's TigerTag account
 | Never use `ps_malloc` | Returns null silently. Use `heap_caps_malloc(n, MALLOC_CAP_SPIRAM)` with a DRAM fallback. |
 | Keep `ARDUINO_USB_CDC_ON_BOOT=1` | Without it `Serial.println()` is invisible on the USB-C port; only `log_e()` gets through |
 | Never flash `firmware.factory.bin` at `0x0000` | It is a merged image spanning 0x0000 upward, so it overwrites NVS (0x9000–0xE000) and wipes saved WiFi + Firebase credentials. `scripts/flash.sh` writes each image at its own offset and preserves them. |
-| Read [`CODEMAP.md`](CODEMAP.md) before opening the .ino | It is about 16 500 lines. Reading it whole wastes the context the actual task needs. |
+| Read [`CODEMAP.md`](CODEMAP.md) before opening the .ino | It is about 17 200 lines. Reading it whole wastes the context the actual task needs. |
 | Finish with `bash scripts/verify.sh` | It runs everything CI runs. Skipping only moves the failure to the push. |
 
 ## Working in the .ino
@@ -280,7 +280,7 @@ you want to watch; reach for the two requests above when you want to check.
 
 ## i18n
 
-`TigerTagSplashESP32/i18n.h` — **117 keys × 11 languages** (EN/PT/FR/ES/DE/ZH/IT/PL/PT-PT/RU/NL — Studio Manager's exact list).
+`TigerTagSplashESP32/i18n.h` — **120 keys × 11 languages** (EN/PT/FR/ES/DE/ZH/IT/PL/PT-PT/RU/NL — Studio Manager's exact list).
 
 1. Add the key to the enum, before `I18N_COUNT`.
 2. Add one entry to **every** language block, in the same order as the enum.

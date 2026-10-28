@@ -1,6 +1,6 @@
 # CODEMAP — TigerTagSplashESP32.ino
 
-Navigation map for the firmware's single **~16 500-line** source file. Never read
+Navigation map for the firmware's single **~17 200-line** source file. Never read
 it whole; that is the entire point of this document.
 
 **The workflow, every time:**

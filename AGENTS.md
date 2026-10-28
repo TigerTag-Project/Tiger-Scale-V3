@@ -5,7 +5,7 @@ Tool-agnostic conventions for this repository. If you are Claude Code, read
 
 ## The one rule that matters most
 
-**The firmware is a single ~16 500-line file. Never read it whole.**
+**The firmware is a single ~17 200-line file. Never read it whole.**
 
 ```
 1. Open CODEMAP.md, find the section or function by name
@@ -24,7 +24,7 @@ for it.
 | Path | What it is |
 |------|-----------|
 | `TigerTagSplashESP32/TigerTagSplashESP32.ino` | All firmware. 26 numbered sections plus §AUDIO and §LVGL. |
-| `TigerTagSplashESP32/i18n.h` | Every on-device UI string: 117 keys × 11 languages |
+| `TigerTagSplashESP32/i18n.h` | Every on-device UI string: 120 keys × 11 languages |
 | `TigerTagSplashESP32/logo_*.h`, `icon_bolt.h` | Pre-rasterised RGB565 bitmaps |
 | `include/lv_conf.h` | LVGL v8.4 configuration (found via `-I include`) |
 | `data/www/` | Web UI served from LittleFS |

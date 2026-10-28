@@ -149,6 +149,9 @@ enum LangKey : uint8_t {
     I18N_POWER_OFF_NEEDS_BATT,
     I18N_UNIT_MIN,
     I18N_UNIT_HOUR,
+    I18N_RFID_AUTO,
+    I18N_RFID_AUTO_HINT,
+    I18N_RFID_AUTO_BEST,
     I18N_COUNT,
 };
 
@@ -276,6 +279,9 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* POWER_OFF_NEEDS_BATT */ "Unplug the USB cable to switch your TigerScale off.",
           /* UNIT_MIN         */ "min",
           /* UNIT_HOUR        */ "h",
+          /* RFID_AUTO       */ "Auto",
+          /* RFID_AUTO_HINT  */ "Both readers must be on, with a tagged spool in place.",
+          /* RFID_AUTO_BEST  */ "Best level",
     },
     // PT (Brazilian Portuguese — Studio's "pt")
     {
@@ -397,6 +403,9 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* POWER_OFF_NEEDS_BATT */ "Desconecte o cabo USB para desligar a sua TigerScale.",
           /* UNIT_MIN         */ "min",
           /* UNIT_HOUR        */ "h",
+          /* RFID_AUTO       */ "Auto",
+          /* RFID_AUTO_HINT  */ "Os dois leitores devem estar ativos, com uma bobina etiquetada no lugar.",
+          /* RFID_AUTO_BEST  */ "Melhor nível",
     },
     // FR
     {
@@ -518,6 +527,9 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* POWER_OFF_NEEDS_BATT */ "Débranchez le câble USB pour éteindre votre TigerScale.",
           /* UNIT_MIN         */ "min",
           /* UNIT_HOUR        */ "h",
+          /* RFID_AUTO       */ "Auto",
+          /* RFID_AUTO_HINT  */ "Les deux lecteurs doivent être actifs, avec une bobine étiquetée en place.",
+          /* RFID_AUTO_BEST  */ "Meilleur niveau",
     },
     // ES
     {
@@ -639,6 +651,9 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* POWER_OFF_NEEDS_BATT */ "Desconecta el cable USB para apagar tu TigerScale.",
           /* UNIT_MIN         */ "min",
           /* UNIT_HOUR        */ "h",
+          /* RFID_AUTO       */ "Auto",
+          /* RFID_AUTO_HINT  */ "Ambos lectores deben estar activos, con una bobina etiquetada colocada.",
+          /* RFID_AUTO_BEST  */ "Mejor nivel",
     },
     // DE
     {
@@ -760,6 +775,9 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* POWER_OFF_NEEDS_BATT */ "USB-Kabel abziehen, um die TigerScale auszuschalten.",
           /* UNIT_MIN         */ "Min.",
           /* UNIT_HOUR        */ "Std.",
+          /* RFID_AUTO       */ "Auto",
+          /* RFID_AUTO_HINT  */ "Beide Leser müssen aktiv sein, mit einer getaggten Spule auf der Waage.",
+          /* RFID_AUTO_BEST  */ "Bestes Niveau",
     },
     // ZH (Han characters, not pinyin)
     // The glyphs come from a generated subset font — scripts/make-cjk-font.sh —
@@ -887,6 +905,9 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* POWER_OFF_NEEDS_BATT */ "拔下 USB 线以关闭 TigerScale。",
         /* UNIT_MIN         */ "分钟",
         /* UNIT_HOUR        */ "小时",
+        /* RFID_AUTO       */ "自动",
+        /* RFID_AUTO_HINT  */ "两个读卡器都需启用，并放上带标签的料盘。",
+        /* RFID_AUTO_BEST  */ "最佳等级",
     },
     // IT
     {
@@ -1008,6 +1029,9 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* POWER_OFF_NEEDS_BATT */ "Scollega il cavo USB per spegnere la tua TigerScale.",
           /* UNIT_MIN         */ "min",
           /* UNIT_HOUR        */ "h",
+          /* RFID_AUTO       */ "Auto",
+          /* RFID_AUTO_HINT  */ "Entrambi i lettori devono essere attivi, con una bobina etichettata.",
+          /* RFID_AUTO_BEST  */ "Livello migliore",
     },
     // PL
     {
@@ -1129,6 +1153,9 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
           /* POWER_OFF_NEEDS_BATT */ "Odłącz kabel USB, aby wyłączyć TigerScale.",
           /* UNIT_MIN         */ "min",
           /* UNIT_HOUR        */ "godz.",
+          /* RFID_AUTO       */ "Auto",
+          /* RFID_AUTO_HINT  */ "Oba czytniki muszą być aktywne, ze szpulą z tagiem na wadze.",
+          /* RFID_AUTO_BEST  */ "Najlepszy poziom",
     },
     // PT-PT (European Portuguese — Studio's "pt-pt")
     {
@@ -1250,6 +1277,9 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* POWER_OFF_NEEDS_BATT */ "Desligue o cabo USB para desligar a sua TigerScale.",
         /* UNIT_MIN         */ "min",
         /* UNIT_HOUR        */ "h",
+        /* RFID_AUTO       */ "Auto",
+        /* RFID_AUTO_HINT  */ "Os dois leitores têm de estar ativos, com uma bobine etiquetada.",
+        /* RFID_AUTO_BEST  */ "Melhor nível",
     },
     // RU (Russian — Studio's "ru")
     {
@@ -1371,6 +1401,9 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* POWER_OFF_NEEDS_BATT */ "Отключите USB-кабель, чтобы выключить TigerScale.",
         /* UNIT_MIN         */ "мин",
         /* UNIT_HOUR        */ "ч",
+        /* RFID_AUTO       */ "Авто",
+        /* RFID_AUTO_HINT  */ "Оба считывателя должны быть включены, с меткой на катушке.",
+        /* RFID_AUTO_BEST  */ "Лучший уровень",
     },
     // NL (Dutch — Studio's "nl")
     {
@@ -1492,6 +1525,9 @@ static const char* const kStrings[NUM_LANGS][I18N_COUNT] = {
         /* POWER_OFF_NEEDS_BATT */ "Koppel de USB-kabel los om je TigerScale uit te schakelen.",
         /* UNIT_MIN         */ "min",
         /* UNIT_HOUR        */ "u",
+        /* RFID_AUTO       */ "Auto",
+        /* RFID_AUTO_HINT  */ "Beide lezers moeten actief zijn, met een spoel met tag erop.",
+        /* RFID_AUTO_BEST  */ "Beste niveau",
     },
 };
 

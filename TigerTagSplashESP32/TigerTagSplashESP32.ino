@@ -17,32 +17,32 @@
 //   ---------------------------------------------------- -----------
 //   HARDWARE CONFIGURATION                                 258-  451
 //   OTA CONFIGURATION                                      452-  484
-//   FORWARD DECLARATIONS                                   485-  787
-//   WEIGHT ROUNDING                                        788-  807
-//   GLOBAL OBJECTS                                         808- 1469
-//   CONFIGURATION VARIABLES                               1470- 1889
-//   OLED DISPLAY                                          1890- 2667
-//   CLOUD PARSING                                         2668- 2682
-//   WIFI SETUP                                            2683- 7600
-//   LITTLEFS                                              7601- 7900
-//   FIREBASE AUTHENTICATION                               7901- 9583
-//   WEBSOCKET                                             9584- 9610
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9611- 9745
-//   UNIFIED WS FRAME BUILDER                              9746- 9870
-//   WEIGHT FILTER HELPERS                                 9871- 9885
-//   POST-SEND STATE RESET (shared by all send paths)      9886- 9906
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight)  9907-10010
-//   WEB SERVER                                           10011-11037
-//   CLOUD COMMUNICATION                                  11038-11220
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 11221-11728
-//   mDNS                                                 11729-11766
-//   SCALE                                                11767-11937
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  11938-12055
-//   RFID                                                 12056-13097
-//   OTA — Over-the-air firmware + filesystem update    13098-13777
-//   LVGL bridge + main weigh screen                      13778-14717
-//   Remote live view: the screen out, taps back in       14718-15567
-//   SETUP & LOOP                                         15568-16745
+//   FORWARD DECLARATIONS                                   485-  789
+//   WEIGHT ROUNDING                                        790-  809
+//   GLOBAL OBJECTS                                         810- 1642
+//   CONFIGURATION VARIABLES                               1643- 2072
+//   OLED DISPLAY                                          2073- 2850
+//   CLOUD PARSING                                         2851- 2865
+//   WIFI SETUP                                            2866- 7960
+//   LITTLEFS                                              7961- 8260
+//   FIREBASE AUTHENTICATION                               8261- 9943
+//   WEBSOCKET                                             9944- 9970
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9971-10105
+//   UNIFIED WS FRAME BUILDER                             10106-10230
+//   WEIGHT FILTER HELPERS                                10231-10245
+//   POST-SEND STATE RESET (shared by all send paths)     10246-10266
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight) 10267-10370
+//   WEB SERVER                                           10371-11399
+//   CLOUD COMMUNICATION                                  11400-11582
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 11583-12090
+//   mDNS                                                 12091-12128
+//   SCALE                                                12129-12299
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  12300-12417
+//   RFID                                                 12418-13500
+//   OTA — Over-the-air firmware + filesystem update    13501-14180
+//   LVGL bridge + main weigh screen                      14181-15120
+//   Remote live view: the screen out, taps back in       15121-15970
+//   SETUP & LOOP                                         15971-17205
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -499,6 +499,7 @@ String readRFIDFromReaderStable(PN532Reader &reader, String &uidHexOut, const ch
 String readRFIDUidOnly(PN532Reader &reader, String &uidHexOut);
 void   rfidAntennaSetAll(bool on);
 static void rfidSelectReader(uint8_t which);
+static bool initPN532Reader(PN532Reader &reader, uint8_t ssPin, uint8_t rstPin, const char *label);
 static void normalizeRfidHwConfig();
 bool pushWeightToCloud(float w);
 bool hasAnyDetectedUid();
@@ -559,6 +560,7 @@ static bool runAccountPairing(bool* wantsEmail);
 static bool runSignInForm();
 static void runLanSettings();
 static bool lvglConfirm(const char *question);
+static void lvglNotice(const char *msg);
 static void runScreenSettings();
 static bool otaFetchLatestPumping();
 static bool firebaseSignInWithCustomToken(const String& customToken);
@@ -1112,17 +1114,48 @@ HX711 scale;
 // full datasheet TX drive) are gone; if more range is ever needed above the
 // current index 4, re-derive from the deleted values in WORKLOG.md history.
 struct PN532RfLevel { uint8_t gsNOn, cwGsP, modGsP, rxThresholdMinLevel; };
+// How long the Auto sweep counts reads at each level. 1.2 s is the shortest
+// window that separated the levels reliably on the bench: at 600 ms the counts
+// of two neighbouring levels overlapped, and the sweep picked a different
+// winner on each run. Sixteen levels at 1.2 s is about twenty seconds, which is
+// long enough to need the progress display and short enough that nobody walks
+// away from it.
+static const uint32_t RFID_AUTO_DWELL_MS = 1200;
+// The confirmation pass's dwell, and how many levels reach it. Two seconds and
+// three finalists keep the whole calibration inside half a minute while giving
+// the decision twice the evidence pass 1 had.
+static const uint32_t RFID_AUTO_CONFIRM_DWELL_MS = 2400;
+static const uint8_t  RFID_AUTO_FINALISTS = 3;
+
 static const PN532RfLevel PN532_RF_LEVELS[] = {
     { 0x00, 0x00, 0x00, 0xF }, // 0: floor -- TX ~off, least sensitive
     { 0x10, 0x04, 0x01, 0xE },
     { 0x20, 0x08, 0x02, 0xD },
     { 0x30, 0x0C, 0x03, 0xC },
     { 0x40, 0x10, 0x04, 0xB }, // 4: former level 1 endpoint
-    { 0xF4, 0x3F, 0x11, 0x8 }, // 5: PN532 datasheet reset values (full TX drive, default RxThreshold)
+    // 5-15: the upper half, re-derived. The comment above says to recover the
+    // deleted values from WORKLOG.md history -- they are not there: the
+    // narrowing predates the first public commit, so there is nothing to
+    // recover and this is an interpolation, not a restoration. Same slope as
+    // 0-4 (GsNOn in steps of 0x10), CWGsP/ModGsP/RxThreshold interpolated
+    // linearly between index 4 and the datasheet reset values, which is index
+    // 15. Indices 0-4 are byte-for-byte unchanged, so a stored rfidPower and
+    // every earlier bench measurement still mean what they meant.
+    { 0x50, 0x14, 0x05, 0xB },
+    { 0x60, 0x19, 0x06, 0xA },
+    { 0x70, 0x1D, 0x07, 0xA },
+    { 0x80, 0x21, 0x08, 0xA },
+    { 0x90, 0x26, 0x0A, 0x9 },
+    { 0xA0, 0x2A, 0x0B, 0x9 },
+    { 0xB0, 0x2E, 0x0C, 0x9 },
+    { 0xC0, 0x33, 0x0D, 0x9 },
+    { 0xD0, 0x37, 0x0E, 0x8 },
+    { 0xE0, 0x3B, 0x10, 0x8 },
+    { 0xF4, 0x3F, 0x11, 0x8 }, // 15: PN532 datasheet reset values (full TX drive)
 };
 static const uint8_t PN532_RF_LEVEL_COUNT = sizeof(PN532_RF_LEVELS) / sizeof(PN532_RF_LEVELS[0]);
 
-uint8_t gRfidPowerLevel = 5; // index into PN532_RF_LEVELS, adjustable live from the Hardware/RFID Test screen
+uint8_t gRfidPowerLevel = 3; // index into PN532_RF_LEVELS, adjustable live from the Hardware/RFID Test screen
 
 // Sent through Adafruit_PN532's public sendCommandCheckAck(), no library
 // patch needed. Baseline payload byte-for-byte confirmed against dotnet/
@@ -1150,7 +1183,33 @@ static void flushPn532Rx(HardwareSerial *ser) {
     while (ser->available()) ser->read();
 }
 
-static void applyPN532RfTuning(Adafruit_PN532 &pn532, uint8_t level, HardwareSerial *ser = nullptr) {
+// Drain until the link has been quiet for a continuous window, rather than
+// until the buffer happens to be empty at this instant.
+//
+// One pass leaves behind a frame that is still arriving, and the next command
+// then reads those bytes where its own ACK should be. Every command after that
+// is one frame behind, for good: the byte-level trace of the bench unit's
+// right-hand reader showed its ACK arriving as "FF 00 FF 00 00 00" -- the real
+// ACK shifted two bytes -- and the following read picking up "FF 02 FE D5 33
+// F8", which is the *previous* command's response. The module was answering
+// every single command while the firmware scored every one of them "no ACK",
+// marked the reader absent and stopped polling it.
+//
+// Used where correctness is worth tens of milliseconds -- bring-up and
+// configuration -- never in the poll path, which runs flushPn532Rx().
+static void resyncPn532Uart(HardwareSerial *ser, uint16_t quietMs = 30, uint16_t maxMs = 300) {
+    if (!ser) return;
+    const uint32_t start = millis();
+    uint32_t lastByteMs = start;
+    while ((uint32_t)(millis() - start) < maxMs) {
+        if (ser->available()) { ser->read(); lastByteMs = millis(); }
+        else if ((uint32_t)(millis() - lastByteMs) >= quietMs) return;
+        else delay(1);
+    }
+}
+
+static void applyPN532RfTuning(Adafruit_PN532 &pn532, uint8_t level, const char *label,
+                               HardwareSerial *ser = nullptr) {
     if (level >= PN532_RF_LEVEL_COUNT) level = PN532_RF_LEVEL_COUNT - 1;
     const PN532RfLevel &lv = PN532_RF_LEVELS[level];
     uint8_t cmd[13] = {
@@ -1177,20 +1236,30 @@ static void applyPN532RfTuning(Adafruit_PN532 &pn532, uint8_t level, HardwareSer
     // serial log showed "no ACK (kept previous config)" on every single call,
     // so the RF power level chosen in Settings -> Hardware was never actually
     // applied to either reader. The setting moved, the radio did not.
-    flushPn532Rx(ser);
-    delay(20);
+    // The 500 ms below is not the real budget: readack() reads the ACK with
+    // readBytes(), which obeys the stream timeout instead. Leaving that at the
+    // 50 ms a tag read wants capped every attempt here at 50 ms, which is how
+    // the right-hand reader came to log "no ACK" on every single call while
+    // reading tags on the same link. Widen it for the command, put it back
+    // straight after so no read pays for it.
+    if (ser) ser->setTimeout(250);
+    resyncPn532Uart(ser);
     bool acked = pn532.sendCommandCheckAck(cmd, sizeof(cmd), 500);
-    drainPn532Uart(ser);
     if (!acked) {
-        delay(40);
+        resyncPn532Uart(ser);
         acked = pn532.sendCommandCheckAck(cmd, sizeof(cmd), 500);
-        drainPn532Uart(ser);
-        if (!acked) {
-            netLog("RFTUNE L" + String(level) + " no ACK (kept previous config)");
-            return;
-        }
     }
-    netLog("RFTUNE L" + String(level) + " applied");
+    drainPn532Uart(ser);
+    if (ser) ser->setTimeout(50);
+
+    // Note what this does and does not say. sendCommandCheckAck() writes the
+    // command before it checks anything, so the module has received these
+    // settings either way -- the ACK only says whether the reply was
+    // recognised. The log used to claim "kept previous config" here, which sent
+    // a whole session looking for a configuration failure that had not
+    // happened.
+    netLog("RFTUNE " + String(label) + " L" + String(level)
+           + (acked ? " applied" : " sent, ACK not recognised"));
 }
 
 #if RFID_TRANSPORT_HSU
@@ -1223,14 +1292,51 @@ public:
         // stream timeout (1000 ms by default) for every byte it asked for. A reply
         // for a 4-byte UID is 19 bytes but readdata() asks for 20, so each
         // successful read of a MIFARE Classic tag stalled for a full second.
-        _serial.setTimeout(50);
+        // 250 ms for the wake-up and the version query, 50 ms for everything
+        // after. The 50 ms budget is sized for a tag read on a module that is
+        // already awake and answering; the first command after a hard reset is
+        // not that, and the right-hand reader on the bench unit answered none
+        // of three version queries at 50 ms while reading tags perfectly a
+        // moment later. Charging every later read a second of latency to buy
+        // that margin is what the 50 ms is there to prevent, so the wider
+        // window closes again immediately.
+        _serial.setTimeout(250);
         _pn532.begin();
-        if (_pn532.getFirmwareVersion() == 0) return false;
+        // begin() sends the HSU wake-up preamble and the module answers it.
+        // Those bytes are nobody's ACK; left in the buffer they become the
+        // version query's, and the link never recovers.
+        resyncPn532Uart(&_serial);
+        const uint32_t ver = _pn532.getFirmwareVersion();
+        // Configure the module whatever the version query answered.
+        //
+        // Returning early here left the bench unit's right-hand reader running
+        // on its power-up defaults for an entire session: no SAMConfig, no RF
+        // tuning -- so the level chosen in Settings never reached it at all --
+        // and the library's default passive-activation retry count. The
+        // PN532's reset analog values are the top row of PN532_RF_LEVELS, so
+        // "unconfigured" means "maximum drive", which is the worst place to be
+        // with a second antenna 75 mm away facing it. It still read NTAG by
+        // brute force, which is why the fault stayed hidden, and could not read
+        // a MIFARE Classic at all. The version query decides what this function
+        // *reports*; it has no business deciding what the module is left
+        // holding.
         _pn532.SAMConfig();
-        applyPN532RfTuning(_pn532, gRfidPowerLevel, &_serial);
+        applyPN532RfTuning(_pn532, gRfidPowerLevel, "init", &_serial);
         _pn532.setPassiveActivationRetries(1);
         drainPn532Uart(&_serial);  // its response frame is not read by the library either
-        return true;
+
+        // Only now back down to the read budget. readack() collects the ACK
+        // with readBytes(), which is governed by the stream timeout and not by
+        // the timeout passed to sendCommandCheckAck -- so 50 ms was the real
+        // ceiling on every configuration command, not the 500 ms they asked
+        // for. 50 ms is right for reads and nothing else: it exists because
+        // readdata() asks for 20 bytes where a 4-byte-UID reply is 19, so every
+        // successful MIFARE Classic read waits out the timeout for a 20th byte
+        // that never comes. Paying that on a handful of setup commands costs
+        // nothing; paying 50 ms of ceiling on them cost both readers their RF
+        // configuration.
+        _serial.setTimeout(50);
+        return ver != 0;
     }
 
     uint32_t firmwareVersion() { return _pn532.getFirmwareVersion(); }
@@ -1274,7 +1380,7 @@ public:
     void antennaOff() { _fieldOn = false; }
     // Re-applies RF power/sensitivity live (no re-init needed) -- used by
     // the Hardware/RFID Test screen's "Pot:" stepper.
-    void applyRfPower(uint8_t level) { applyPN532RfTuning(_pn532, level, &_serial); }
+    void applyRfPower(uint8_t level, const char *label = "?") { applyPN532RfTuning(_pn532, level, label, &_serial); }
 
     // Send a raw frame and stop at the ACK, deliberately without reading the
     // response. TgInitAsTarget only answers once an initiator activates the
@@ -1338,11 +1444,25 @@ public:
     bool init() {
         if (!_isPrimary) return false;
         _pn532.begin();
-        if (_pn532.getFirmwareVersion() == 0) return false;
+        const uint32_t ver = _pn532.getFirmwareVersion();
+
+        // Configure the module whatever the version query answered.
+        //
+        // Returning early here left the bench unit's right-hand reader running
+        // on its power-up defaults for an entire session: no SAMConfig, no RF
+        // tuning -- so the level chosen in Settings never reached it at all --
+        // and the library's default passive-activation retry count. The
+        // PN532's reset analog values are the top row of PN532_RF_LEVELS, so
+        // "unconfigured" means "maximum drive", which is the worst place to be
+        // with a second antenna 75 mm away facing it. It still read NTAG by
+        // brute force, which is why the fault stayed hidden, and could not read
+        // a MIFARE Classic at all. The version query decides what this function
+        // *reports*; it has no business deciding what the module is left
+        // holding.
         _pn532.SAMConfig();
-        applyPN532RfTuning(_pn532, gRfidPowerLevel);
+        applyPN532RfTuning(_pn532, gRfidPowerLevel, "init");
         _pn532.setPassiveActivationRetries(1);
-        return true;
+        return ver != 0;
     }
 
     uint32_t firmwareVersion() { return _isPrimary ? _pn532.getFirmwareVersion() : 0; }
@@ -1373,7 +1493,7 @@ public:
     void antennaOff() { _fieldOn = false; }
     // Re-applies RF power/sensitivity live (no re-init needed) -- used by
     // the Hardware/RFID Test screen's "Pot:" stepper.
-    void applyRfPower(uint8_t level) { applyPN532RfTuning(_pn532, level); }
+    void applyRfPower(uint8_t level, const char *label = "?") { applyPN532RfTuning(_pn532, level, label); }
 
     // Send a raw frame and stop at the ACK, deliberately without reading the
     // response. TgInitAsTarget only answers once an initiator activates the
@@ -1422,11 +1542,25 @@ public:
 
     bool init() {
         _pn532.begin();
-        if (_pn532.getFirmwareVersion() == 0) return false;
+        const uint32_t ver = _pn532.getFirmwareVersion();
+
+        // Configure the module whatever the version query answered.
+        //
+        // Returning early here left the bench unit's right-hand reader running
+        // on its power-up defaults for an entire session: no SAMConfig, no RF
+        // tuning -- so the level chosen in Settings never reached it at all --
+        // and the library's default passive-activation retry count. The
+        // PN532's reset analog values are the top row of PN532_RF_LEVELS, so
+        // "unconfigured" means "maximum drive", which is the worst place to be
+        // with a second antenna 75 mm away facing it. It still read NTAG by
+        // brute force, which is why the fault stayed hidden, and could not read
+        // a MIFARE Classic at all. The version query decides what this function
+        // *reports*; it has no business deciding what the module is left
+        // holding.
         _pn532.SAMConfig();
-        applyPN532RfTuning(_pn532, gRfidPowerLevel);
+        applyPN532RfTuning(_pn532, gRfidPowerLevel, "init");
         _pn532.setPassiveActivationRetries(1);
-        return true;
+        return ver != 0;
     }
 
     uint32_t firmwareVersion() { return _pn532.getFirmwareVersion(); }
@@ -1467,7 +1601,7 @@ public:
     void antennaOff() { _fieldOn = false; }
     // Re-applies RF power/sensitivity live (no re-init needed) -- used by
     // the Hardware/RFID Test screen's "Pot:" stepper.
-    void applyRfPower(uint8_t level) { applyPN532RfTuning(_pn532, level); }
+    void applyRfPower(uint8_t level, const char *label = "?") { applyPN532RfTuning(_pn532, level, label); }
 
     // Send a raw frame and stop at the ACK, deliberately without reading the
     // response. TgInitAsTarget only answers once an initiator activates the
@@ -1642,6 +1776,16 @@ uint32_t gLastRfidNoUid1Ms        = 0;
 uint32_t gLastRfidNoUid2Ms        = 0;
 uint8_t  hwRfidCount             = 2;      // 1 = one active reader, 2 = both active readers
 uint8_t  hwRfidSide              = 1;      // 0 = left only, 1 = right only when hwRfidCount == 1
+// true while hwRfidCount is setupRFID()'s own verdict rather than the owner's
+// choice. It decides whether a stored count of 1 is allowed to stop the second
+// reader being probed at the next boot: an owner who picked one reader means
+// it, a probe that failed once does not. See setupRFID().
+bool     gRfidCountIsAuto        = true;
+// When an unproven reader -- one the boot probe could not reach -- may next be
+// polled. See the poll loop, which explains why "unreachable" is not "absent".
+uint32_t gRfid1UnprovenMs        = 0;
+uint32_t gRfid2UnprovenMs        = 0;
+const uint32_t RFID_UNPROVEN_RETRY_MS = 1000;
 const bool FORCE_SINGLE_RFID_STABLE_MODE = false;
 bool     gRfid1Present           = true;   // rfid1 = physically Right
 bool     gRfid2Present           = true;   // rfid2 = physically Left
@@ -4929,7 +5073,7 @@ static void runHardwareTest() {
     String uid1 = "", uid2 = "";
     bool scanning = false;
 
-    enum HwAction { HA_NONE, HA_MINUS, HA_PLUS, HA_PILL1, HA_PILL2, HA_SCAN, HA_BACK };
+    enum HwAction { HA_NONE, HA_MINUS, HA_PLUS, HA_PILL1, HA_PILL2, HA_SCAN, HA_AUTO, HA_BACK };
     static HwAction sHwAction;
     auto actionCb = [](lv_event_t *e) {
         lv_obj_t *o = (lv_obj_t *)lv_event_get_target(e);
@@ -5076,8 +5220,8 @@ static void runHardwareTest() {
 
     // Scan / Stop button — centered, not full width, big enough to tap easily
     lv_obj_t *scanBtn = lv_btn_create(scr);
-    lv_obj_set_size(scanBtn, 300, 66);
-    lv_obj_align(scanBtn, LV_ALIGN_TOP_MID, 0, 248);
+    lv_obj_set_size(scanBtn, 190, 66);
+    lv_obj_align(scanBtn, LV_ALIGN_TOP_MID, -103, 248);
     lv_obj_set_style_border_width(scanBtn, 1, 0);
     lv_obj_set_style_radius(scanBtn, 12, 0);
     lv_obj_set_style_shadow_width(scanBtn, 0, 0);
@@ -5086,6 +5230,24 @@ static void runHardwareTest() {
     lv_obj_t *scanLbl = lv_label_create(scanBtn);
     lv_obj_set_style_text_font(scanLbl, &gFont16, 0);
     lv_obj_center(scanLbl);
+
+    // Auto beside Scan rather than below it: the two are alternatives, and a
+    // button under the one you just pressed reads as the next step.
+    lv_obj_t *autoBtn = lv_btn_create(scr);
+    lv_obj_set_size(autoBtn, 190, 66);
+    lv_obj_align(autoBtn, LV_ALIGN_TOP_MID, 103, 248);
+    lv_obj_set_style_bg_color(autoBtn, LVCOL_CARD, 0);
+    lv_obj_set_style_border_color(autoBtn, LVCOL_BORDER, 0);
+    lv_obj_set_style_border_width(autoBtn, 1, 0);
+    lv_obj_set_style_radius(autoBtn, 12, 0);
+    lv_obj_set_style_shadow_width(autoBtn, 0, 0);
+    lv_obj_set_user_data(autoBtn, (void *)(intptr_t)HA_AUTO);
+    lv_obj_add_event_cb(autoBtn, actionCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *autoLbl = lv_label_create(autoBtn);
+    lv_label_set_text(autoLbl, t(I18N_RFID_AUTO));
+    lv_obj_set_style_text_font(autoLbl, &gFont16, 0);
+    lv_obj_set_style_text_color(autoLbl, LVCOL_ACCENT, 0);
+    lv_obj_center(autoLbl);
 
     auto updatePower = [&]() {
         // With its scale: a bare "3" answered nothing ("3 out of what?").
@@ -5124,6 +5286,15 @@ static void runHardwareTest() {
     updateScanBtn();
     lv_scr_load(scr);
 
+    // What each module answers, from the screen someone opens when a reader
+    // looks dead -- next to what the firmware currently believes about it.
+    // On the bench unit the two disagree, and that disagreement is the whole
+    // reason the poll loop no longer takes the version query as final.
+    netLog("RFPROBE R ver=0x" + String(rfid1.firmwareVersion(), HEX)
+           + " present=" + String(gRfid1Present ? 1 : 0));
+    netLog("RFPROBE L ver=0x" + String(rfid2.firmwareVersion(), HEX)
+           + " present=" + String(gRfid2Present ? 1 : 0));
+
     for (;;) {
         sHwAction = HA_NONE;
 
@@ -5135,26 +5306,176 @@ static void runHardwareTest() {
                 if (gRfidPowerLevel > 0) {
                     gRfidPowerLevel--;
                     prefs.begin("config", false); prefs.putUChar("rfidPower", gRfidPowerLevel); prefs.end();
-                    if (gRfid1Present) rfid1.applyRfPower(gRfidPowerLevel);
-                    if (gRfid2Present) rfid2.applyRfPower(gRfidPowerLevel);
+                    if (gRfid1Present) rfid1.applyRfPower(gRfidPowerLevel, "R");
+                    if (gRfid2Present) rfid2.applyRfPower(gRfidPowerLevel, "L");
                     updatePower();
                 }
             } else if (sHwAction == HA_PLUS) {
                 if (gRfidPowerLevel < PN532_RF_LEVEL_COUNT-1) {
                     gRfidPowerLevel++;
                     prefs.begin("config", false); prefs.putUChar("rfidPower", gRfidPowerLevel); prefs.end();
-                    if (gRfid1Present) rfid1.applyRfPower(gRfidPowerLevel);
-                    if (gRfid2Present) rfid2.applyRfPower(gRfidPowerLevel);
+                    if (gRfid1Present) rfid1.applyRfPower(gRfidPowerLevel, "R");
+                    if (gRfid2Present) rfid2.applyRfPower(gRfidPowerLevel, "L");
                     updatePower();
                 }
             } else if (sHwAction == HA_PILL1) {
                 hwRfidCount = 1;
-                prefs.begin("config", false); prefs.putUChar("hwRfidCnt", 1); prefs.end();
+                gRfidCountIsAuto = false;
+                prefs.begin("config", false);
+                prefs.putUChar("hwRfidCnt", 1); prefs.putUChar("hwRfidAuto", 0);
+                prefs.end();
                 updatePills(); updateBoxes();
             } else if (sHwAction == HA_PILL2) {
                 hwRfidCount = 2;
-                prefs.begin("config", false); prefs.putUChar("hwRfidCnt", 2); prefs.end();
+                gRfidCountIsAuto = false;
+                prefs.begin("config", false);
+                prefs.putUChar("hwRfidCnt", 2); prefs.putUChar("hwRfidAuto", 0);
+                prefs.end();
                 updatePills(); updateBoxes();
+            } else if (sHwAction == HA_AUTO) {
+                // Sweep every level, count what each reader reads, keep the one
+                // that gives the WEAKER reader its best result -- not the one
+                // with the most reads overall. That distinction is the whole
+                // feature: measured on the bench with a tag on each side, reads
+                // move from one reader to the other as drive rises (right 57 ->
+                // 41 -> 28 -> 21 -> 14, and 0 from level 11 up, while left
+                // climbs 0 -> 24 -> 50 -> 102). Maximising the total picks the
+                // top of the range, where one reader is deaf and the scale can
+                // only see half a spool.
+                //
+                // Measured the way the scale actually reads: both antennas
+                // carrying, one reader queried after the other. That is the
+                // weighing loop's own regime -- it round-robins between the two
+                // readers so their query pulses never overlap, while
+                // rfidAntennaSetAll() leaves both carriers up, and the carrier
+                // is what the facing antenna hears. (rfidSelectReader(), which
+                // would power the idle module down, is defined but called from
+                // nowhere.) So a level chosen here is a level that holds on the
+                // weigh screen.
+                // Only the count is checked, not gRfid1Present/gRfid2Present:
+                // those are decided by setupRFID() at boot, and a reader that
+                // failed to init there still reads perfectly once this screen
+                // polls it -- which is exactly the state the bench was in when
+                // this guard first refused to run. The sweep is its own test:
+                // if nothing reads, the "no reads anywhere" branch below says so
+                // and leaves the level untouched.
+                if (hwRfidCount < 2) {
+                    lvglNotice(t(I18N_RFID_AUTO_HINT));
+                } else {
+                    const uint8_t prevLevel = gRfidPowerLevel;
+
+                    // One level, measured. Returns the weaker reader's count,
+                    // because that is what the sweep optimises, and the total
+                    // only to break ties.
+                    auto measure = [&](uint8_t lvl, uint32_t dwellMs, const char *pass,
+                                       int &weak, int &total) {
+                        rfid1.applyRfPower(lvl, "R");
+                        rfid2.applyRfPower(lvl, "L");
+                        gRfidPowerLevel = lvl;
+                        updatePower();
+                        int nL = 0, nR = 0;
+                        uint32_t t0 = millis();
+                        while (millis() - t0 < dwellMs) {
+                            String h; bool fail;
+                            if (readRFIDFromReaderTestStyle(rfid2, h, "L", &fail).length() > 0) nL++;
+                            else finishRfidSession(rfid2);
+                            if (readRFIDFromReaderTestStyle(rfid1, h, "R", &fail).length() > 0) nR++;
+                            else finishRfidSession(rfid1);
+                            // Keep the UI alive: twenty seconds of a frozen
+                            // panel is indistinguishable from a crash.
+                            lv_timer_handler();
+                            delay(2);
+                        }
+                        lv_label_set_text_fmt(box1Val, "%d", nL);
+                        lv_label_set_text_fmt(box2Val, "%d", nR);
+                        lv_timer_handler();
+                        // The panel only ever shows the level being measured and
+                        // the winner. Logging each row makes the verdict
+                        // checkable afterwards instead of having to be trusted.
+                        netLog("RFAUTO " + String(pass) + " L" + String((unsigned)lvl)
+                               + " left=" + String(nL) + " right=" + String(nR));
+                        weak = nL < nR ? nL : nR;
+                        total = nL + nR;
+                    };
+
+                    int weakOf[PN532_RF_LEVEL_COUNT];
+                    int totalOf[PN532_RF_LEVEL_COUNT];
+                    for (uint8_t i = 0; i < PN532_RF_LEVEL_COUNT; i++) { weakOf[i] = -1; totalOf[i] = -1; }
+
+                    // Pass 1 -- the whole range, short dwell, to find the shape.
+                    //
+                    // It stops early once the weaker reader has read nothing for
+                    // three levels running and something better is already in
+                    // hand. Above the point where one antenna goes deaf, nothing
+                    // can win: the bench measures the right-hand reader at zero
+                    // from level 9 up, every time, while the left keeps climbing.
+                    // Those seven levels take eight seconds to prove a foregone
+                    // conclusion, and that time is worth more spent in pass 2.
+                    uint8_t zeroRun = 0;
+                    bool anyRead = false;
+                    for (uint8_t lvl = 0; lvl < PN532_RF_LEVEL_COUNT; lvl++) {
+                        measure(lvl, RFID_AUTO_DWELL_MS, "p1", weakOf[lvl], totalOf[lvl]);
+                        if (weakOf[lvl] > 0) { anyRead = true; zeroRun = 0; }
+                        else if (++zeroRun >= 3 && anyRead) break;
+                    }
+
+                    // Pass 2 -- the three best levels again, twice as long.
+                    //
+                    // Pass 1 is noisy enough that its winner moves between runs:
+                    // the same bench, the same spool, minutes apart, put level 2
+                    // ahead once and level 4 the next time, on counts of six and
+                    // seven. A short second look at the shortlist costs a few
+                    // seconds and makes the answer one worth storing.
+                    uint8_t shortlist[RFID_AUTO_FINALISTS];
+                    uint8_t nShort = 0;
+                    for (uint8_t slot = 0; slot < RFID_AUTO_FINALISTS; slot++) {
+                        int bw = 0, bt = -1; int pick = -1;
+                        for (uint8_t lvl = 0; lvl < PN532_RF_LEVEL_COUNT; lvl++) {
+                            if (weakOf[lvl] <= 0) continue;
+                            bool taken = false;
+                            for (uint8_t k = 0; k < nShort; k++) if (shortlist[k] == lvl) taken = true;
+                            if (taken) continue;
+                            if (weakOf[lvl] > bw || (weakOf[lvl] == bw && totalOf[lvl] > bt)) {
+                                bw = weakOf[lvl]; bt = totalOf[lvl]; pick = lvl;
+                            }
+                        }
+                        if (pick < 0) break;
+                        shortlist[nShort++] = (uint8_t)pick;
+                    }
+
+                    uint8_t bestLvl = prevLevel;
+                    int bestWeak = -1, bestTotal = -1;
+                    for (uint8_t i = 0; i < nShort; i++) {
+                        int weak, total;
+                        measure(shortlist[i], RFID_AUTO_CONFIRM_DWELL_MS, "p2", weak, total);
+                        if (weak > bestWeak || (weak == bestWeak && total > bestTotal)) {
+                            bestWeak = weak; bestTotal = total; bestLvl = shortlist[i];
+                        }
+                    }
+                    // Nothing read anywhere: no tag, or none in range. Leave the
+                    // level exactly as it was rather than storing a result that
+                    // means nothing.
+                    if (bestWeak <= 0) {
+                        gRfidPowerLevel = prevLevel;
+                        rfid1.applyRfPower(prevLevel, "R");
+                        rfid2.applyRfPower(prevLevel, "L");
+                        updatePower(); updateBoxes();
+                        lvglNotice(t(I18N_RFID_AUTO_HINT));
+                    } else {
+                        gRfidPowerLevel = bestLvl;
+                        rfid1.applyRfPower(bestLvl, "R");
+                        rfid2.applyRfPower(bestLvl, "L");
+                        prefs.begin("config", false);
+                        prefs.putUChar("rfidPower", bestLvl);
+                        prefs.end();
+                        updatePower(); updateBoxes();
+                        netLog("RFAUTO best L" + String((unsigned)bestLvl) + " weak=" + String(bestWeak)
+                               + " total=" + String(bestTotal));
+                        String msg = String(t(I18N_RFID_AUTO_BEST)) + " " + String((unsigned)bestLvl)
+                                   + "/" + String((unsigned)(PN532_RF_LEVEL_COUNT - 1));
+                        lvglNotice(msg.c_str());
+                    }
+                }
             } else if (sHwAction == HA_SCAN) {
                 uid1 = ""; uid2 = "";
                 scanning = true;
@@ -10772,8 +11093,10 @@ void setupWebServer() {
             servoEnabled = false;
             hwMotorSpeed = 0;
             prefs.begin("config", false);
+            gRfidCountIsAuto = false;
             prefs.putUChar("hwRfidCnt",   hwRfidCount);
             prefs.putUChar("hwRfidSide",  hwRfidSide);
+            prefs.putUChar("hwRfidAuto",  0);
             prefs.putBool("hwMotorConn",  false);
             prefs.putBool("servoEnabled", false);
             prefs.putUChar("hwMotorSpd",  0);
@@ -12170,26 +12493,57 @@ static String resolveLinkedChipUid(const String& uidHex) {
 }
 
 
+// Three attempts, not one.
+//
+// init() asks for a firmware version over a UART, and a UART has no address
+// ACK, so a module that is merely still waking up is indistinguishable from one
+// that is absent -- the same first-command flakiness applyPN532RfTuning()
+// already retries around. One attempt was enough to declare a working reader
+// missing, and setupRFID() then wrote that verdict to NVS, so the bench unit
+// came up single-reader on every later boot until someone re-enabled the second
+// reader by hand in Settings. A reader that is genuinely absent still fails all
+// three and is still reported absent.
+static const uint8_t PN532_INIT_ATTEMPTS = 3;
+
 static bool initPN532Reader(PN532Reader &reader, uint8_t ssPin, uint8_t rstPin, const char *label) {
     Serial.printf("[RFID] init %s ss=%u rst=%u\n", label, ssPin, rstPin);
     pinMode(ssPin, OUTPUT);
     digitalWrite(ssPin, HIGH);
     pinMode(rstPin, OUTPUT);
+
+    // One reset pulse, then the attempts -- the reset deliberately stays
+    // outside the loop.
+    //
+    // A PN532 coming out of RSTPDN swallows the first command it is sent: that
+    // is what the wake-up preamble in the library's begin() is for, and on this
+    // hardware one preamble is not always enough. Pulsing the reset again
+    // before each retry made every attempt the first command after a power-up,
+    // so three of them were worth exactly one -- the right-hand reader failed
+    // all three at 50, 300 and even 1200 ms of settle, then read tags happily
+    // once something else had spoken to it first. Resetting once and repeating
+    // only the conversation is what actually gives the retry something to do.
     digitalWrite(rstPin, LOW);
     delay(5);
     digitalWrite(rstPin, HIGH);
     delay(50);
-    if (!reader.init()) {
-        Serial.printf("[RFID] %s init failed\n", label);
-        return false;
+
+    for (uint8_t attempt = 1; attempt <= PN532_INIT_ATTEMPTS; attempt++) {
+        if (attempt > 1) delay(100);
+        if (reader.init()) {
+            // reader.init() already confirmed a non-zero firmware version --
+            // don't immediately re-query it again via probePN532() here. Two
+            // GetFirmwareVersion round-trips back-to-back sometimes has the
+            // second one time out on this hardware even though the first
+            // (inside init()) just succeeded.
+            Serial.printf("[RFID] %s ready (attempt %u)\n", label, attempt);
+            return true;
+        }
+        Serial.printf("[RFID] %s init attempt %u/%u failed\n",
+                      label, attempt, PN532_INIT_ATTEMPTS);
+        delay(40);
     }
-    // reader.init() already confirmed a non-zero firmware version -- don't
-    // immediately re-query it again via probePN532() here. Two
-    // GetFirmwareVersion round-trips back-to-back sometimes has the second
-    // one time out on this hardware even though the first (inside init())
-    // just succeeded.
-    Serial.printf("[RFID] %s ready\n", label);
-    return true;
+    Serial.printf("[RFID] %s init failed\n", label);
+    return false;
 }
 
 // RF self-test: one reader impersonates a card carrying three random bytes,
@@ -12313,7 +12667,15 @@ void setupRFID() {
     bool wantRight = false;
     bool wantLeft  = false;
 
-    if (hwRfidCount >= 2) {
+    // A count of 1 that nobody chose is a hypothesis, not a configuration.
+    // setupRFID() stores whatever it detected, so a single flaky version query
+    // at boot -- the failure mode initPN532Reader() now retries around -- used
+    // to write "one reader" to NVS, and every later boot then read that back,
+    // printed "skipping PN532-1 by config" and never probed the second reader
+    // again. The scale stayed half-blind until its owner re-enabled the reader
+    // by hand in Settings, with nothing on screen saying why. Probe both when
+    // the count is ours; honour it exactly when it is theirs.
+    if (hwRfidCount >= 2 || gRfidCountIsAuto) {
         wantRight = true;
         wantLeft  = true;
     } else {
@@ -12449,9 +12811,11 @@ void setupRFID() {
         hwRfidCount = 0;
     }
 
+    gRfidCountIsAuto = true;
     prefs.begin("config", false);
     prefs.putUChar("hwRfidCnt", hwRfidCount);
     prefs.putUChar("hwRfidSide", hwRfidSide);
+    prefs.putUChar("hwRfidAuto", 1);
     prefs.end();
 
     if (!gBootComplete) {
@@ -15659,8 +16023,9 @@ void setup() {
     servoEnabled         = prefs.getBool("servoEnabled",   false);
     hwRfidCount          = prefs.getUChar("hwRfidCnt",     1);
     hwRfidSide           = prefs.getUChar("hwRfidSide",    1);
-    gRfidPowerLevel      = prefs.getUChar("rfidPower",     5);
-    if (gRfidPowerLevel >= PN532_RF_LEVEL_COUNT) gRfidPowerLevel = 5;
+    gRfidCountIsAuto     = prefs.getUChar("hwRfidAuto",    1) != 0;
+    gRfidPowerLevel      = prefs.getUChar("rfidPower",     3);
+    if (gRfidPowerLevel >= PN532_RF_LEVEL_COUNT) gRfidPowerLevel = 3;
     hwMotorConnected     = prefs.getBool("hwMotorConn",    false);
     hwMotorSpeed         = prefs.getUChar("hwMotorSpd",    0);
     if (hwMotorSpeed > 5) hwMotorSpeed = 0;
@@ -16101,8 +16466,38 @@ void loop() {
         // --- Step 1: poll readers with short dwell (pure SPI, no HTTP) ---
         String uid1Hex;
         String uid2Hex;
+        // A reader the boot probe could not reach is unproven, not absent.
+        //
+        // What it failed is GetFirmwareVersion, and on this hardware that query
+        // is not a presence test: the bench unit's right-hand module answers
+        // none of them -- at 50, 300 or 1200 ms of settle, with or without a
+        // reset first -- and reads its own tag on the same link a second later.
+        // Taking the query as final left the weigh screen polling one reader
+        // for the whole session while the other sat there working, and the only
+        // way out was for the owner to notice and re-enable it by hand.
+        //
+        // So an unproven reader is still polled, once a second instead of every
+        // cycle: a module that really is missing costs one timed-out poll per
+        // second rather than half the poll budget, and one that is merely deaf
+        // to version queries promotes itself the moment it reads anything.
         bool canPollRight = gRfid1Present;
         bool canPollLeft  = gRfid2Present;
+        // gRfidCountIsAuto makes both readers candidates: a count and a side
+        // that setupRFID() inferred from a probe this reader is known to fail
+        // cannot be the reason it is never checked again. An owner who chose
+        // one reader in Settings is honoured exactly.
+        const bool wantRightNow = (hwRfidCount >= 2) || (hwRfidSide == 1) || gRfidCountIsAuto;
+        const bool wantLeftNow  = (hwRfidCount >= 2) || (hwRfidSide == 0) || gRfidCountIsAuto;
+        if (!canPollRight && wantRightNow && (int32_t)(millis() - gRfid1UnprovenMs) >= 0) {
+            gRfid1UnprovenMs = millis() + RFID_UNPROVEN_RETRY_MS;
+            canPollRight = true;
+            gRfidPollRightNext = true;  // spend this cycle's slot on it
+        }
+        if (!canPollLeft && wantLeftNow && (int32_t)(millis() - gRfid2UnprovenMs) >= 0) {
+            gRfid2UnprovenMs = millis() + RFID_UNPROVEN_RETRY_MS;
+            canPollLeft = true;
+            gRfidPollRightNext = false;
+        }
 
         if (FORCE_SINGLE_RFID_STABLE_MODE && hwRfidCount == 1) {
             if (hwRfidSide == 1 && canPollRight) {
@@ -16193,6 +16588,32 @@ void loop() {
             if (canPollLeft) {
                 uid2Hex = pollRFIDReader(rfid2, uid2Hex, PN532_2_SS, PN532_2_RST, "LEFT", gRfid2TimeoutStreak);
             }
+        }
+
+        // A read is the proof the version query could not give. Promote here,
+        // before anything else looks at the UID, so the very first successful
+        // read also restores the reader's normal poll rate.
+        if (uid1Hex.length() > 0 && !gRfid1Present) {
+            gRfid1Present = true;
+            netLog("[RFID] RIGHT promoted by a read; version query had said absent");
+        }
+        if (uid2Hex.length() > 0 && !gRfid2Present) {
+            gRfid2Present = true;
+            netLog("[RFID] LEFT promoted by a read; version query had said absent");
+        }
+        // Keep the owner-visible count in step with what is actually reading.
+        // Settings -> RFID lights its pills from hwRfidCount, and both the
+        // scan and the auto-calibration there refuse to use a second reader it
+        // says is not configured -- so a reader proven by the weigh screen has
+        // to be reflected here or it stays invisible on the one screen built to
+        // show it. Only touched while the count is still setupRFID()'s guess.
+        if (gRfidCountIsAuto && gRfid1Present && gRfid2Present && hwRfidCount < 2) {
+            hwRfidCount = 2;
+            prefs.begin("config", false);
+            prefs.putUChar("hwRfidCnt", 2);
+            prefs.putUChar("hwRfidAuto", 1);
+            prefs.end();
+            netLog("[RFID] both readers proven by a read; count raised to 2");
         }
 
         // A linked chip (4-byte UID) becomes the spool's inventory id here, before

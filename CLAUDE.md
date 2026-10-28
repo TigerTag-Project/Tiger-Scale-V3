@@ -200,9 +200,13 @@ an option.
   in the schematic. Do not re-attempt it:
   [`docs/USB_HOST_POSTMORTEM.md`](docs/USB_HOST_POSTMORTEM.md).
 - **The two PN532 antennas sit ~75 mm apart facing each other** and cross-talk.
-  That is why RF power/sensitivity is a 5-level runtime setting
-  (`applyPN532RfTuning`, default level 3, adjustable from Settings → Hardware and
-  persisted to NVS) rather than one fixed value.
+  That is why RF power/sensitivity is a 16-level runtime setting
+  (`applyPN532RfTuning`, default level 3, adjustable from Settings → RFID and
+  persisted to NVS) rather than one fixed value. The same screen's **Auto**
+  button finds the level empirically: it sweeps the range with a tagged spool in
+  place and keeps the one giving the **weaker** reader its best result. Scoring
+  the total instead would pick the top of the range, where one antenna is deaf
+  and the scale sees half a spool — measured at zero reads from level 9 up.
 - **A second I2C reader needs a mux.** The PN532's I2C address is fixed at 0x24,
   so two modules on one bus collide. In the I2C build `rfid2` is a permanent stub
   and the existing single-reader fallback applies unchanged.
@@ -380,6 +384,12 @@ Short list, each one earned.
 - **Conversation in French, everything committed in English** — code, comments,
   commit messages, docs, this file. A repository that mixes both is a repository
   nobody outside the room can read.
+- **A reader that fails the boot probe is unproven, not absent.** The firmware
+  version query is not a presence test on this hardware — the bench unit's
+  right-hand module answers none of them and reads tags on the same link. So
+  `setupRFID()`'s verdict only sets the poll rate: an unreachable reader is still
+  polled once a second and promotes itself the moment it reads. Never make that
+  verdict final again, and never persist it as the owner's configuration.
 - **Verify your own work before reporting.** Run the guards, read the output,
   and check the result. Ask the human to test only what genuinely needs the
   hardware in front of them — and ask once, at the moment it is needed, not as a

@@ -14,6 +14,56 @@ scaffold's placeholder text.
 
 Nothing yet.
 
+## [v3.13.0](docs/release-notes/v3.13.0.md)
+
+See the release notes for the full entry.
+
+### Fixed
+- **The two readers jammed each other.** The weigh loop polled one reader per
+  cycle, so their queries never overlapped -- but the reader waiting its turn
+  kept radiating, and with two antennas 75 mm apart facing each other that
+  standing carrier is what the reading one had to hear its tag through. The idle
+  reader's field now goes down for the duration of its neighbour's poll, in the
+  weigh loop and in the auto-calibration alike. Measured over levels 2-8 on a
+  bench unit: the weaker reader answers 60% of polls with both carriers up and
+  89% with the idle one off, and throughput rises because fewer polls are wasted.
+  Full table in `docs/RFID-PERFORMANCE.md`.
+- **`antennaOn()` / `antennaOff()` never switched anything.** They set a boolean
+  and returned, so both fields were always up -- including when
+  `rfidAntennaSetAll()` believed it had silenced them for an empty platform. They
+  now send `RFConfiguration` CfgItem 0x01, on all three transports.
+- **The poll window was too tight**: 30 ms and one activation retry left no room
+  for the PN532's own ISO14443A activation, so a tag answering slightly late was
+  reported as no card. Now 100 ms and two retries -- proposed in PR #40 and
+  measured here rather than taken on trust, which on its own takes the weaker
+  reader from 60% to 69% and raises throughput from 13.3 to 16.7 reads a second.
+- **Every scale advertised the same mDNS name.** `macSuffix4()` read
+  `WiFi.macAddress()` on the first line of `setupWiFi()`, before
+  `WiFi.mode(WIFI_STA)`; with no netif yet the core returns NULL *without writing
+  the buffer*, so `mac[4]`/`mac[5]` were uninitialised stack bytes -- identical on
+  every unit, since it is the same firmware on the same boot path.
+  `tigerscale-CE3F` was those bytes, not a MAC. Two scales on one LAN raced for
+  the name and the responder renamed the loser, with no rule about which won, so
+  a bookmarked address could point at the other scale after a reboot.
+  `esp_read_mac(mac, ESP_MAC_WIFI_STA)` reads the efuse and needs no netif.
+  **Every scale's name changes on this update and no alias is kept.**
+
+### Changed
+- The auto-calibration measures in the regime the scale runs in. It swept with
+  both carriers up, which is no longer how the weigh loop reads, and chose a
+  level that is not the best one under alternation.
+- Compiled default RF level 3 -> 7. Under alternation, 5 and 7 are the only
+  levels where both readers answer every poll on both bench series, while 3
+  misses about one in six on the weaker side. Units with a level already stored
+  in NVS keep it.
+
+### Added
+- `docs/RFID-PERFORMANCE.md` -- 64 cells over four regimes on a healthy bench
+  unit: each reader alone, both carriers up, and alternating, crossed with the two
+  poll timings. Records the method, the numbers, the recommendation and the
+  caveats, including the check that neither reader ever read the other's tag at
+  any power level.
+
 ## [v3.12.0](docs/release-notes/v3.12.0.md)
 
 See the release notes for the full entry.

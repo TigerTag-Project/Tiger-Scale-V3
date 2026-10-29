@@ -19,30 +19,30 @@
 //   OTA CONFIGURATION                                      452-  484
 //   FORWARD DECLARATIONS                                   485-  789
 //   WEIGHT ROUNDING                                        790-  809
-//   GLOBAL OBJECTS                                         810- 1642
-//   CONFIGURATION VARIABLES                               1643- 2072
-//   OLED DISPLAY                                          2073- 2850
-//   CLOUD PARSING                                         2851- 2865
-//   WIFI SETUP                                            2866- 7960
-//   LITTLEFS                                              7961- 8260
-//   FIREBASE AUTHENTICATION                               8261- 9943
-//   WEBSOCKET                                             9944- 9970
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0)  9971-10105
-//   UNIFIED WS FRAME BUILDER                             10106-10230
-//   WEIGHT FILTER HELPERS                                10231-10245
-//   POST-SEND STATE RESET (shared by all send paths)     10246-10266
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight) 10267-10370
-//   WEB SERVER                                           10371-11399
-//   CLOUD COMMUNICATION                                  11400-11582
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 11583-12090
-//   mDNS                                                 12091-12128
-//   SCALE                                                12129-12299
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  12300-12417
-//   RFID                                                 12418-13500
-//   OTA — Over-the-air firmware + filesystem update    13501-14180
-//   LVGL bridge + main weigh screen                      14181-15120
-//   Remote live view: the screen out, taps back in       15121-15970
-//   SETUP & LOOP                                         15971-17205
+//   GLOBAL OBJECTS                                         810- 1735
+//   CONFIGURATION VARIABLES                               1736- 2165
+//   OLED DISPLAY                                          2166- 2943
+//   CLOUD PARSING                                         2944- 2958
+//   WIFI SETUP                                            2959- 8065
+//   LITTLEFS                                              8066- 8365
+//   FIREBASE AUTHENTICATION                               8366-10048
+//   WEBSOCKET                                            10049-10075
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0) 10076-10210
+//   UNIFIED WS FRAME BUILDER                             10211-10335
+//   WEIGHT FILTER HELPERS                                10336-10350
+//   POST-SEND STATE RESET (shared by all send paths)     10351-10371
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight) 10372-10475
+//   WEB SERVER                                           10476-11504
+//   CLOUD COMMUNICATION                                  11505-11687
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 11688-12195
+//   mDNS                                                 12196-12233
+//   SCALE                                                12234-12404
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  12405-12522
+//   RFID                                                 12523-13605
+//   OTA — Over-the-air firmware + filesystem update    13606-14285
+//   LVGL bridge + main weigh screen                      14286-15225
+//   Remote live view: the screen out, taps back in       15226-16075
+//   SETUP & LOOP                                         16076-17321
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -1155,7 +1155,28 @@ static const PN532RfLevel PN532_RF_LEVELS[] = {
 };
 static const uint8_t PN532_RF_LEVEL_COUNT = sizeof(PN532_RF_LEVELS) / sizeof(PN532_RF_LEVELS[0]);
 
-uint8_t gRfidPowerLevel = 3; // index into PN532_RF_LEVELS, adjustable live from the Hardware/RFID Test screen
+// Index into PN532_RF_LEVELS, adjustable live from the Hardware/RFID Test
+// screen and overridden by anything already stored in NVS, so this only sets
+// what a fresh unit starts on. 7 is where the bench measurements put it: with
+// the two carriers alternating, levels 5 and 7 both read every spool on both
+// series while level 3 missed one in six on the weaker reader. 7 keeps margin
+// over 5 without reaching the top of the range, where one antenna goes deaf.
+// Settings -> RFID -> Auto still re-measures per unit.
+uint8_t gRfidPowerLevel = 7;
+
+// How long a poll waits for the module to report a card, and how hard the
+// module tries before giving up.
+//
+// 30 ms and one retry left no margin for the PN532's own ISO14443A activation,
+// so a tag that answered a little late was reported as "no card". Measured on
+// the bench over levels 2-8: 100 ms and two retries take the weaker reader from
+// 60% of polls answered to 69%, and *raise* throughput from 13.3 to 16.7 reads
+// a second, because a poll that succeeds costs less than a poll that is retried
+// by the firmware. Combined with taking turns on the carrier it reaches 89%.
+// See docs/RFID-PERFORMANCE.md. Variables rather than constants so the bench
+// can keep sweeping them.
+uint16_t gPn532ReadTimeoutMs     = 100;
+uint8_t  gPn532ActivationRetries = 2;
 
 // Sent through Adafruit_PN532's public sendCommandCheckAck(), no library
 // patch needed. Baseline payload byte-for-byte confirmed against dotnet/
@@ -1322,7 +1343,7 @@ public:
         // holding.
         _pn532.SAMConfig();
         applyPN532RfTuning(_pn532, gRfidPowerLevel, "init", &_serial);
-        _pn532.setPassiveActivationRetries(1);
+        _pn532.setPassiveActivationRetries(gPn532ActivationRetries);
         drainPn532Uart(&_serial);  // its response frame is not read by the library either
 
         // Only now back down to the read budget. readack() collects the ACK
@@ -1345,7 +1366,7 @@ public:
         uint8_t len = 0;
         // Anything still in the RX buffer is left over from the previous poll.
         flushPn532Rx(&_serial);
-        bool ok = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.uidByte, &len, 30);
+        bool ok = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.uidByte, &len, gPn532ReadTimeoutMs);
         // readDetectedPassiveTargetID() reads a fixed 20 bytes, but the reply is
         // 19 bytes for a 4-byte UID and 22 for a 7-byte one (every NTAG/TigerTag).
         // The 2 bytes it leaves behind were parsed as the next command's ACK, so
@@ -1376,8 +1397,34 @@ public:
 
     void haltA() {}
     void stopCrypto1() {}
-    void antennaOn()  { _fieldOn = true; }
-    void antennaOff() { _fieldOn = false; }
+    void antennaOn()  { setRfField(true); }
+    void antennaOff() { setRfField(false); }
+
+    void setPassiveRetries(uint8_t n) { _pn532.setPassiveActivationRetries(n); }
+
+    // The carrier, switched for real.
+    //
+    // RFConfiguration CfgItem 0x01 turns the 13.56 MHz field on or off without
+    // resetting the module, which is what lets the two readers take turns. It
+    // matters more than it looks: these two antennas sit about 75 mm apart
+    // facing each other, and a carrier that is up is heard by the other reader
+    // whether or not that reader is being polled. Measured on the bench, with
+    // both carriers up the weaker reader answers 60% of polls; switching the
+    // idle one off for the duration of its neighbour's read takes that to 89%,
+    // and raises total throughput as well because fewer polls are wasted.
+    // See docs/RFID-PERFORMANCE.md.
+    //
+    // antennaOn()/antennaOff() used to set a boolean and nothing else, so both
+    // carriers were in fact always up -- including when rfidAntennaSetAll()
+    // believed it had silenced them for an empty platform.
+    void setRfField(bool on) {
+        uint8_t cmd[3] = { PN532_COMMAND_RFCONFIGURATION, 0x01, (uint8_t)(on ? 0x01 : 0x00) };
+        flushPn532Rx(&_serial);
+        _pn532.sendCommandCheckAck(cmd, sizeof(cmd), 100);
+        flushPn532Rx(&_serial);
+        _fieldOn = on;
+    }
+
     // Re-applies RF power/sensitivity live (no re-init needed) -- used by
     // the Hardware/RFID Test screen's "Pot:" stepper.
     void applyRfPower(uint8_t level, const char *label = "?") { applyPN532RfTuning(_pn532, level, label, &_serial); }
@@ -1461,7 +1508,7 @@ public:
         // holding.
         _pn532.SAMConfig();
         applyPN532RfTuning(_pn532, gRfidPowerLevel, "init");
-        _pn532.setPassiveActivationRetries(1);
+        _pn532.setPassiveActivationRetries(gPn532ActivationRetries);
         return ver != 0;
     }
 
@@ -1470,7 +1517,7 @@ public:
     bool isNewCardPresent() {
         if (!_isPrimary) return false;
         uint8_t len = 0;
-        bool ok = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.uidByte, &len, 30);
+        bool ok = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.uidByte, &len, gPn532ReadTimeoutMs);
         // Same length guard as the other two transports — see the note there.
         if (ok && len != 4 && len != 7 && len != 10) {
             Serial.printf("[RFID] rejected UID length %u\n", (unsigned)len);
@@ -1489,8 +1536,31 @@ public:
 
     void haltA() {}
     void stopCrypto1() {}
-    void antennaOn()  { _fieldOn = true; }
-    void antennaOff() { _fieldOn = false; }
+    void antennaOn()  { setRfField(true); }
+    void antennaOff() { setRfField(false); }
+
+    void setPassiveRetries(uint8_t n) { _pn532.setPassiveActivationRetries(n); }
+
+    // The carrier, switched for real.
+    //
+    // RFConfiguration CfgItem 0x01 turns the 13.56 MHz field on or off without
+    // resetting the module, which is what lets the two readers take turns. It
+    // matters more than it looks: these two antennas sit about 75 mm apart
+    // facing each other, and a carrier that is up is heard by the other reader
+    // whether or not that reader is being polled. Measured on the bench, with
+    // both carriers up the weaker reader answers 60% of polls; switching the
+    // idle one off for the duration of its neighbour's read takes that to 89%,
+    // and raises total throughput as well because fewer polls are wasted.
+    // See docs/RFID-PERFORMANCE.md.
+    //
+    // antennaOn()/antennaOff() used to set a boolean and nothing else, so both
+    // carriers were in fact always up -- including when rfidAntennaSetAll()
+    // believed it had silenced them for an empty platform.
+    void setRfField(bool on) {
+        uint8_t cmd[3] = { PN532_COMMAND_RFCONFIGURATION, 0x01, (uint8_t)(on ? 0x01 : 0x00) };
+        _pn532.sendCommandCheckAck(cmd, sizeof(cmd), 100);
+        _fieldOn = on;
+    }
     // Re-applies RF power/sensitivity live (no re-init needed) -- used by
     // the Hardware/RFID Test screen's "Pot:" stepper.
     void applyRfPower(uint8_t level, const char *label = "?") { applyPN532RfTuning(_pn532, level, label); }
@@ -1559,7 +1629,7 @@ public:
         // holding.
         _pn532.SAMConfig();
         applyPN532RfTuning(_pn532, gRfidPowerLevel, "init");
-        _pn532.setPassiveActivationRetries(1);
+        _pn532.setPassiveActivationRetries(gPn532ActivationRetries);
         return ver != 0;
     }
 
@@ -1567,7 +1637,7 @@ public:
 
     bool isNewCardPresent() {
         uint8_t len = 0;
-        bool ok = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.uidByte, &len, 30);
+        bool ok = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.uidByte, &len, gPn532ReadTimeoutMs);
         // An ISO14443A UID is 4, 7 or 10 bytes, and uidByte is sized for 10.
         // The library reports whatever length the frame claimed, and a corrupted
         // read has been seen claiming about 250: the hex loops in §24 then ran
@@ -1597,8 +1667,31 @@ public:
     void haltA() {}
     void stopCrypto1() {}
 
-    void antennaOn()  { _fieldOn = true; }
-    void antennaOff() { _fieldOn = false; }
+    void antennaOn()  { setRfField(true); }
+    void antennaOff() { setRfField(false); }
+
+    void setPassiveRetries(uint8_t n) { _pn532.setPassiveActivationRetries(n); }
+
+    // The carrier, switched for real.
+    //
+    // RFConfiguration CfgItem 0x01 turns the 13.56 MHz field on or off without
+    // resetting the module, which is what lets the two readers take turns. It
+    // matters more than it looks: these two antennas sit about 75 mm apart
+    // facing each other, and a carrier that is up is heard by the other reader
+    // whether or not that reader is being polled. Measured on the bench, with
+    // both carriers up the weaker reader answers 60% of polls; switching the
+    // idle one off for the duration of its neighbour's read takes that to 89%,
+    // and raises total throughput as well because fewer polls are wasted.
+    // See docs/RFID-PERFORMANCE.md.
+    //
+    // antennaOn()/antennaOff() used to set a boolean and nothing else, so both
+    // carriers were in fact always up -- including when rfidAntennaSetAll()
+    // believed it had silenced them for an empty platform.
+    void setRfField(bool on) {
+        uint8_t cmd[3] = { PN532_COMMAND_RFCONFIGURATION, 0x01, (uint8_t)(on ? 0x01 : 0x00) };
+        _pn532.sendCommandCheckAck(cmd, sizeof(cmd), 100);
+        _fieldOn = on;
+    }
     // Re-applies RF power/sensitivity live (no re-init needed) -- used by
     // the Hardware/RFID Test screen's "Pot:" stepper.
     void applyRfPower(uint8_t level, const char *label = "?") { applyPN532RfTuning(_pn532, level, label); }
@@ -5364,9 +5457,15 @@ static void runHardwareTest() {
                 } else {
                     const uint8_t prevLevel = gRfidPowerLevel;
 
-                    // One level, measured. Returns the weaker reader's count,
-                    // because that is what the sweep optimises, and the total
-                    // only to break ties.
+                    // One level, measured the way the weigh screen actually
+                    // reads: the two readers take turns, and the idle one's
+                    // carrier is down while its neighbour works. Measuring with
+                    // both carriers up -- which this did until the bench said
+                    // otherwise -- optimises a regime the scale no longer runs
+                    // in, and picks a different level for it.
+                    //
+                    // Returns the weaker reader's count, because that is what
+                    // the sweep optimises, and the total only to break ties.
                     auto measure = [&](uint8_t lvl, uint32_t dwellMs, const char *pass,
                                        int &weak, int &total) {
                         rfid1.applyRfPower(lvl, "R");
@@ -5377,8 +5476,12 @@ static void runHardwareTest() {
                         uint32_t t0 = millis();
                         while (millis() - t0 < dwellMs) {
                             String h; bool fail;
+                            rfid1.setRfField(false);
+                            rfid2.setRfField(true);
                             if (readRFIDFromReaderTestStyle(rfid2, h, "L", &fail).length() > 0) nL++;
                             else finishRfidSession(rfid2);
+                            rfid2.setRfField(false);
+                            rfid1.setRfField(true);
                             if (readRFIDFromReaderTestStyle(rfid1, h, "R", &fail).length() > 0) nR++;
                             else finishRfidSession(rfid1);
                             // Keep the UI alive: twenty seconds of a frozen
@@ -5403,14 +5506,10 @@ static void runHardwareTest() {
                     for (uint8_t i = 0; i < PN532_RF_LEVEL_COUNT; i++) { weakOf[i] = -1; totalOf[i] = -1; }
 
                     // Pass 1 -- the whole range, short dwell, to find the shape.
-                    //
                     // It stops early once the weaker reader has read nothing for
                     // three levels running and something better is already in
-                    // hand. Above the point where one antenna goes deaf, nothing
-                    // can win: the bench measures the right-hand reader at zero
-                    // from level 9 up, every time, while the left keeps climbing.
-                    // Those seven levels take eight seconds to prove a foregone
-                    // conclusion, and that time is worth more spent in pass 2.
+                    // hand: above the point where one antenna goes deaf nothing
+                    // can win, and that time is worth more spent in pass 2.
                     uint8_t zeroRun = 0;
                     bool anyRead = false;
                     for (uint8_t lvl = 0; lvl < PN532_RF_LEVEL_COUNT; lvl++) {
@@ -5420,7 +5519,6 @@ static void runHardwareTest() {
                     }
 
                     // Pass 2 -- the three best levels again, twice as long.
-                    //
                     // Pass 1 is noisy enough that its winner moves between runs:
                     // the same bench, the same spool, minutes apart, put level 2
                     // ahead once and level 4 the next time, on counts of six and
@@ -5452,6 +5550,13 @@ static void runHardwareTest() {
                             bestWeak = weak; bestTotal = total; bestLvl = shortlist[i];
                         }
                     }
+
+                    // Both carriers back up before leaving: the poll loop puts
+                    // them down again on its own schedule, but it must not
+                    // inherit one that this sweep happened to leave dark.
+                    rfid1.setRfField(true);
+                    rfid2.setRfField(true);
+
                     // Nothing read anywhere: no tag, or none in range. Leave the
                     // level exactly as it was rather than storing a result that
                     // means nothing.
@@ -16024,8 +16129,8 @@ void setup() {
     hwRfidCount          = prefs.getUChar("hwRfidCnt",     1);
     hwRfidSide           = prefs.getUChar("hwRfidSide",    1);
     gRfidCountIsAuto     = prefs.getUChar("hwRfidAuto",    1) != 0;
-    gRfidPowerLevel      = prefs.getUChar("rfidPower",     3);
-    if (gRfidPowerLevel >= PN532_RF_LEVEL_COUNT) gRfidPowerLevel = 3;
+    gRfidPowerLevel      = prefs.getUChar("rfidPower",     7);
+    if (gRfidPowerLevel >= PN532_RF_LEVEL_COUNT) gRfidPowerLevel = 7;
     hwMotorConnected     = prefs.getBool("hwMotorConn",    false);
     hwMotorSpeed         = prefs.getUChar("hwMotorSpd",    0);
     if (hwMotorSpeed > 5) hwMotorSpeed = 0;
@@ -16567,17 +16672,28 @@ void loop() {
         } else {
 
         if (canPollRight && canPollLeft) {
-            // Round-robin: the two PN532 antennas sit ~75mm apart facing each
-            // other, and each isNewCardPresent() call pulses that reader's own
-            // RF field. Querying both back-to-back every cycle let the fields
-            // overlap in time and couple into each other (cross-detections /
-            // missed reads). Polling only one per cycle keeps the fields from
-            // ever pulsing simultaneously; gNextRfidPollMs above is halved to
-            // compensate so each reader is still checked at the same
-            // effective rate as before.
+            // Round-robin, and the idle reader's carrier goes down for the
+            // duration.
+            //
+            // The two antennas sit ~75 mm apart facing each other. Polling one
+            // reader per cycle already kept their *queries* from overlapping,
+            // but a PN532 that is not being polled still radiates, and that
+            // standing carrier is what the other one has to hear its tag
+            // through. Measured over levels 2-8 on the bench: with both
+            // carriers up the weaker reader answers 60% of polls, with the
+            // idle one switched off it answers 89%, and total throughput rises
+            // because fewer polls are wasted. docs/RFID-PERFORMANCE.md has the
+            // table.
+            //
+            // The two commands this costs per cycle are paid back several times
+            // over by the polls that stop failing.
             if (gRfidPollRightNext) {
+                rfid2.setRfField(false);
+                rfid1.setRfField(true);
                 uid1Hex = pollRFIDReader(rfid1, uid1Hex, PN532_1_SS, PN532_1_RST, "RIGHT", gRfid1TimeoutStreak);
             } else {
+                rfid1.setRfField(false);
+                rfid2.setRfField(true);
                 uid2Hex = pollRFIDReader(rfid2, uid2Hex, PN532_2_SS, PN532_2_RST, "LEFT", gRfid2TimeoutStreak);
             }
             gRfidPollRightNext = !gRfidPollRightNext;

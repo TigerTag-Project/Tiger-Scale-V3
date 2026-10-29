@@ -201,12 +201,17 @@ an option.
   [`docs/USB_HOST_POSTMORTEM.md`](docs/USB_HOST_POSTMORTEM.md).
 - **The two PN532 antennas sit ~75 mm apart facing each other** and cross-talk.
   That is why RF power/sensitivity is a 16-level runtime setting
-  (`applyPN532RfTuning`, default level 3, adjustable from Settings → RFID and
-  persisted to NVS) rather than one fixed value. The same screen's **Auto**
+  (`applyPN532RfTuning`, default level 7, adjustable from Settings → RFID and
+  persisted to NVS) rather than one fixed value. The idle reader's carrier is
+  also switched off while the other one reads — that alone takes the weaker
+  reader from 60 % of polls answered to 89 %
+  ([`docs/RFID-PERFORMANCE.md`](docs/RFID-PERFORMANCE.md)). The same screen's **Auto**
   button finds the level empirically: it sweeps the range with a tagged spool in
   place and keeps the one giving the **weaker** reader its best result. Scoring
   the total instead would pick the top of the range, where one antenna is deaf
-  and the scale sees half a spool — measured at zero reads from level 9 up.
+  and the scale sees half a spool — on a healthy unit the right reader drops to
+  one poll in five from level 9 up, and a module that is genuinely faulty reads
+  nothing at all there.
 - **A second I2C reader needs a mux.** The PN532's I2C address is fixed at 0x24,
   so two modules on one bus collide. In the I2C build `rfid2` is a permanent stub
   and the existing single-reader fallback applies unchanged.

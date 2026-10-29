@@ -309,14 +309,17 @@ The two antennas sit roughly **75 mm apart, facing each other**, which is close
 enough that one reader's field is seen by the other. Round-robin polling alone did
 not solve it.
 
-The fix is a 5-level RF power/sensitivity table (`applyPN532RfTuning`), which sets
+The fix is a 16-level RF power/sensitivity table (`applyPN532RfTuning`), which sets
 TX drive (`GsNOn`/`CWGsP`/`ModGsP`) and receiver sensitivity (`RxThreshold`
-MinLevel) together. The levels deliberately span only the low-power end of the
-range — full datasheet TX drive was never useful in this geometry.
+MinLevel) together. The levels span the whole range, index 15 being the datasheet reset values;
+the useful operating points sit in the lower half, because the upper end
+over-drives the module.
 
-The level is adjustable at runtime from **Settings → Hardware** with a `−`/`+`
+The level is adjustable at runtime from **Settings → RFID** with a `−`/`+`
 stepper, takes effect on the very next scan, and persists in NVS. Default is
-level 3.
+level 7. The same screen's **Auto** button measures the best level for the unit
+in front of it; [`RFID-PERFORMANCE.md`](RFID-PERFORMANCE.md) has the bench data
+the default comes from.
 
 If you are debugging a reader that finds nothing, try the level stepper before
 you rewire anything.

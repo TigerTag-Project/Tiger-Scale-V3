@@ -18,7 +18,7 @@ source owns the fact, the guard proves the prose still agrees with it.
 Accepted forms:
 
   - tigerscale-XXXX / tigerscale-xxxx   an explicit placeholder in a template
-  - tigerscale-CE3F                     a real four-hex-digit example, uppercase
+  - tigerscale-ABCD                     a concrete four-hex-digit example, uppercase
 
 Deliberately NOT a device name, and never flagged:
 

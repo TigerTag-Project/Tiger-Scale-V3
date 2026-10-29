@@ -182,10 +182,13 @@ requests instead of a trip to the bench:
 | `GET /screen.ver` | four bytes, the frame counter |
 | `GET /screen` | the picture in a page, click to tap, drag to swipe |
 
+`XXXX` below is the unit's own four-hex suffix, taken from the last two bytes
+of its MAC:
+
 ```bash
-curl -s -o s.bmp http://tigerscale-CE3F.local/screen.bmp
-curl -s "http://tigerscale-CE3F.local/api/tap?x=415&y=285"
-curl -s "http://tigerscale-CE3F.local/api/tap?x=200&y=280&x2=200&y2=90"
+curl -s -o s.bmp http://tigerscale-XXXX.local/screen.bmp
+curl -s "http://tigerscale-XXXX.local/api/tap?x=415&y=285"
+curl -s "http://tigerscale-XXXX.local/api/tap?x=200&y=280&x2=200&y2=90"
 ```
 
 Three decisions worth keeping:

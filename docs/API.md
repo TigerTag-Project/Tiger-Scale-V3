@@ -85,7 +85,7 @@ The main read. One JSON object, no parameters. Verified response:
   "uid_left": "", "uid_right": "", "uid_twin": "",
   "wifi": "Stargate",
   "ip": "192.168.20.143",
-  "mdns": "tigerscale-CE3F.local",
+  "mdns": "tigerscale-XXXX.local",
   "cloud": true,
   "firebaseConfigured": true,
   "firebaseAuth": true,

@@ -15,34 +15,34 @@
 //
 //   TABLE OF CONTENTS                                     line range
 //   ---------------------------------------------------- -----------
-//   HARDWARE CONFIGURATION                                 258-  451
-//   OTA CONFIGURATION                                      452-  484
-//   FORWARD DECLARATIONS                                   485-  789
-//   WEIGHT ROUNDING                                        790-  809
-//   GLOBAL OBJECTS                                         810- 1735
-//   CONFIGURATION VARIABLES                               1736- 2165
-//   OLED DISPLAY                                          2166- 2943
-//   CLOUD PARSING                                         2944- 2958
-//   WIFI SETUP                                            2959- 8065
-//   LITTLEFS                                              8066- 8365
-//   FIREBASE AUTHENTICATION                               8366-10048
-//   WEBSOCKET                                            10049-10075
-//   CLOUD WORKER TASK  (non-blocking Firestore on core 0) 10076-10210
-//   UNIFIED WS FRAME BUILDER                             10211-10335
-//   WEIGHT FILTER HELPERS                                10336-10350
-//   POST-SEND STATE RESET (shared by all send paths)     10351-10371
-//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight) 10372-10475
-//   WEB SERVER                                           10476-11504
-//   CLOUD COMMUNICATION                                  11505-11687
-//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 11688-12195
-//   mDNS                                                 12196-12233
-//   SCALE                                                12234-12404
-//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  12405-12522
-//   RFID                                                 12523-13605
-//   OTA — Over-the-air firmware + filesystem update    13606-14285
-//   LVGL bridge + main weigh screen                      14286-15225
-//   Remote live view: the screen out, taps back in       15226-16075
-//   SETUP & LOOP                                         16076-17321
+//   HARDWARE CONFIGURATION                                 259-  452
+//   OTA CONFIGURATION                                      453-  485
+//   FORWARD DECLARATIONS                                   486-  790
+//   WEIGHT ROUNDING                                        791-  823
+//   GLOBAL OBJECTS                                         824- 1749
+//   CONFIGURATION VARIABLES                               1750- 2179
+//   OLED DISPLAY                                          2180- 2957
+//   CLOUD PARSING                                         2958- 2972
+//   WIFI SETUP                                            2973- 8079
+//   LITTLEFS                                              8080- 8379
+//   FIREBASE AUTHENTICATION                               8380-10062
+//   WEBSOCKET                                            10063-10089
+//   CLOUD WORKER TASK  (non-blocking Firestore on core 0) 10090-10224
+//   UNIFIED WS FRAME BUILDER                             10225-10349
+//   WEIGHT FILTER HELPERS                                10350-10364
+//   POST-SEND STATE RESET (shared by all send paths)     10365-10385
+//   SHARED WEIGHT PUSH HANDLER (used by /api/weight and /api/push-weight) 10386-10489
+//   WEB SERVER                                           10490-11518
+//   CLOUD COMMUNICATION                                  11519-11701
+//   WEIGH WORKFLOW  (IDLE → SCANNING → STABLE_WAIT → SENDING) 11702-12209
+//   mDNS                                                 12210-12247
+//   SCALE                                                12248-12418
+//   ES8311 codec beep (I2S slave mode, Wire I2C @ 0x18)  12419-12536
+//   RFID                                                 12537-13619
+//   OTA — Over-the-air firmware + filesystem update    13620-14299
+//   LVGL bridge + main weigh screen                      14300-15239
+//   Remote live view: the screen out, taps back in       15240-16089
+//   SETUP & LOOP                                         16090-17335
 //
 //   To regenerate:  bash scripts/update_toc.sh
 // --- TOC END -----------------------------------------------
@@ -105,6 +105,7 @@ enum OledState : uint8_t {
 
 struct MetadataCache { String mfr; String mat; String col; uint32_t productId; };
 #include <esp_system.h>
+#include <esp_mac.h>           // esp_read_mac() — see macSuffix4()
 #include "logo_tigertag.h"        // 150x150 RGB565 logo for screensaver bounce
 #include "logo_tigertag_splash.h" // 480x320 RGB565 TigerTag logo for boot splash
 #include "icon_bolt.h"            // 8x14 RGB565 charging-bolt icon for the battery status icon
@@ -794,9 +795,22 @@ static inline int roundWeight(float weight) {
     return (int)(weight + (weight >= 0 ? 0.5f : -0.5f));
 }
 
+// The four hex digits that make this unit's network name its own.
+//
+// Read from the efuse, deliberately NOT through WiFi.macAddress(): setupWiFi()
+// builds the name on its first line, before WiFi.mode(WIFI_STA), and the core's
+// NetworkInterface::macAddress() returns NULL *without writing the buffer*
+// while the netif does not exist yet. That left mac[4]/mac[5] holding
+// uninitialised stack bytes -- the same bytes on every unit, since it is the
+// same firmware on the same boot path -- so every scale ever shipped advertised
+// the identical name tigerscale-CE3F, which is not a MAC at all. Two scales on
+// one LAN then raced for it, and the loser was renamed by the responder.
+// esp_read_mac() reads the efuse directly and needs no netif, so it is correct
+// wherever it is called from. mac[] stays zero-initialised so that a failure
+// shows up as a uniform 0000 rather than as fresh garbage.
 static String macSuffix4() {
-    uint8_t mac[6];
-    WiFi.macAddress(mac);
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
     char suf[5];
     snprintf(suf, sizeof(suf), "%02X%02X", mac[4], mac[5]);
     return String(suf);

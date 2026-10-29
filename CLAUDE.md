@@ -254,12 +254,14 @@ is loaded.
    and remember `lv_scr_load(new)` comes before `lv_obj_del(old)`.
 
 **You do not have to photograph the device to see a screen, or ask anyone to
-touch it.** Two requests, no setup, no access code:
+touch it.** Two requests, no setup, no access code (`XXXX` is the unit's own
+four-hex suffix, from the last two bytes of its MAC; `LOCAL.md` has the bench
+one):
 
 ```bash
-curl -s -o s.bmp http://tigerscale-CE3F.local/screen.bmp   # what is on the panel
-curl -s "http://tigerscale-CE3F.local/api/tap?x=415&y=285" # press Settings
-curl -s "http://tigerscale-CE3F.local/api/tap?x=200&y=280&x2=200&y2=90"  # swipe
+curl -s -o s.bmp http://tigerscale-XXXX.local/screen.bmp   # what is on the panel
+curl -s "http://tigerscale-XXXX.local/api/tap?x=415&y=285" # press Settings
+curl -s "http://tigerscale-XXXX.local/api/tap?x=200&y=280&x2=200&y2=90"  # swipe
 ```
 
 `/api/tap` answers only once the press has been taken *and* the screen has

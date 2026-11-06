@@ -358,14 +358,8 @@ function cancelTareCalib() {
 
 function updateCalibration() {
     const factor = parseFloat(document.getElementById('newCalFactor').value);
-    if (isNaN(factor)) { 
+    if (!Number.isFinite(factor) || factor === 0) {
         alert(t('alertInvalidFactor'));
-        return;
-    }
-    
-    // Validation: factor must be positive
-    if (factor <= 0) {
-        alert(t('alertNegativeFactor'));
         return;
     }
     
@@ -534,9 +528,9 @@ function calibStep2() {
     // Calculate new factor
     const newFactor = calFactor * (currentWeight / knownWeight);
     
-    // Validation: factor must be positive
-    if (newFactor <= 0) {
-        alert(t('alertNegativeFactor'));
+    // Either polarity is valid; the factor must be finite and nonzero.
+    if (!Number.isFinite(newFactor) || newFactor === 0) {
+        alert(t('alertInvalidFactor'));
         return;
     }
     

@@ -17,3 +17,7 @@ Reset this file to the header above at each checkpoint. Nothing is lost: the raw
 log lives in git history and the synthesised entry lives in the changelog.
 
 ---
+
+### Changed
+
+- The share picture is tigersystem.io's TigerScale card (`https://tigersystem.io/en/tigerscale/opengraph-image`), the same as the Hub's own page, instead of the site's own `og.jpg` (`web-installer/index.html`).

@@ -1,15 +1,15 @@
 # Cloud sync and privacy
 
-What the scale sends, where it goes, and what is stored on the device. Written so
-that anyone can decide whether they want the cloud features on — the firmware is
-fully usable without them.
+What the scale sends, where it goes, and what is stored on the device, so that
+anyone can see exactly what linking a scale to an account shares.
 
-## The scale works offline
+## An account is required to weigh
 
-Cloud sync is optional. Without signing in, the scale still weighs, still reads
-TigerTag tags, still identifies brand and material (from a database cached in its
-own flash), and still serves its web UI on your LAN. What you lose is inventory
-sync across devices.
+The scale works with a TigerSystem account: that is where it finds your spools and
+writes their weight. Without a linked account the weigh workflow does not start
+(the move from idle to scanning requires a signed-in account): the home screen shows
+a red "No account" badge, and the scale reminds you to link one. Linking takes a QR
+code and a tap on your phone — see [ACCOUNT-PAIRING.md](ACCOUNT-PAIRING.md).
 
 The brand and material lookups are **local by design**: `data/id_brand.json` and
 `data/id_material.json` are stored in the device's filesystem, so identifying a

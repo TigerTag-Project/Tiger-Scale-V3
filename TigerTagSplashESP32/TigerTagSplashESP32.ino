@@ -3518,6 +3518,12 @@ static const char *kbMapLower[] = {
     "_","-","z","x","c","v","b","n","m",".",",",":","\n",
     LV_SYMBOL_LEFT," ",LV_SYMBOL_RIGHT,LV_SYMBOL_OK,""
 };
+static const char *kbMapLowerFr[] = {
+    "&123","a","z","e","r","t","y","u","i","o","p",LV_SYMBOL_BACKSPACE,"\n",
+    "ABC","q","s","d","f","g","h","j","k","l","m","\n",
+    "_","-","w","x","c","v","b","n","@",".",",",":","\n",
+    LV_SYMBOL_LEFT," ",LV_SYMBOL_RIGHT,LV_SYMBOL_OK,""
+};
 static const lv_btnmatrix_ctrl_t kbCtrlLower[] = {
     (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 3), 2,2,2,2,2,2,2,2,2,2, (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 3),
     (lv_btnmatrix_ctrl_t)(LV_KEYBOARD_CTRL_BTN_FLAGS | 3), 2,2,2,2,2,2,2,2,2, 3,
@@ -3528,6 +3534,12 @@ static const char *kbMapUpper[] = {
     "&123","Q","W","E","R","T","Y","U","I","O","P",LV_SYMBOL_BACKSPACE,"\n",
     "abc","A","S","D","F","G","H","J","K","L","@","\n",
     "_","-","Z","X","C","V","B","N","M",".",",",":","\n",
+    LV_SYMBOL_LEFT," ",LV_SYMBOL_RIGHT,LV_SYMBOL_OK,""
+};
+static const char *kbMapUpperFr[] = {
+    "&123","A","Z","E","R","T","Y","U","I","O","P",LV_SYMBOL_BACKSPACE,"\n",
+    "abc","Q","S","D","F","G","H","J","K","L","M","\n",
+    "_","-","W","X","C","V","B","N","@",".",",",":","\n",
     LV_SYMBOL_LEFT," ",LV_SYMBOL_RIGHT,LV_SYMBOL_OK,""
 };
 static const char *kbMapSpec[] = {
@@ -3666,9 +3678,10 @@ static String tsKeyboard(const String& header, bool password) {
     lv_obj_align(kb, LV_ALIGN_TOP_LEFT, 4, 94);
     lv_obj_clear_flag(kb, LV_OBJ_FLAG_SCROLLABLE);
     lv_keyboard_set_textarea(kb, ta);
-    lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_LOWER, kbMapLower, kbCtrlLower);
-    lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_UPPER, kbMapUpper, kbCtrlLower);
-    lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_SPECIAL,    kbMapSpec,  kbCtrlSpec);
+    bool useAzerty = (gLanguage == LANG_FR);
+    lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_LOWER, useAzerty ? kbMapLowerFr : kbMapLower, kbCtrlLower);
+    lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_UPPER, useAzerty ? kbMapUpperFr : kbMapUpper, kbCtrlLower);
+    lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_SPECIAL,    kbMapSpec,                           kbCtrlSpec);
     lv_obj_set_style_bg_color(kb, LVCOL_BG, 0);
     lv_obj_set_style_border_width(kb, 0, 0);
     lv_obj_set_style_pad_all(kb, 2, 0);

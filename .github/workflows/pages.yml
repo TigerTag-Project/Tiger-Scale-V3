@@ -74,12 +74,22 @@ env:
   NONB_ENV: esp32s3_hsu
 
 jobs:
-  redeploy:
-    name: redeploy the installer page
+  # Two jobs, not one, and the split is the fix for a deploy that kept failing.
+  #
+  # Uploading the artifact and deploying it in the same job races GitHub's own
+  # artifact listing: deploy-pages asks for the run's artifacts the instant the
+  # upload finalises, the listing does not show it yet, and the deploy fails with
+  # "No artifacts named github-pages were found" -- although the artifact exists.
+  # v3.14.0 failed that way three times in a row (the release run and two manual
+  # runs), with the artifact present every time; re-running did not help, and it
+  # is the same race behind issue #35. A deploy job that starts after the upload
+  # job has finished sees a listing that has caught up, which is why GitHub's own
+  # Pages starter workflows are laid out this way.
+  build:
+    name: assemble the installer page
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+    outputs:
+      skip: ${{ steps.state.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
 
@@ -165,13 +175,21 @@ jobs:
         with:
           path: pages/
 
+  redeploy:
+    name: redeploy the installer page
+    needs: build
+    if: needs.build.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
       - id: deploy
-        if: steps.state.outputs.skip != 'true'
         uses: actions/deploy-pages@v4
 
       # Deploying is not the same as being served. GitHub reported success on the
       # deployment that was then silently ignored, so the only trustworthy signal
       # is fetching the site back and comparing it to the release.
+      - uses: actions/checkout@v4
       - name: Prove the live site now serves that release
-        if: steps.state.outputs.skip != 'true'
         run: python3 scripts/verify-published-site.py --wait 300

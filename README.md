@@ -110,16 +110,18 @@ that one.
   charges it and reports level and charge state
 - **11 firmware languages** (EN · PT · FR · ES · DE · ZH · IT · PL · PT-PT · RU · NL) and a
   **9-language web UI**
-- **Works offline** — brand and material identification comes from a database in
+- **Local lookups** — brand and material identification comes from a database in
   the device's own flash, refreshed at most daily, so tag lookups never wait on
   the network
 - **Its own web UI**, served from the device over LittleFS, mobile-friendly, live
   over WebSocket at 10 Hz
 - **Over-the-air updates** from Settings → Update
-- **Cloud sync is optional.** The scale is fully usable without an account —
-  see [docs/CLOUD.md](docs/CLOUD.md) for exactly what is sent and stored, and
-  [docs/ACCOUNT-PAIRING.md](docs/ACCOUNT-PAIRING.md) for how an account without a
-  password gets linked
+- **Linked to your TigerSystem account.** The scale weighs and writes the weight to
+  the spool in your inventory once it is linked to your account: without one, the
+  weigh workflow does not start and the home screen shows a red "No account" badge.
+  Linking takes a QR code and a tap on your phone — see
+  [docs/ACCOUNT-PAIRING.md](docs/ACCOUNT-PAIRING.md), and
+  [docs/CLOUD.md](docs/CLOUD.md) for exactly what is sent and stored
 - **No binary blobs.** Everything here compiles from source
 
 ## Quick start

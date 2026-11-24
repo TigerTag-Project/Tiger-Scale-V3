@@ -85,9 +85,10 @@ two-line character display:
 It also serves **its own web interface** on your network, so you can read the scale
 from a phone browser without installing anything.
 
-Works offline: brand and material identification comes from a database stored in
-the device's own flash, so identifying a tag never waits on the internet. The cloud
-account is optional.
+Brand and material identification comes from a database stored in the device's own
+flash, so identifying a tag never waits on the internet. The scale is linked to your
+TigerSystem account: that is where it finds your spools and writes their weight, so
+weighing starts once an account is linked (a QR code and a tap on your phone).
 
 ## TigerTag Studio — the other half
 

@@ -14,6 +14,42 @@ scaffold's placeholder text.
 
 Nothing yet.
 
+## [v3.14.0](docs/release-notes/v3.14.0.md)
+
+See the release notes for the full entry.
+
+### Added
+- **The on-screen keyboard follows the interface language**: AZERTY for French,
+  QWERTZ for German, QWERTY for everything else. It serves three fields only --
+  the WiFi password and the account e-mail and password, all ASCII -- so a layout
+  moves the ASCII keys to where a reader of that language reaches for them but
+  never swaps the alphabet: a Cyrillic keyboard would leave a Russian owner
+  unable to type the password printed on the router. Every layout carries the
+  same 26 letters and the same `@`. AZERTY has its own width table
+  (`kbCtrlLowerFr`), because QWERTY's ends its middle row on a width cut for `@`
+  and would draw `m` half again as wide as the other letters. Builds on PR #51.
+
+### Changed
+- **Boot reaches the weigh screen in 3.3 s, down from 21.3 s** (measured over the
+  serial port, network out of reach; nearer 25 s in the field before, since the
+  removed wait for a serial monitor is paid in full on a charger). The logo keeps
+  its 2 s but boot carries on behind it; WiFi is started at boot and completed in
+  the background instead of holding boot for up to 15 s (73 % of the measured
+  boot); the wait for a serial monitor and the cosmetic holds on "Firebase...",
+  "Scale ready" and "Ready!" are gone. The weigh screen is loaded before LVGL
+  first runs, so the first frame after the logo is the weigh screen itself.
+- **No restart after connecting to a network from Settings.** Everything that
+  needs the network is now set up when the link comes up, not only at boot. The
+  chosen network becomes the network of record at once, because `loop()` wipes
+  the account session when the network changes under it -- the restart used to
+  be what kept that from firing.
+
+### Fixed
+- **A scale that missed its network stayed offline until someone touched it.**
+  Auto-reconnect was off and nothing else retried. `loop()` now retries 15 s
+  after the boot attempt, then every 30 s, re-reading the saved credentials, and
+  starts the clock (NTP) on the first link.
+
 ## [v3.13.0](docs/release-notes/v3.13.0.md)
 
 See the release notes for the full entry.
